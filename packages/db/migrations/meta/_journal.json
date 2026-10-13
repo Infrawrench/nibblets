@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1791922946367,
+      "tag": "0000_damp_domino",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791927483779,
+      "tag": "0001_host_tools",
+      "breakpoints": true
+    }
+  ]
+}

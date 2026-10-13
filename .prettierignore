@@ -1,0 +1,3 @@
+pnpm-lock.yaml
+dist
+apps/web/src/routeTree.gen.ts

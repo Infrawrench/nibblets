@@ -1,0 +1,10 @@
+node_modules
+dist
+.turbo
+*.log
+.env
+.DS_Store
+apps/web/src/routeTree.gen.ts
+apps/desktop/out
+docker/.env
+docker/compose.creds.yaml

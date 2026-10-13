@@ -1,0 +1,25 @@
+appId: com.infrawrench.nibblets
+productName: Nibblets
+icon: assets/icon.png
+directories:
+  output: dist
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: ../../docker/compose.yaml
+    to: docker/compose.yaml
+mac:
+  category: public.app-category.developer-tools
+  target: dmg
+  # Unsigned locally; CI signs and notarises.
+  identity: null
+  extendInfo:
+    LSUIElement: false
+win:
+  target: nsis
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development

@@ -1,0 +1,102 @@
+# The nibblet stack. Run from the repo with `docker/up.sh`, which writes the
+# .env and the credential mounts, or let the desktop app do it.
+#
+# Credentials are mounted by an override file (compose.creds.yaml), because a
+# bind mount of a file that doesn't exist makes Docker create a directory in
+# its place, and the host's CLI would then fail to sign in.
+
+name: nibblet
+
+x-image: &image-defaults
+  pull_policy: missing
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.7-pg18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nibblet
+      POSTGRES_DB: nibblet
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run docker/up.sh or set POSTGRES_PASSWORD}
+    volumes:
+      - db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nibblet -d nibblet"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks: [nibblet]
+
+  credproxy:
+    <<: *image-defaults
+    image: ${NIBBLET_IMAGE_PREFIX:-nibblet/}credproxy:${NIBBLET_TAG:-dev}
+    build:
+      context: ${NIBBLET_SOURCE_DIR:-..}
+      dockerfile: docker/credproxy.Dockerfile
+    restart: unless-stopped
+    environment:
+      CREDPROXY_KEY: ${CREDPROXY_KEY:?}
+      CREDPROXY_ADMIN_KEY: ${CREDPROXY_ADMIN_KEY:?}
+      CLAUDE_CREDENTIALS_SOURCE: ${CLAUDE_CREDENTIALS_SOURCE:-auto}
+      CODEX_AUTH_SOURCE: ${CODEX_AUTH_SOURCE:-auto}
+      KEYCHAIN_BRIDGE_URL: ${KEYCHAIN_BRIDGE_URL:-}
+      KEYCHAIN_BRIDGE_TOKEN: ${KEYCHAIN_BRIDGE_TOKEN:-}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    networks: [nibblet]
+
+  server:
+    <<: *image-defaults
+    image: ${NIBBLET_IMAGE_PREFIX:-nibblet/}server:${NIBBLET_TAG:-dev}
+    build:
+      context: ${NIBBLET_SOURCE_DIR:-..}
+      dockerfile: docker/server.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      credproxy:
+        condition: service_started
+    environment:
+      PORT: 8420
+      DATABASE_URL: postgres://nibblet:${POSTGRES_PASSWORD}@db:5432/nibblet
+      NIBBLET_OWNER_TOKEN: ${NIBBLET_OWNER_TOKEN:?}
+      NIBBLET_PUBLIC_URL: ${NIBBLET_PUBLIC_URL:-http://127.0.0.1:8420}
+      CREDPROXY_URL: http://credproxy:8787
+      CREDPROXY_KEY: ${CREDPROXY_KEY}
+      CREDPROXY_ADMIN_KEY: ${CREDPROXY_ADMIN_KEY}
+      NIBBLET_RUNNER_IMAGE: ${NIBBLET_IMAGE_PREFIX:-nibblet/}runner:${NIBBLET_TAG:-dev}
+      NIBBLET_NETWORK: nibblet
+      NIBBLET_DATA_DIR: /data
+      # The host MCP bridge (desktop app, or packages/host-mcp/src/cli.ts). Empty turns host tools off.
+      HOST_MCP_URL: ${HOST_MCP_URL:-}
+      HOST_MCP_TOKEN: ${HOST_MCP_TOKEN:-}
+    # Reaches the host MCP bridge; Docker Desktop provides this name, Linux needs the mapping.
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - ${NIBBLET_BIND:-127.0.0.1}:${NIBBLET_PORT:-8420}:8420
+    volumes:
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - data:/data
+    networks: [nibblet]
+
+  # Not a service: builds the image the server starts one container of per
+  # nibblet. `docker compose --profile build build runner`.
+  runner:
+    <<: *image-defaults
+    image: ${NIBBLET_IMAGE_PREFIX:-nibblet/}runner:${NIBBLET_TAG:-dev}
+    build:
+      context: ${NIBBLET_SOURCE_DIR:-..}
+      dockerfile: docker/runner.Dockerfile
+    profiles: [build]
+    networks: [nibblet]
+
+volumes:
+  db:
+  data:
+
+networks:
+  nibblet:
+    # Fixed, so the containers the server creates can join it by name.
+    name: nibblet

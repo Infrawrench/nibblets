@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+    />
+    <title>Setting up Nibblets</title>
+    <style>
+      :root {
+        --bg: #f0f0f0;
+        --panel: #fafafa;
+        --text: #1c1c1c;
+        --dim: #5a5a5a;
+        --faint: #9e9e9e;
+        --edge: #d4d4d4;
+        --accent: #3a6ea5;
+        --good: #3f8f5a;
+        --bad: #b5452f;
+        --log: #e8e8e8;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1e1e1e;
+          --panel: #242424;
+          --text: #d8d8d8;
+          --dim: #9a9a9a;
+          --faint: #666;
+          --edge: #3a3a3a;
+          --good: #5fb37a;
+          --bad: #e07a5f;
+          --log: #141414;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 20px;
+        font:
+          12.5px/1.45 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          system-ui,
+          sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      h1 {
+        margin: 0 0 2px;
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .sub {
+        color: var(--dim);
+        margin-bottom: 16px;
+      }
+      ol {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 10px;
+      }
+      li {
+        display: grid;
+        grid-template-columns: 18px 1fr;
+        gap: 10px;
+        align-items: start;
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-top: 4px;
+        background: var(--faint);
+      }
+      .running .dot {
+        background: var(--accent);
+        animation: pulse 1s ease-in-out infinite;
+      }
+      .done .dot {
+        background: var(--good);
+      }
+      .error .dot {
+        background: var(--bad);
+      }
+      .name {
+        font-weight: 500;
+      }
+      .detail {
+        color: var(--dim);
+        font-size: 11.5px;
+        white-space: pre-wrap;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      .error .detail {
+        color: var(--bad);
+      }
+      pre {
+        margin: 16px 0 0;
+        height: 150px;
+        overflow: auto;
+        padding: 8px;
+        border: 1px solid var(--edge);
+        border-radius: 6px;
+        background: var(--log);
+        font:
+          11px/1.4 ui-monospace,
+          Menlo,
+          monospace;
+        color: var(--dim);
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      button {
+        margin-top: 12px;
+        padding: 4px 12px;
+        font: inherit;
+        border: 1px solid var(--edge);
+        border-radius: 5px;
+        background: var(--panel);
+        color: var(--text);
+      }
+      button[hidden] {
+        display: none;
+      }
+      @keyframes pulse {
+        50% {
+          opacity: 0.4;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Setting up Nibblets</h1>
+    <div class="sub">
+      Starting your hamsters' home in Docker. This takes a few minutes the first time.
+    </div>
+    <ol>
+      <li id="docker">
+        <span class="dot"></span>
+        <div>
+          <div class="name">Docker</div>
+          <div class="detail">Waiting</div>
+        </div>
+      </li>
+      <li id="credentials">
+        <span class="dot"></span>
+        <div>
+          <div class="name">Subscriptions</div>
+          <div class="detail">Waiting</div>
+        </div>
+      </li>
+      <li id="stack">
+        <span class="dot"></span>
+        <div>
+          <div class="name">Containers</div>
+          <div class="detail">Waiting</div>
+        </div>
+      </li>
+      <li id="signin">
+        <span class="dot"></span>
+        <div>
+          <div class="name">Sign in</div>
+          <div class="detail">Waiting</div>
+        </div>
+      </li>
+    </ol>
+    <pre id="log"></pre>
+    <button id="retry" hidden>Try again</button>
+    <script>
+      const log = document.getElementById("log");
+      const retry = document.getElementById("retry");
+      window.nibbletSetup.onStep((step) => {
+        const li = document.getElementById(step.id);
+        li.className = step.state;
+        li.querySelector(".detail").textContent = step.detail;
+        if (step.state === "error") retry.hidden = false;
+        if (step.state === "running") retry.hidden = true;
+      });
+      window.nibbletSetup.onLog((line) => {
+        log.textContent += line + "\n";
+        log.scrollTop = log.scrollHeight;
+      });
+      retry.addEventListener("click", () => {
+        log.textContent = "";
+        window.nibbletSetup.retry();
+      });
+    </script>
+  </body>
+</html>

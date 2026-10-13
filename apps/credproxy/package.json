@@ -1,0 +1,18 @@
+{
+  "name": "@nibblet/credproxy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/main.ts",
+    "start": "node src/main.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "@nibblet/protocol": "workspace:*",
+    "hono": "^4.13.13",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {}
+}

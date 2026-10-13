@@ -1,0 +1,488 @@
+import {
+  authTokens,
+  items,
+  memories,
+  nibblets,
+  pairingCodes,
+  peers,
+  schedules,
+  settings,
+  type Db,
+} from "@nibblet/db";
+import {
+  maskMcpServers,
+  McpServerList,
+  randomHamsterLook,
+  RpcError,
+  type CreateNibblet,
+  type Heartbeat,
+  type Memory,
+  type Nibblet,
+  type NibbletStatus,
+  type Peer,
+  type Schedule,
+  type StoredItem,
+  type ThreadItem,
+} from "@nibblet/protocol";
+import { and, asc, cosineDistance, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { createHash, createHmac, randomBytes } from "node:crypto";
+import type { Bus } from "./bus.ts";
+import type { Embedder } from "./embeddings.ts";
+
+type NibbletRow = typeof nibblets.$inferSelect;
+type ScheduleRow = typeof schedules.$inferSelect;
+
+export const defaultHeartbeat: Heartbeat = {
+  enabled: false,
+  everyMinutes: 30,
+  activeHours: null,
+  prompt: null,
+};
+
+export function newId(prefix: string): string {
+  return `${prefix}_${randomBytes(9).toString("base64url")}`;
+}
+
+export function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+/** The token OpenComputerUse in a nibblet's container accepts, derived so it survives restarts. */
+export function viewToken(ownerToken: string, nibbletId: string, tokenHash: string): string {
+  return createHmac("sha256", ownerToken)
+    .update(`view:${nibbletId}:${tokenHash}`)
+    .digest("base64url");
+}
+
+const iso = (d: Date | null): string | null => (d ? d.toISOString() : null);
+
+export function toNibblet(row: NibbletRow): Nibblet {
+  return {
+    id: row.id,
+    name: row.name,
+    look: row.look,
+    harness: row.harness,
+    model: row.model,
+    effort: row.effort,
+    instructions: row.instructions,
+    parentId: row.parentId,
+    status: row.status,
+    statusDetail: row.statusDetail,
+    heartbeat: row.heartbeat,
+    browser: row.browser,
+    hostTools: row.hostTools,
+    cliCredentials: row.cliCredentials,
+    mcpServers: maskMcpServers(row.mcpServers),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    lastActivityAt: iso(row.lastActivityAt),
+  };
+}
+
+function toSchedule(row: ScheduleRow, nextRunAt: Date | null): Schedule {
+  return {
+    id: row.id,
+    nibbletId: row.nibbletId,
+    name: row.name,
+    cron: row.cron,
+    runAt: iso(row.runAt),
+    timezone: row.timezone,
+    prompt: row.prompt,
+    enabled: row.enabled,
+    nextRunAt: iso(nextRunAt),
+    lastRunAt: iso(row.lastRunAt),
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/**
+ * All database access. Methods that change something the UI shows publish
+ * it on the bus, so callers never have to remember to.
+ */
+export class Store {
+  readonly db: Db;
+  private readonly bus: Bus;
+  private readonly embedder: Embedder;
+
+  constructor(db: Db, bus: Bus, embedder: Embedder) {
+    this.db = db;
+    this.bus = bus;
+    this.embedder = embedder;
+  }
+
+  // Settings
+
+  async getSetting<T>(key: string, parse: (v: unknown) => T, fallback: T): Promise<T> {
+    const [row] = await this.db.select().from(settings).where(eq(settings.key, key));
+    if (!row) return fallback;
+    try {
+      return parse(row.value);
+    } catch {
+      return fallback;
+    }
+  }
+
+  async setSetting(key: string, value: unknown): Promise<void> {
+    await this.db
+      .insert(settings)
+      .values({ key, value })
+      .onConflictDoUpdate({ target: settings.key, set: { value } });
+  }
+
+  // Nibblets
+
+  async listNibblets(): Promise<Nibblet[]> {
+    const rows = await this.db.select().from(nibblets).orderBy(asc(nibblets.createdAt));
+    return rows.map(toNibblet);
+  }
+
+  async nibbletRow(id: string): Promise<NibbletRow> {
+    const [row] = await this.db.select().from(nibblets).where(eq(nibblets.id, id));
+    if (!row) throw new RpcError("not_found", `No nibblet ${id}`);
+    return row;
+  }
+
+  async getNibblet(id: string): Promise<Nibblet> {
+    return toNibblet(await this.nibbletRow(id));
+  }
+
+  async nibbletByToken(token: string): Promise<NibbletRow | null> {
+    const [row] = await this.db
+      .select()
+      .from(nibblets)
+      .where(eq(nibblets.tokenHash, hashToken(token)));
+    return row ?? null;
+  }
+
+  /** Creates the row and returns the runner token, which is only ever known here. */
+  async createNibblet(
+    input: Omit<CreateNibblet, "message">,
+    parentId: string | null,
+  ): Promise<{ nibblet: Nibblet; token: string }> {
+    const token = randomBytes(32).toString("base64url");
+    const [row] = await this.db
+      .insert(nibblets)
+      .values({
+        id: newId("nib"),
+        name: input.name,
+        look: input.look ?? randomHamsterLook(),
+        harness: input.harness,
+        model: input.model,
+        effort: input.effort,
+        instructions: input.instructions ?? "",
+        parentId,
+        heartbeat: input.heartbeat ?? defaultHeartbeat,
+        browser: input.browser ?? true,
+        hostTools: input.hostTools ?? [],
+        cliCredentials: input.cliCredentials ?? [],
+        mcpServers: McpServerList.parse(input.mcpServers ?? []),
+        tokenHash: hashToken(token),
+      })
+      .returning();
+    if (!row) throw new Error("insert returned nothing");
+    const nibblet = toNibblet(row);
+    this.bus.publish({ type: "nibblet", nibblet });
+    return { nibblet, token };
+  }
+
+  async updateNibblet(
+    id: string,
+    patch: Partial<Omit<typeof nibblets.$inferInsert, "id" | "createdAt">>,
+  ): Promise<Nibblet> {
+    const [row] = await this.db
+      .update(nibblets)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(eq(nibblets.id, id))
+      .returning();
+    if (!row) throw new RpcError("not_found", `No nibblet ${id}`);
+    const nibblet = toNibblet(row);
+    this.bus.publish({ type: "nibblet", nibblet });
+    return nibblet;
+  }
+
+  async setStatus(id: string, status: NibbletStatus, detail: string | null = null): Promise<void> {
+    await this.updateNibblet(id, { status, statusDetail: detail });
+  }
+
+  /** A fresh runner token, for when a container is recreated. */
+  async rotateToken(id: string): Promise<string> {
+    const token = randomBytes(32).toString("base64url");
+    await this.db
+      .update(nibblets)
+      .set({ tokenHash: hashToken(token) })
+      .where(eq(nibblets.id, id));
+    return token;
+  }
+
+  async deleteNibblet(id: string): Promise<void> {
+    await this.db.delete(nibblets).where(eq(nibblets.id, id));
+    this.bus.publish({ type: "nibblet_deleted", id });
+  }
+
+  async children(parentId: string): Promise<Nibblet[]> {
+    const rows = await this.db.select().from(nibblets).where(eq(nibblets.parentId, parentId));
+    return rows.map(toNibblet);
+  }
+
+  // Thread items
+
+  /** Upserts an item with a fresh seq, so clients syncing "since N" see the change. */
+  async putItem(nibbletId: string, item: ThreadItem): Promise<StoredItem> {
+    const [row] = await this.db
+      .insert(items)
+      .values({ nibbletId, itemId: item.id, seq: sql`nextval('item_seq')`, item })
+      .onConflictDoUpdate({
+        target: [items.nibbletId, items.itemId],
+        set: { item, seq: sql`nextval('item_seq')` },
+      })
+      .returning({ seq: items.seq });
+    if (!row) throw new Error("upsert returned nothing");
+    const stored: StoredItem = { nibbletId, seq: row.seq, item };
+    this.bus.publish({ type: "item", item: stored });
+    return stored;
+  }
+
+  async itemsSince(nibbletId: string, sinceSeq: number, limit = 2000): Promise<StoredItem[]> {
+    const rows = await this.db
+      .select()
+      .from(items)
+      .where(and(eq(items.nibbletId, nibbletId), gt(items.seq, sinceSeq)))
+      .orderBy(asc(items.seq))
+      .limit(limit);
+    return rows.map((r) => ({ nibbletId: r.nibbletId, seq: r.seq, item: r.item }));
+  }
+
+  async getItem(nibbletId: string, itemId: string): Promise<ThreadItem | null> {
+    const [row] = await this.db
+      .select()
+      .from(items)
+      .where(and(eq(items.nibbletId, nibbletId), eq(items.itemId, itemId)));
+    return row?.item ?? null;
+  }
+
+  /** The parent's still-running record of a sub-agent, if there is one. */
+  async runningSubagentItem(
+    parentId: string,
+    childId: string,
+  ): Promise<Extract<ThreadItem, { type: "subagent" }> | null> {
+    const rows = await this.db
+      .select({ item: items.item })
+      .from(items)
+      .where(
+        and(
+          eq(items.nibbletId, parentId),
+          sql`${items.item}->>'type' = 'subagent'`,
+          sql`${items.item}->>'childId' = ${childId}`,
+          sql`${items.item}->>'status' = 'running'`,
+        ),
+      );
+    const item = rows[0]?.item;
+    return item?.type === "subagent" ? item : null;
+  }
+
+  /** The newest items in creation order, for recaps. */
+  async recentItems(nibbletId: string, limit: number): Promise<ThreadItem[]> {
+    const rows = await this.db
+      .select({ item: items.item })
+      .from(items)
+      .where(eq(items.nibbletId, nibbletId))
+      .orderBy(desc(items.createdAt))
+      .limit(limit);
+    return rows.map((r) => r.item).reverse();
+  }
+
+  // Schedules
+
+  async listSchedules(nibbletId?: string): Promise<ScheduleRow[]> {
+    const q = this.db.select().from(schedules);
+    return nibbletId ? q.where(eq(schedules.nibbletId, nibbletId)) : q;
+  }
+
+  async scheduleRow(id: string): Promise<ScheduleRow> {
+    const [row] = await this.db.select().from(schedules).where(eq(schedules.id, id));
+    if (!row) throw new RpcError("not_found", `No schedule ${id}`);
+    return row;
+  }
+
+  async createSchedule(
+    input: Omit<typeof schedules.$inferInsert, "id" | "createdAt">,
+  ): Promise<ScheduleRow> {
+    const [row] = await this.db
+      .insert(schedules)
+      .values({ id: newId("sch"), ...input })
+      .returning();
+    if (!row) throw new Error("insert returned nothing");
+    this.bus.publish({ type: "schedules_changed", nibbletId: row.nibbletId });
+    return row;
+  }
+
+  async updateSchedule(
+    id: string,
+    patch: Partial<typeof schedules.$inferInsert>,
+  ): Promise<ScheduleRow> {
+    const [row] = await this.db
+      .update(schedules)
+      .set(patch)
+      .where(eq(schedules.id, id))
+      .returning();
+    if (!row) throw new RpcError("not_found", `No schedule ${id}`);
+    this.bus.publish({ type: "schedules_changed", nibbletId: row.nibbletId });
+    return row;
+  }
+
+  async deleteSchedule(id: string): Promise<void> {
+    const [row] = await this.db.delete(schedules).where(eq(schedules.id, id)).returning();
+    if (row) this.bus.publish({ type: "schedules_changed", nibbletId: row.nibbletId });
+  }
+
+  toSchedule = toSchedule;
+
+  // Memories
+
+  async saveMemory(input: {
+    nibbletId: string | null;
+    content: string;
+    tags: string[];
+    kind?: "note" | "transcript";
+  }): Promise<Memory> {
+    const [embedding] = await this.embedder.embed([input.content], "document");
+    if (!embedding) throw new Error("embedder returned nothing");
+    const [row] = await this.db
+      .insert(memories)
+      .values({
+        id: newId("mem"),
+        nibbletId: input.nibbletId,
+        kind: input.kind ?? "note",
+        content: input.content,
+        tags: input.tags,
+        embedding,
+      })
+      .returning();
+    if (!row) throw new Error("insert returned nothing");
+    return {
+      id: row.id,
+      nibbletId: row.nibbletId,
+      content: row.content,
+      tags: row.tags,
+      createdAt: row.createdAt.toISOString(),
+      score: null,
+    };
+  }
+
+  /**
+   * Memories a nibblet can see: its own and the shared ones. With a query,
+   * ranked by cosine similarity; without, newest first.
+   */
+  async searchMemories(opts: {
+    nibbletId: string | null;
+    query?: string;
+    limit?: number;
+    kinds?: ("note" | "transcript")[];
+  }): Promise<Memory[]> {
+    const limit = opts.limit ?? 20;
+    const kinds = opts.kinds ?? ["note"];
+    const visible =
+      opts.nibbletId === null
+        ? isNull(memories.nibbletId)
+        : or(eq(memories.nibbletId, opts.nibbletId), isNull(memories.nibbletId));
+    const where = and(visible, inArray(memories.kind, kinds));
+    const columns = {
+      id: memories.id,
+      nibbletId: memories.nibbletId,
+      content: memories.content,
+      tags: memories.tags,
+      createdAt: memories.createdAt,
+    };
+
+    if (!opts.query) {
+      const rows = await this.db
+        .select(columns)
+        .from(memories)
+        .where(where)
+        .orderBy(desc(memories.createdAt))
+        .limit(limit);
+      return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString(), score: null }));
+    }
+
+    const [vector] = await this.embedder.embed([opts.query], "query");
+    if (!vector) return [];
+    const distance = cosineDistance(memories.embedding, vector);
+    const rows = await this.db
+      .select({ ...columns, distance })
+      .from(memories)
+      .where(where)
+      .orderBy(distance)
+      .limit(limit);
+    return rows.map(({ distance: d, ...r }) => ({
+      ...r,
+      createdAt: r.createdAt.toISOString(),
+      score: 1 - Number(d),
+    }));
+  }
+
+  async deleteMemory(id: string, nibbletId?: string): Promise<boolean> {
+    const where = nibbletId
+      ? and(eq(memories.id, id), or(eq(memories.nibbletId, nibbletId), isNull(memories.nibbletId)))
+      : eq(memories.id, id);
+    const rows = await this.db.delete(memories).where(where).returning({ id: memories.id });
+    return rows.length > 0;
+  }
+
+  // Peers
+
+  async listPeers(): Promise<Peer[]> {
+    const rows = await this.db.select().from(peers).orderBy(asc(peers.createdAt));
+    return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
+  }
+
+  async addPeer(peer: { name: string; url: string; token: string }): Promise<Peer> {
+    const [row] = await this.db
+      .insert(peers)
+      .values({ id: newId("peer"), ...peer })
+      .returning();
+    if (!row) throw new Error("insert returned nothing");
+    return { ...row, createdAt: row.createdAt.toISOString() };
+  }
+
+  async removePeer(id: string): Promise<void> {
+    await this.db.delete(peers).where(eq(peers.id, id));
+  }
+
+  // Sign-ins
+
+  async issueAuthToken(label: string): Promise<string> {
+    const token = randomBytes(32).toString("base64url");
+    await this.db
+      .insert(authTokens)
+      .values({ id: newId("tok"), tokenHash: hashToken(token), label });
+    return token;
+  }
+
+  async checkAuthToken(token: string): Promise<boolean> {
+    const rows = await this.db
+      .update(authTokens)
+      .set({ lastUsedAt: new Date() })
+      .where(eq(authTokens.tokenHash, hashToken(token)))
+      .returning({ id: authTokens.id });
+    return rows.length > 0;
+  }
+
+  async createPairingCode(ttlMs: number): Promise<{ code: string; expiresAt: Date }> {
+    const code = randomBytes(18).toString("base64url");
+    const expiresAt = new Date(Date.now() + ttlMs);
+    await this.db.delete(pairingCodes).where(lt(pairingCodes.expiresAt, new Date()));
+    await this.db.insert(pairingCodes).values({ codeHash: hashToken(code), expiresAt });
+    return { code, expiresAt };
+  }
+
+  /** Spends a pairing code; true if it was valid. */
+  async redeemPairingCode(code: string): Promise<boolean> {
+    const rows = await this.db
+      .delete(pairingCodes)
+      .where(
+        and(eq(pairingCodes.codeHash, hashToken(code)), gt(pairingCodes.expiresAt, new Date())),
+      )
+      .returning({ codeHash: pairingCodes.codeHash });
+    return rows.length > 0;
+  }
+}

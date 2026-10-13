@@ -1,0 +1,46 @@
+# Nibblets
+
+Self-hosted, always-on agents, each one a hamster you dress up yourself. They're like Grok Bot or ChatGPT dots, but they run on your own machines and use the Claude and ChatGPT subscriptions you already have.
+
+A nibblet is a thread that never really ends. It runs in its own Docker container on the Claude Agent SDK, Codex, or OpenCode. It wakes on a heartbeat and on schedules it sets for itself, and it remembers things in Postgres with pgvector rather than on its own disk. It can spawn sub-agents, which are child nibblets, and it has a Chromium browser you can watch and take over.
+
+## Running it
+
+The desktop app (`apps/desktop`) does all of this for you: it checks Docker, finds your Claude and Codex logins, starts the stack, and opens the UI signed in.
+
+By hand, from the repo:
+
+```sh
+docker build -f docker/runner.Dockerfile -t nibblet/runner:dev .
+cp docker/.env.example docker/.env   # then fill in the secrets
+docker compose -f docker/compose.yaml -p nibblet up -d --build
+docker compose -p nibblet exec server node apps/server/src/cli.ts pair
+```
+
+Open the link it prints. To reach the server from elsewhere, turn on a Cloudflare tunnel in Settings. A quick tunnel needs no account; a named tunnel takes a token from the Cloudflare dashboard.
+
+## How it fits together
+
+See [ARCHITECTURE.md](ARCHITECTURE.md). In short:
+
+- **server**: the API, the UI, the scheduler and heartbeats, the nibblet tools (over MCP), and Docker orchestration
+- **db**: Postgres with pgvector, which holds every durable thing
+- **credproxy**: holds your subscription credentials and injects them into harness traffic, so containers never see a real token
+- **one runner container per nibblet**: its harness, plus OpenComputerUse driving Chromium on a headless Wayland display
+- **tunnel**: optional, `cloudflared`
+
+To see nibblets from several machines in one place, open "Pair a device" on one server and paste the link into "Add a server" on another.
+
+## Developing
+
+```sh
+corepack enable
+pnpm install
+pnpm typecheck
+pnpm test
+pnpm format
+```
+
+The server and runner run TypeScript directly on Node 24, with no build step. The web UI is Vite: `pnpm --filter @nibblet/web dev` proxies the API to a server on `:8420`.
+
+Harnesses are plugins (`packages/harness-*`) that implement `HarnessPlugin` from `@nibblet/harness`. Credential sources in the proxy and embedding backends in the server follow the same pattern.

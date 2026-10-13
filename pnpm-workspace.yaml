@@ -1,0 +1,28 @@
+packages:
+  - apps/*
+  - packages/*
+minimumReleaseAgeExclude:
+  - '@hono/node-server@2.1.5'
+  - '@tanstack/react-router@1.170.44'
+  - '@tanstack/router-core@1.171.37'
+  - '@tanstack/router-generator@1.167.43'
+  - '@tanstack/router-plugin@1.168.45'
+  - '@turbo/darwin-64@2.11.8'
+  - '@turbo/darwin-arm64@2.11.8'
+  - '@turbo/linux-64@2.11.8'
+  - '@turbo/linux-arm64@2.11.8'
+  - '@turbo/windows-64@2.11.8'
+  - '@turbo/windows-arm64@2.11.8'
+  - electron@44.7.1
+  - lucide-react@1.56.0
+  - turbo@2.11.8
+
+allowBuilds:
+  opencode-ai: true
+  esbuild: true
+  electron: true
+  onnxruntime-node: true
+  protobufjs: true
+  cpu-features: false
+  ssh2: false
+  electron-winstaller: false

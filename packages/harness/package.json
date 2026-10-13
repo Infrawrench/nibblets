@@ -1,0 +1,15 @@
+{
+  "name": "@nibblet/harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@nibblet/protocol": "workspace:*"
+  }
+}

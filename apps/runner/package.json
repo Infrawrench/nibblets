@@ -1,0 +1,22 @@
+{
+  "name": "@nibblet/runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/main.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@nibblet/protocol": "workspace:*",
+    "@nibblet/harness": "workspace:*",
+    "@nibblet/harness-claude": "workspace:*",
+    "@nibblet/harness-codex": "workspace:*",
+    "@nibblet/harness-opencode": "workspace:*",
+    "ws": "^8.22.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.2"
+  }
+}

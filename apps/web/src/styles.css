@@ -1,0 +1,303 @@
+@import "tailwindcss";
+
+/*
+ * Chrome tokens. Neutral greys with one accent, light and dark, after
+ * OpenComputerUse's palette. Components use the Tailwind names in @theme,
+ * never raw colours, so both themes follow automatically.
+ */
+:root {
+  color-scheme: light;
+  --bg: #f4f4f5;
+  --panel: #fafafa;
+  --surface: #ffffff;
+  --deep: #ececee;
+  --field: #ffffff;
+  --hover: rgb(0 0 0 / 0.05);
+  --active: rgb(0 0 0 / 0.08);
+  --line: #e2e2e5;
+  --edge: #cfcfd4;
+  --text: #1c1c1e;
+  --dim: #5f5f66;
+  --faint: #9d9da4;
+  --accent: #3a6ea5;
+  --accent-hover: #2e5e95;
+  --accent-soft: #dce8f5;
+  --accent-text: #ffffff;
+  --bubble: #e9eef5;
+  --warning: #9a6400;
+  --danger: #c2413a;
+  --ok: #2f8a4d;
+  --working: #0b8fcf;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 8px 24px rgb(0 0 0 / 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #161616;
+    --panel: #1a1a1a;
+    --surface: #1f1f1f;
+    --deep: #121212;
+    --field: #0e0e0e;
+    --hover: rgb(255 255 255 / 0.05);
+    --active: rgb(255 255 255 / 0.08);
+    --line: #2a2a2a;
+    --edge: #3a3a3a;
+    --text: #dcdcdc;
+    --dim: #9a9a9a;
+    --faint: #666666;
+    --accent: #4a80bc;
+    --accent-hover: #5a90cc;
+    --accent-soft: #1f3550;
+    --accent-text: #ffffff;
+    --bubble: #262c34;
+    --warning: #e0a030;
+    --danger: #e0645c;
+    --ok: #4fb36d;
+    --working: #38bdf8;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px rgb(0 0 0 / 0.4);
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-surface: var(--surface);
+  --color-deep: var(--deep);
+  --color-field: var(--field);
+  --color-hover: var(--hover);
+  --color-active: var(--active);
+  --color-line: var(--line);
+  --color-edge: var(--edge);
+  --color-text: var(--text);
+  --color-dim: var(--dim);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-text: var(--accent-text);
+  --color-bubble: var(--bubble);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
+  --color-working: var(--working);
+  --shadow-float: var(--shadow);
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --text-2xs: 10.5px;
+  --text-xs: 11.5px;
+  --text-sm: 12.5px;
+  --text-base: 13.5px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--edge) transparent;
+}
+
+/* In the base layer, so a component's own focus style (outline-none) wins. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+}
+
+/* Markdown in assistant messages. */
+.prose-chat {
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+.prose-chat > * + * {
+  margin-top: 0.6em;
+}
+.prose-chat a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-chat code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--deep);
+  border-radius: 4px;
+  padding: 0.1em 0.3em;
+}
+.prose-chat pre {
+  background: var(--deep);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.prose-chat pre code {
+  background: none;
+  padding: 0;
+}
+.prose-chat ul {
+  list-style: disc;
+  padding-left: 1.3em;
+}
+.prose-chat ol {
+  list-style: decimal;
+  padding-left: 1.3em;
+}
+.prose-chat h1,
+.prose-chat h2,
+.prose-chat h3 {
+  font-weight: 600;
+  font-size: 1.05em;
+}
+.prose-chat blockquote {
+  border-left: 3px solid var(--edge);
+  padding-left: 10px;
+  color: var(--dim);
+}
+.prose-chat table {
+  border-collapse: collapse;
+}
+.prose-chat th,
+.prose-chat td {
+  border: 1px solid var(--line);
+  padding: 3px 8px;
+}
+
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
+}
+.prose-chat.streaming > :last-child::after {
+  content: "▍";
+  margin-left: 2px;
+  color: var(--dim);
+  animation: caret 1s steps(1) infinite;
+}
+
+/* Hamster animations. All of them stop for reduced motion. */
+@keyframes hamster-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2.5%);
+  }
+}
+@keyframes hamster-nibble {
+  0%,
+  100% {
+    transform: scaleY(1);
+  }
+  50% {
+    transform: scaleY(0.6);
+  }
+}
+@keyframes hamster-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  95% {
+    transform: scaleY(0.1);
+  }
+}
+@keyframes hamster-dizzy {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes hamster-zzz {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.7);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(6%, -14%) scale(1.1);
+  }
+}
+@keyframes hamster-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.015, 0.985);
+  }
+}
+
+.hamster-working .hamster-body {
+  animation: hamster-bob 0.5s ease-in-out infinite;
+  transform-origin: 50% 90%;
+}
+.hamster-working .hamster-mouth {
+  animation: hamster-nibble 0.25s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+}
+.hamster-idle .hamster-eye {
+  animation: hamster-blink 5s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.hamster-error .hamster-swirl {
+  animation: hamster-dizzy 1.6s linear infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.hamster-stopped .hamster-body {
+  animation: hamster-breathe 3.5s ease-in-out infinite;
+  transform-origin: 50% 90%;
+}
+.hamster-stopped .hamster-z {
+  animation: hamster-zzz 3s ease-in-out infinite;
+  transform-box: fill-box;
+}
+.hamster-stopped .hamster-z:nth-of-type(2) {
+  animation-delay: 1s;
+}
+.hamster-stopped .hamster-z:nth-of-type(3) {
+  animation-delay: 2s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hamster * {
+    animation: none !important;
+  }
+}
+
+/* Inside the desktop app on macOS the window has no title bar: the
+   traffic lights sit over the sidebar header, and headers drag the window. */
+html[data-shell="mac"] .shell-inset {
+  padding-left: 80px;
+}
+html[data-shell="mac"] .shell-titlebar {
+  -webkit-app-region: drag;
+}
+html[data-shell="mac"] .shell-titlebar :is(button, a, input, [role="button"]) {
+  -webkit-app-region: no-drag;
+}

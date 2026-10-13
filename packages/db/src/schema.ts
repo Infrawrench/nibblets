@@ -1,0 +1,135 @@
+import type {
+  Effort,
+  HamsterLook,
+  HarnessId,
+  Heartbeat,
+  McpServerDef,
+  NibbletStatus,
+  ThreadItem,
+} from "@nibblet/protocol";
+import {
+  bigint,
+  boolean,
+  index,
+  jsonb,
+  pgSequence,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  vector,
+} from "drizzle-orm/pg-core";
+
+/** Every embedding is this wide; the local model and any replacement must agree. */
+export const EMBEDDING_DIMENSIONS = 384;
+
+const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
+
+export const settings = pgTable("settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+});
+
+export const nibblets = pgTable("nibblets", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  look: jsonb("look").$type<HamsterLook>().notNull(),
+  harness: text("harness").$type<HarnessId>().notNull(),
+  model: text("model").notNull(),
+  effort: text("effort").$type<Effort>().notNull(),
+  instructions: text("instructions").notNull().default(""),
+  parentId: text("parent_id"),
+  status: text("status").$type<NibbletStatus>().notNull().default("stopped"),
+  statusDetail: text("status_detail"),
+  heartbeat: jsonb("heartbeat").$type<Heartbeat>().notNull(),
+  browser: boolean("browser").notNull().default(true),
+  hostTools: text("host_tools").array().notNull().default([]),
+  cliCredentials: text("cli_credentials").array().notNull().default([]),
+  /** Unmasked: the API masks header and env values on the way out. */
+  mcpServers: jsonb("mcp_servers").$type<McpServerDef[]>().notNull().default([]),
+  /** Hash of the token its runner and its tool calls authenticate with. */
+  tokenHash: text("token_hash").notNull(),
+  containerId: text("container_id"),
+  harnessSessionId: text("harness_session_id"),
+  createdAt: createdAt(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
+  lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
+});
+
+/** One global sequence, so "everything since seq N" works across nibblets. */
+export const itemSeq = pgSequence("item_seq");
+
+export const items = pgTable(
+  "items",
+  {
+    nibbletId: text("nibblet_id")
+      .notNull()
+      .references(() => nibblets.id, { onDelete: "cascade" }),
+    itemId: text("item_id").notNull(),
+    seq: bigint("seq", { mode: "number" }).notNull(),
+    item: jsonb("item").$type<ThreadItem>().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.nibbletId, t.itemId] }),
+    index("items_seq_idx").on(t.nibbletId, t.seq),
+  ],
+);
+
+export const schedules = pgTable("schedules", {
+  id: text("id").primaryKey(),
+  nibbletId: text("nibblet_id")
+    .notNull()
+    .references(() => nibblets.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  cron: text("cron"),
+  runAt: timestamp("run_at", { withTimezone: true }),
+  timezone: text("timezone").notNull().default("UTC"),
+  prompt: text("prompt").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  createdAt: createdAt(),
+});
+
+export const memories = pgTable(
+  "memories",
+  {
+    id: text("id").primaryKey(),
+    /** Null for memories shared by every nibblet on the server. */
+    nibbletId: text("nibblet_id").references(() => nibblets.id, { onDelete: "cascade" }),
+    /** `note`s are saved on purpose; `transcript` chunks are indexed from threads. */
+    kind: text("kind").$type<"note" | "transcript">().notNull().default("note"),
+    content: text("content").notNull(),
+    tags: text("tags").array().notNull().default([]),
+    embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("memories_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
+    index("memories_nibblet_idx").on(t.nibbletId, t.kind),
+  ],
+);
+
+export const peers = pgTable("peers", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  url: text("url").notNull(),
+  token: text("token").notNull(),
+  createdAt: createdAt(),
+});
+
+/** Long-lived sign-ins: the desktop app, a paired phone, a peer server. */
+export const authTokens = pgTable("auth_tokens", {
+  id: text("id").primaryKey(),
+  tokenHash: text("token_hash").notNull().unique(),
+  label: text("label").notNull(),
+  createdAt: createdAt(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+});
+
+export const pairingCodes = pgTable("pairing_codes", {
+  codeHash: text("code_hash").primaryKey(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: createdAt(),
+});

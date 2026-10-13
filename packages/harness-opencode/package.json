@@ -1,0 +1,19 @@
+{
+  "name": "@nibblet/harness-opencode",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@nibblet/harness": "workspace:*",
+    "@nibblet/protocol": "workspace:*",
+    "@opencode-ai/sdk": "^1.19.0",
+    "opencode-ai": "^1.19.0"
+  },
+  "devDependencies": {}
+}
