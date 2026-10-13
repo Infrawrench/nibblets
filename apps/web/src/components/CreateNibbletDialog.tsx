@@ -8,6 +8,7 @@ import {
   randomHamsterLook,
   type Effort,
   type HamsterLook,
+  type Nibblet,
 } from "@nibblet/protocol";
 import { HamsterEditor } from "./hamster/HamsterEditor.tsx";
 import { Hamster } from "./hamster/Hamster.tsx";
@@ -20,19 +21,7 @@ import { Switch } from "./ui/Switch.tsx";
 import { NibbletTools, type ToolsValue } from "./tools/NibbletTools.tsx";
 import { keys, useServers } from "../lib/servers.tsx";
 import { useServerNames } from "../lib/useServerNames.ts";
-
-const suggestedNames = [
-  "Pip",
-  "Biscuit",
-  "Mochi",
-  "Toffee",
-  "Peanut",
-  "Nugget",
-  "Hazel",
-  "Crumpet",
-  "Bean",
-  "Pudding",
-];
+import { nextHamsterName } from "../lib/hamsterNames.ts";
 
 export function CreateNibbletDialog({
   open,
@@ -68,7 +57,11 @@ export function CreateNibbletDialog({
     if (!open) return;
     setStep("look");
     setLook(randomHamsterLook());
-    setName(suggestedNames[Math.floor(Math.random() * suggestedNames.length)] ?? "Pip");
+    const taken = qc
+      .getQueriesData<Nibblet[]>({ queryKey: ["nibblets"] })
+      .flatMap(([, list]) => list ?? [])
+      .map((n) => n.name);
+    setName(nextHamsterName(taken));
     setMessage("");
     setTools({ hostTools: [], cliCredentials: [], mcpServers: [] });
     setError(null);
