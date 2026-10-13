@@ -38,6 +38,24 @@ RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
 # page if every tab is closed. See docker/chromium.sh.
 COPY --chmod=755 docker/chromium.sh /usr/local/bin/chromium
 
+# Debian seeds every new profile with its own bookmarks (Debian.org, Latest
+# News, Help) and a debian.org home page, and Chromium offers to sign in to
+# Google. A nibblet's browser starts clean, with sign-in and sync off.
+RUN node -e ' \
+  const fs = require("node:fs"); \
+  const path = "/etc/chromium/master_preferences"; \
+  const prefs = JSON.parse(fs.readFileSync(path, "utf8")); \
+  delete prefs.distribution.import_bookmarks_from_file; \
+  prefs.distribution.import_bookmarks = false; \
+  delete prefs.homepage; \
+  prefs.homepage_is_newtabpage = true; \
+  prefs.bookmark_bar = { show_on_all_tabs: false }; \
+  fs.writeFileSync(path, JSON.stringify(prefs, null, 2)); \
+' && rm -f /usr/share/chromium/initial_bookmarks.html \
+ && mkdir -p /etc/chromium/policies/managed \
+ && echo '{"BrowserSignin": 0, "SyncDisabled": true, "PromotionsEnabled": false}' \
+      > /etc/chromium/policies/managed/nibblet.json
+
 RUN corepack enable && corepack prepare pnpm@12.11.2 --activate
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
