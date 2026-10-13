@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Brain, CalendarClock, Globe, HeartPulse, PanelRight, Settings2 } from "lucide-react";
-import { findModel, harnesses } from "@nibblet/protocol";
+import { harnesses } from "@nibblet/protocol";
+import { modelLabel, useModels } from "../lib/models.ts";
 import { useNibblets, useServer, useThread } from "../lib/servers.tsx";
 import { runningTurn } from "../lib/thread.ts";
 import { storage } from "../lib/storage.ts";
@@ -38,6 +39,7 @@ export function NibbletPage({ server, id }: { server: string; id: string }) {
 function NibbletView({ connection, id }: { connection: ServerConnection; id: string }) {
   const nibblets = useNibblets(connection);
   const thread = useThread(connection, id);
+  const catalogue = useModels(connection);
   const [panel, setPanelState] = useState<PanelTab | null>(initialPanel);
   const setPanel = (p: PanelTab | null) => {
     setPanelState(p);
@@ -54,7 +56,7 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
   const parent = nibblet.parentId
     ? nibblets.data?.find((n) => n.id === nibblet.parentId)
     : undefined;
-  const model = findModel(nibblet.harness, nibblet.model);
+  const model = catalogue.find(nibblet.harness, nibblet.model);
 
   return (
     <div className="flex min-w-0 flex-1">
@@ -79,7 +81,7 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
             </span>
             <span className="flex items-center gap-1 truncate text-2xs text-faint">
               <HarnessIcon harness={nibblet.harness} className="size-3" />
-              {harnesses[nibblet.harness].label} · {model?.label ?? nibblet.model}
+              {harnesses[nibblet.harness].label} · {modelLabel(model, nibblet.model)}
               {nibblet.heartbeat.enabled ? (
                 <>
                   {" · "}

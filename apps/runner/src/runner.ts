@@ -113,6 +113,7 @@ export class Runner {
       config.mcpServers,
       // Changed logins need a fresh harness so its agents see the new env.
       config.cli,
+      config.opencodeLogin,
     ]);
     if (this.session?.key === key) return this.session.session;
     await this.session?.session.close();

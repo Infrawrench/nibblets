@@ -43,6 +43,17 @@ Harnesses get two MCP servers:
 
 Harness plugins live in `packages/harness-*` and implement `HarnessPlugin` from `@nibblet/harness`, using `TurnWriter` to turn deltas into thread items.
 
+### OpenCode
+
+OpenCode nibblets use the host's own OpenCode account, not the credential proxy. The host bridge reports whether OpenCode is set up (`GET /harness/opencode`: the CLI, OpenCode.app, or a config or login in its XDG directories) and hands over the config and `auth.json` (`GET /harness/opencode/login`, bridge token only).
+
+- **The model picker:** `harnesses.models({ harness: "opencode" })` lists whatever OpenCode offers for that login. The server runs `apps/runner/src/opencode-models.ts` in a throwaway runner container with the login on stdin, so the list is exactly what a nibblet will see, and caches it for a minute. The host doesn't need the CLI.
+- **On each configure:** the server fetches the login fresh and sends it only over the runner socket. The runner writes it into the container's OpenCode config and data directories.
+- **What changes in the container:** the host config's `mcp` section is dropped, because the nibblet brings its own servers. Provider URLs on the host's `localhost` or `127.0.0.1` are pointed at `host.docker.internal`, so a local Ollama still resolves.
+- **Not written back:** a provider whose OAuth token refreshes inside the container doesn't write it back to the host.
+- **Without a bridge or a login:** OpenCode falls back to Anthropic and OpenAI through the credential proxy.
+- **Effort:** OpenCode has no effort setting, so its models carry none and the effort menu is hidden.
+
 ## Tools (`/mcp` on the server)
 
 | Tool                                | What it does                                                                              |

@@ -1,3 +1,4 @@
+import { Writable } from "node:stream";
 import Docker from "dockerode";
 import { CONTAINER_SSH_AUTH_SOCK, type RunnerEnv } from "@nibblet/protocol";
 import type { Config } from "./config.ts";
@@ -61,6 +62,8 @@ export class Orchestrator {
         ShmSize: 1024 * 1024 * 1024,
         Memory: 4 * 1024 * 1024 * 1024,
         RestartPolicy: { Name: "no" },
+        // Docker Desktop provides this itself; Linux engines need it spelt out.
+        ExtraHosts: ["host.docker.internal:host-gateway"],
         // The host's agent, never its keys: the container can sign, not copy.
         ...(opts.sshAgent && this.config.HOST_SSH_AUTH_SOCK
           ? {
@@ -76,6 +79,67 @@ export class Orchestrator {
     });
     await container.start();
     return container.id;
+  }
+
+  /**
+   * Runs a command to completion in a throwaway runner container, with
+   * `stdin` piped in. For short jobs that need the runner image's tools, such
+   * as listing OpenCode's models exactly as a nibblet would see them.
+   */
+  async runOnce(
+    cmd: string[],
+    stdin: string,
+    timeoutMs = 90_000,
+  ): Promise<{ code: number; stdout: string; stderr: string }> {
+    const container = await this.docker.createContainer({
+      Image: this.config.NIBBLET_RUNNER_IMAGE,
+      Cmd: cmd,
+      Labels: { [MANAGED]: "true", [ROLE]: "oneshot" },
+      AttachStdin: true,
+      AttachStdout: true,
+      AttachStderr: true,
+      OpenStdin: true,
+      StdinOnce: true,
+      Tty: false,
+      HostConfig: {
+        NetworkMode: this.config.NIBBLET_NETWORK,
+        ExtraHosts: ["host.docker.internal:host-gateway"],
+      },
+    });
+    try {
+      const stream = await container.attach({
+        stream: true,
+        stdin: true,
+        stdout: true,
+        stderr: true,
+        hijack: true,
+      });
+      const out: Buffer[] = [];
+      const err: Buffer[] = [];
+      const collect = (into: Buffer[]) =>
+        new Writable({
+          write(chunk: Buffer, _enc, done) {
+            into.push(chunk);
+            done();
+          },
+        });
+      this.docker.modem.demuxStream(stream, collect(out), collect(err));
+      const ended = new Promise<void>((resolve) => stream.once("end", () => resolve()));
+      await container.start();
+      stream.end(stdin);
+      const timer = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("timed out")), timeoutMs).unref(),
+      );
+      const result: { StatusCode: number } = await Promise.race([container.wait(), timer]);
+      await Promise.race([ended, new Promise((r) => setTimeout(r, 1000))]);
+      return {
+        code: result.StatusCode,
+        stdout: Buffer.concat(out).toString("utf8"),
+        stderr: Buffer.concat(err).toString("utf8"),
+      };
+    } finally {
+      await container.remove({ force: true }).catch(() => undefined);
+    }
   }
 
   async stopRunner(nibbletId: string): Promise<void> {

@@ -87,7 +87,7 @@ export function systemPrompt(input: SystemPromptInput): string {
   ];
   if (nibblet.browser) {
     rules.push(
-      "You have a Chromium browser through the `computer` tools (OpenComputerUse). The user can watch it and take control; if they have, wait for them rather than fighting over the mouse.",
+      "You have a Chromium browser through the `computer` tools (OpenComputerUse): `list_sessions` first, and if none is open, `start_session` with app `chromium` (pass the URL as an argument). The user can watch it and take control; if they're using it, wait rather than fighting over the mouse.",
     );
   }
   parts.push(`## How you work\n\n${rules.map((r) => `- ${r}`).join("\n")}`);

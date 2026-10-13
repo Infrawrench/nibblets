@@ -10,6 +10,7 @@ import { cliLogins } from "./clilogins.ts";
 import type { Config } from "./config.ts";
 import { heartbeatInput, isQuiet, systemPrompt } from "./context.ts";
 import { dropOverlaps, hostTools } from "./hostmcp.ts";
+import { opencodeLogin } from "./opencode.ts";
 import type { Orchestrator } from "./docker.ts";
 import { hashToken, newId, viewToken, type Store } from "./store.ts";
 
@@ -227,6 +228,10 @@ export class Conductor {
         cli: await cliLogins(this.config, row.cliCredentials, (m) =>
           console.warn(`[${nibbletId}] ${m}`),
         ),
+        opencodeLogin:
+          row.harness === "opencode"
+            ? await opencodeLogin(this.config, (m) => console.warn(`[${nibbletId}] ${m}`))
+            : null,
       },
     });
   }

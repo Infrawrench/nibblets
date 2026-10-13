@@ -1,7 +1,6 @@
 /**
- * OpenComputerUse, the nibblet's browser. Kept in one module because its
- * long-lived mode is still settling: OCU is gaining a Wayland backend and a
- * view socket, and the exact command line may change.
+ * OpenComputerUse (0.7 or later), the nibblet's browser, on a headless
+ * Wayland display.
  *
  * One OCU process runs for the life of the container so the agent (over
  * MCP) and the person watching (over the view socket on port 7900, proxied
@@ -21,7 +20,7 @@ import { randomBytes } from "node:crypto";
 import type { McpServerSpec } from "@nibblet/harness";
 
 const DEFAULT_ARGS =
-  "serve --listen 127.0.0.1:7800 --token {token} --view-listen 0.0.0.0:7900 --view-token {viewToken} --linux-display wayland";
+  "serve --port 7800 --token {token} --view-listen 0.0.0.0:7900 --view-token {viewToken}";
 const DEFAULT_MCP_URL = "http://127.0.0.1:7800/mcp";
 
 export interface Computer {
@@ -41,13 +40,21 @@ export async function startComputer(
     .map((a) => a.replaceAll("{token}", token).replaceAll("{viewToken}", viewToken));
   const url = process.env.OCU_MCP_URL ?? DEFAULT_MCP_URL;
   const stdio: Computer = {
-    mcp: { type: "stdio", command, args: ["mcp"], env: { OCU_LINUX_DISPLAY: "wayland" } },
+    mcp: {
+      type: "stdio",
+      command,
+      args: ["mcp", "--view-listen", "0.0.0.0:7900", "--view-token", viewToken],
+      env: { OCU_LINUX_DISPLAY: "wayland" },
+    },
     stop() {},
   };
 
   let child: ChildProcess;
   try {
-    child = spawn(command, args, { stdio: ["ignore", "inherit", "inherit"] });
+    child = spawn(command, args, {
+      stdio: ["ignore", "inherit", "inherit"],
+      env: { ...process.env, OCU_LINUX_DISPLAY: "wayland" },
+    });
   } catch (err) {
     log("warn", `OpenComputerUse serve failed to start (${String(err)}); using stdio`);
     return stdio;

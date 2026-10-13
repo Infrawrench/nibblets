@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { ArrowUp, Square } from "lucide-react";
-import { findModel, type Nibblet } from "@nibblet/protocol";
+import type { Nibblet } from "@nibblet/protocol";
+import { useModels } from "../../lib/models.ts";
 import { ModelPicker } from "../ModelPicker.tsx";
 import { EffortMenu } from "../EffortMenu.tsx";
 import { cn } from "../../lib/cn.ts";
@@ -19,7 +20,8 @@ export function Composer({
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
-  const model = findModel(nibblet.harness, nibblet.model);
+  const catalogue = useModels(connection);
+  const model = catalogue.find(nibblet.harness, nibblet.model);
   const asleep = nibblet.status === "stopped";
 
   // Clears straight away: the message shows up in the thread as soon as the
@@ -68,15 +70,17 @@ export function Composer({
         />
         <div className="flex items-center gap-0.5 px-2 pb-2">
           <ModelPicker
+            catalogue={catalogue}
             value={{ harness: nibblet.harness, model: nibblet.model }}
             onChange={(choice, option) =>
               void connection.client.nibblets.update({
                 id: nibblet.id,
                 harness: choice.harness,
                 model: choice.model,
-                effort: option.efforts.includes(nibblet.effort)
-                  ? nibblet.effort
-                  : option.defaultEffort,
+                effort:
+                  option.efforts.length === 0 || option.efforts.includes(nibblet.effort)
+                    ? nibblet.effort
+                    : option.defaultEffort,
               })
             }
           />

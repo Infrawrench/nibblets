@@ -13,6 +13,8 @@ export function EffortMenu({
   value: Effort;
   onChange: (effort: Effort) => void;
 }) {
+  // Models without effort levels (OpenCode's) get no menu at all.
+  if (model && model.efforts.length === 0) return null;
   const efforts = model?.efforts ?? [value];
   return (
     <Menu.Root>

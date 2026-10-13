@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Moon, Pencil, Power, Trash2 } from "lucide-react";
-import { findModel, type Heartbeat, type Nibblet } from "@nibblet/protocol";
+import type { Heartbeat, Nibblet } from "@nibblet/protocol";
+import { modelLabel, useModels } from "../../lib/models.ts";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { Hamster } from "../hamster/Hamster.tsx";
 import { HamsterDialog } from "../hamster/HamsterDialog.tsx";
@@ -20,6 +21,7 @@ export function NibbletSettings({
   nibblet: Nibblet;
 }) {
   const navigate = useNavigate();
+  const catalogue = useModels(connection);
   const [name, setName] = useState(nibblet.name);
   const [instructions, setInstructions] = useState(nibblet.instructions);
   const [heartbeat, setHeartbeat] = useState<Heartbeat>(nibblet.heartbeat);
@@ -49,7 +51,7 @@ export function NibbletSettings({
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate font-medium">{nibblet.name}</span>
           <span className="text-2xs text-faint">
-            {findModel(nibblet.harness, nibblet.model)?.label ?? nibblet.model}
+            {modelLabel(catalogue.find(nibblet.harness, nibblet.model), nibblet.model)}
           </span>
         </div>
         <Button size="sm" onClick={() => setEditing(true)}>
@@ -85,20 +87,22 @@ export function NibbletSettings({
       <FieldRow label="Model">
         <div className="flex items-center gap-1">
           <ModelPicker
+            catalogue={catalogue}
             value={{ harness: nibblet.harness, model: nibblet.model }}
             className="border border-edge bg-field"
             onChange={(choice, option) =>
               void update({
                 id: nibblet.id,
                 ...choice,
-                effort: option.efforts.includes(nibblet.effort)
-                  ? nibblet.effort
-                  : option.defaultEffort,
+                effort:
+                  option.efforts.length === 0 || option.efforts.includes(nibblet.effort)
+                    ? nibblet.effort
+                    : option.defaultEffort,
               })
             }
           />
           <EffortMenu
-            model={findModel(nibblet.harness, nibblet.model)}
+            model={catalogue.find(nibblet.harness, nibblet.model)}
             value={nibblet.effort}
             onChange={(effort) => void update({ id: nibblet.id, effort })}
           />

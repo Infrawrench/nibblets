@@ -4,6 +4,7 @@ import {
   createDispatcher,
   defaultHamsterLook,
   harnesses,
+  opencodeModel,
   maskMcpServers,
   mergeMcpServers,
   randomHamsterLook,
@@ -26,6 +27,19 @@ import {
   type LiveState,
   type ServerConnection,
 } from "./connection.ts";
+
+/** What a host's OpenCode might offer: Zen's free models and a couple of its own providers. */
+const mockOpencodeModels = [
+  { id: "opencode/big-pickle", provider: "opencode", name: "Big Pickle" },
+  { id: "opencode/space-bunny-free", provider: "opencode", name: "Space Bunny (free)" },
+  { id: "neon/claude-opus-5-5", provider: "neon", name: "Claude Opus 5.5" },
+  { id: "neon/gpt-5-3-codex", provider: "neon", name: "GPT-5.3 Codex" },
+  {
+    id: "my-friends-apartment/qwen3.6:27b",
+    provider: "my-friends-apartment",
+    name: "Qwen 3.6 27B",
+  },
+].map(opencodeModel);
 
 const mockHostTools: HostTool[] = [
   {
@@ -147,7 +161,7 @@ export function createMockServer(): ServerConnection {
         id: "mochi",
         name: "Mochi",
         harness: "opencode",
-        model: harnesses.opencode.defaultModel,
+        model: "opencode/big-pickle",
         status: "stopped",
         look: {
           ...defaultHamsterLook,
@@ -633,6 +647,12 @@ export function createMockServer(): ServerConnection {
               : { mode: "token", state: "up", url: `https://${config.hostname}`, detail: null };
         return tunnel;
       },
+    },
+    harnesses: {
+      models: async ({ harness }) =>
+        harness === "opencode"
+          ? { harness, state: "ready", detail: null, models: mockOpencodeModels }
+          : { harness, state: "ready", detail: null, models: [...harnesses[harness].models] },
     },
     hostTools: {
       list: async () => ({ connected: true, detail: null, servers: mockHostTools }),

@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { Popover } from "@base-ui/react/popover";
-import { Check, ChevronDown, Search } from "lucide-react";
+import { Check, ChevronDown, Loader2, Search } from "lucide-react";
 import { HarnessId, harnesses, type ModelOption } from "@nibblet/protocol";
 import { HarnessIcon } from "./HarnessIcon.tsx";
 import { cn } from "../lib/cn.ts";
+import { modelLabel, type ModelCatalogue } from "../lib/models.ts";
 
 export interface ModelChoice {
   harness: HarnessId;
@@ -13,31 +14,38 @@ export interface ModelChoice {
 /**
  * The model picker, after T3 Code's: a rail of harnesses on the left, and a
  * searchable list of that harness's models on the right. Searching looks
- * across every harness.
+ * across every harness. OpenCode's models are whatever the host's OpenCode
+ * is signed in to, grouped by provider.
  */
 export function ModelPicker({
   value,
   onChange,
+  catalogue,
   className,
 }: {
   value: ModelChoice;
   onChange: (choice: ModelChoice, model: ModelOption) => void;
+  catalogue: ModelCatalogue;
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [rail, setRail] = useState<HarnessId>(value.harness);
   const [query, setQuery] = useState("");
-  const current = harnesses[value.harness].models.find((m) => m.id === value.model);
+  const current = catalogue.find(value.harness, value.model);
+  const railState = catalogue.forHarness(rail);
 
-  const rows = useMemo(() => {
+  const rows = useMemo((): Row[] => {
     const q = query.trim().toLowerCase();
-    if (!q) return harnesses[rail].models.map((model) => ({ harness: rail, model }));
+    if (!q) return withHeadings(rail, railState.models);
     return HarnessId.options.flatMap((h) =>
-      harnesses[h].models
-        .filter((m) => `${m.label} ${m.id} ${harnesses[h].label}`.toLowerCase().includes(q))
-        .map((model) => ({ harness: h, model })),
+      catalogue
+        .forHarness(h)
+        .models.filter((m) =>
+          `${m.label} ${m.id} ${m.provider} ${harnesses[h].label}`.toLowerCase().includes(q),
+        )
+        .map((model): Row => ({ kind: "model", harness: h, model })),
     );
-  }, [rail, query]);
+  }, [rail, railState.models, query, catalogue]);
 
   return (
     <Popover.Root
@@ -57,7 +65,7 @@ export function ModelPicker({
         )}
       >
         <HarnessIcon harness={value.harness} className="size-3.5" />
-        <span className="truncate">{current?.label ?? value.model}</span>
+        <span className="truncate">{modelLabel(current, value.model)}</span>
         <ChevronDown className="size-3 shrink-0 opacity-60" />
       </Popover.Trigger>
       <Popover.Portal>
@@ -103,10 +111,28 @@ export function ModelPicker({
                 </div>
               ) : null}
               <div className="min-h-0 flex-1 overflow-y-auto p-1">
-                {rows.length === 0 ? (
+                {!query && railState.loading ? (
+                  <div className="flex items-center gap-2 p-3 text-xs text-faint">
+                    <Loader2 className="size-3.5 animate-spin" />
+                    Asking {harnesses[rail].label} what it can use…
+                  </div>
+                ) : !query && railState.unavailable ? (
+                  <div className="p-3 text-xs text-dim">{railState.unavailable}</div>
+                ) : rows.length === 0 ? (
                   <div className="p-3 text-xs text-faint">No models match.</div>
                 ) : null}
-                {rows.map(({ harness, model }) => {
+                {rows.map((row) => {
+                  if (row.kind === "heading") {
+                    return (
+                      <div
+                        key={`heading:${row.provider}`}
+                        className="px-2 pt-2 pb-0.5 text-2xs font-medium text-faint"
+                      >
+                        {row.provider}
+                      </div>
+                    );
+                  }
+                  const { harness, model } = row;
                   const selected = harness === value.harness && model.id === value.model;
                   return (
                     <button
@@ -137,7 +163,9 @@ export function ModelPicker({
                               {harnesses[harness].label} ·{" "}
                             </>
                           ) : null}
-                          {model.description}
+                          {harnesses[harness].dynamicModels
+                            ? `${model.provider}/${modelLabel(undefined, model.id)}`
+                            : model.description}
                         </span>
                       </span>
                       {selected ? <Check className="size-3.5 shrink-0 text-accent" /> : null}
@@ -151,4 +179,24 @@ export function ModelPicker({
       </Popover.Portal>
     </Popover.Root>
   );
+}
+
+type Row =
+  { kind: "heading"; provider: string } | { kind: "model"; harness: HarnessId; model: ModelOption };
+
+/** Live lists span many providers, so each gets a small heading. */
+function withHeadings(harness: HarnessId, models: readonly ModelOption[]): Row[] {
+  if (!harnesses[harness].dynamicModels) {
+    return models.map((model) => ({ kind: "model", harness, model }));
+  }
+  const rows: Row[] = [];
+  let provider: string | null = null;
+  for (const model of models) {
+    if (model.provider !== provider) {
+      provider = model.provider;
+      rows.push({ kind: "heading", provider });
+    }
+    rows.push({ kind: "model", harness, model });
+  }
+  return rows;
 }

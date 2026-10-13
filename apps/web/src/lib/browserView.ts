@@ -2,24 +2,17 @@ import { z } from "zod";
 import { safeJson, type ServerConnection } from "./connection.ts";
 
 /*
- * ─── OpenComputerUse view protocol ──────────────────────────────────────────
+ * OpenComputerUse's view protocol (0.7+), as served inside each nibblet's
+ * container. The nibblet server proxies `/api/nibblets/:id/computer/*`
+ * (HTTP and WebSocket) to it and adds OCU's token; HTTP here carries the
+ * usual Bearer header and WebSockets take `?ticket=`.
  *
- * Everything that depends on OCU's view server lives in this file. The
- * nibblet server proxies `/api/nibblets/:id/computer/*` (HTTP and WebSocket)
- * to OCU inside the nibblet's container and adds OCU's own auth. HTTP here
- * uses the usual Bearer header; WebSockets take `?ticket=`.
- *
- * PROVISIONAL: OCU's paths and messages aren't final. When the spec lands,
- * fix up `paths`, the schemas, and `ViewInput` below; nothing else in the UI
- * needs to change.
- *
- *   GET  computer/sessions                     → sessions (array, or { sessions })
- *   POST computer/sessions {app, display}      → the started session
+ *   GET  computer/sessions                 → { sessions: [Session] }
+ *   POST computer/sessions {app, display}  → 201 Session
  *   WS   computer/sessions/{id}/view
- *        server → client  binary: one encoded image (JPEG or PNG) of the window
- *        server → client  text:   JSON `ViewServerMessage`
- *        client → server  text:   JSON `ViewInput`
- * ────────────────────────────────────────────────────────────────────────────
+ *        server → client  text:   hello | windows | error | ended
+ *        server → client  binary: 20-byte little-endian header, then a JPEG or PNG
+ *        client → server  text:   ViewInput
  */
 
 export const paths = {
@@ -27,41 +20,84 @@ export const paths = {
   view: (sessionId: string) => `computer/sessions/${encodeURIComponent(sessionId)}/view`,
 };
 
+/** A wrapper in the runner image that adds the flags Chromium needs in a container. */
 export const BROWSER_APP = "chromium";
 
+export const OcuWindow = z.looseObject({
+  id: z.number(),
+  title: z.string(),
+  frame: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }),
+  on_screen: z.boolean(),
+});
+export type OcuWindow = z.infer<typeof OcuWindow>;
+
 export const OcuSession = z.looseObject({
-  id: z.string(),
-  app: z.string().optional(),
-  display: z.string().optional(),
+  session_id: z.string(),
+  session: z.looseObject({ id: z.string(), app: z.string() }),
+  windows: z.array(OcuWindow),
 });
 export type OcuSession = z.infer<typeof OcuSession>;
 
-const SessionList = z.union([
-  z.array(OcuSession),
-  z.looseObject({ sessions: z.array(OcuSession) }),
-]);
-const StartedSession = z.union([OcuSession, z.looseObject({ session: OcuSession })]);
-
-export const ViewServerMessage = z.union([
+export const ViewServerMessage = z.discriminatedUnion("type", [
   z.looseObject({
-    type: z.literal("window"),
-    width: z.number(),
-    height: z.number(),
-    title: z.string().optional(),
+    type: z.literal("hello"),
+    windows: z.array(OcuWindow),
+    window: z.number().nullable(),
   }),
-  z.looseObject({ type: z.literal("closed") }),
-  z.looseObject({ type: z.string() }),
+  z.looseObject({
+    type: z.literal("windows"),
+    windows: z.array(OcuWindow),
+    window: z.number().nullable(),
+  }),
+  z.looseObject({ type: z.literal("error"), message: z.string() }),
+  z.looseObject({ type: z.literal("ended") }),
 ]);
 export type ViewServerMessage = z.infer<typeof ViewServerMessage>;
 
-export type PointerButton = "left" | "middle" | "right";
+/** `MouseEvent.button`: 0 left, 1 middle, 2 right. */
+export type PointerButton = 0 | 1 | 2;
 
 export type ViewInput =
   | { type: "pointer"; action: "move" | "down" | "up"; x: number; y: number; button: PointerButton }
   | { type: "wheel"; x: number; y: number; dx: number; dy: number }
   | { type: "key"; action: "down" | "up"; code: string; key: string }
   | { type: "text"; text: string }
-  | { type: "resize"; width: number; height: number };
+  | { type: "resize"; width: number; height: number }
+  | { type: "window"; id: number }
+  | { type: "refresh" };
+
+/** One picture: either the whole window (a keyframe) or a patch to draw over it. */
+export interface ViewFrame {
+  bitmap: ImageBitmap;
+  windowId: number;
+  x: number;
+  y: number;
+  windowWidth: number;
+  windowHeight: number;
+  keyframe: boolean;
+}
+
+const HEADER_BYTES = 20;
+
+/** Splits a binary view message into its header fields and the encoded image. */
+export function parseFrameHeader(
+  data: ArrayBuffer,
+): (Omit<ViewFrame, "bitmap"> & { mime: string; image: ArrayBuffer }) | null {
+  if (data.byteLength < HEADER_BYTES) return null;
+  const v = new DataView(data);
+  if (v.getUint8(0) !== 1) return null;
+  const format = v.getUint8(1);
+  return {
+    mime: format === 2 ? "image/png" : "image/jpeg",
+    keyframe: (v.getUint16(2, true) & 1) === 1,
+    windowId: v.getUint32(4, true),
+    x: v.getUint16(8, true),
+    y: v.getUint16(10, true),
+    windowWidth: v.getUint16(16, true),
+    windowHeight: v.getUint16(18, true),
+    image: data.slice(HEADER_BYTES),
+  };
+}
 
 function nibbletPath(nibbletId: string, path: string): string {
   return `/api/nibblets/${encodeURIComponent(nibbletId)}/${path}`;
@@ -73,8 +109,7 @@ export async function listSessions(
 ): Promise<OcuSession[]> {
   const res = await conn.request(nibbletPath(nibbletId, paths.sessions));
   if (!res.ok) throw new Error(`Couldn't list browser sessions (${res.status})`);
-  const parsed = SessionList.parse(await res.json());
-  return Array.isArray(parsed) ? parsed : parsed.sessions;
+  return z.object({ sessions: z.array(OcuSession) }).parse(await res.json()).sessions;
 }
 
 export async function openBrowser(conn: ServerConnection, nibbletId: string): Promise<OcuSession> {
@@ -84,22 +119,16 @@ export async function openBrowser(conn: ServerConnection, nibbletId: string): Pr
     body: JSON.stringify({ app: BROWSER_APP, display: "wayland" }),
   });
   if (!res.ok) throw new Error(`Couldn't open the browser (${res.status})`);
-  const parsed = StartedSession.parse(await res.json());
-  return "session" in parsed && typeof parsed.session === "object"
-    ? OcuSession.parse(parsed.session)
-    : OcuSession.parse(parsed);
+  return OcuSession.parse(await res.json());
 }
 
-export type ViewState = "connecting" | "open" | "closed" | "error";
+export type ViewState = "connecting" | "open" | "closed" | "ended" | "error";
 
-/**
- * A live view of one OCU session window. Frames arrive as encoded images
- * and are decoded off the main thread with createImageBitmap.
- */
+/** A live view of one OCU session. Images are decoded off the main thread. */
 export class BrowserView {
   private socket: WebSocket | null = null;
   private closed = false;
-  private readonly frameListeners = new Set<(frame: ImageBitmap) => void>();
+  private readonly frameListeners = new Set<(frame: ViewFrame) => void>();
   private readonly messageListeners = new Set<(m: ViewServerMessage) => void>();
   private readonly stateListeners = new Set<(s: ViewState) => void>();
 
@@ -110,7 +139,7 @@ export class BrowserView {
     );
   }
 
-  onFrame(l: (frame: ImageBitmap) => void): () => void {
+  onFrame(l: (frame: ViewFrame) => void): () => void {
     this.frameListeners.add(l);
     return () => this.frameListeners.delete(l);
   }
@@ -138,23 +167,29 @@ export class BrowserView {
     if (this.closed) return;
     this.setState("connecting");
     const socket = new WebSocket(url);
-    socket.binaryType = "blob";
+    socket.binaryType = "arraybuffer";
     this.socket = socket;
+    let ended = false;
     socket.onopen = () => this.setState("open");
     socket.onerror = () => this.setState("error");
-    socket.onclose = () => this.setState("closed");
-    socket.onmessage = (event) => {
-      if (event.data instanceof Blob) {
-        void createImageBitmap(event.data).then(
-          (bitmap) => this.frameListeners.forEach((l) => l(bitmap)),
-          () => {},
-        );
-        return;
-      }
+    socket.onclose = () => this.setState(ended ? "ended" : "closed");
+    // Patches must land in order, so decoding is chained rather than raced.
+    let decoding: Promise<void> = Promise.resolve();
+    socket.onmessage = (event: MessageEvent<ArrayBuffer | string>) => {
       if (typeof event.data === "string") {
         const parsed = ViewServerMessage.safeParse(safeJson(event.data));
-        if (parsed.success) this.messageListeners.forEach((l) => l(parsed.data));
+        if (!parsed.success) return;
+        if (parsed.data.type === "ended") ended = true;
+        this.messageListeners.forEach((l) => l(parsed.data));
+        return;
       }
+      const frame = parseFrameHeader(event.data);
+      if (!frame) return;
+      const { image, mime, ...rest } = frame;
+      decoding = decoding
+        .then(() => createImageBitmap(new Blob([image], { type: mime })))
+        .then((bitmap) => this.frameListeners.forEach((l) => l({ ...rest, bitmap })))
+        .catch(() => {});
     };
   }
 
@@ -171,8 +206,12 @@ export function viewUrl(
   return conn.socketUrl(nibbletPath(nibbletId, paths.view(sessionId)));
 }
 
-const BUTTONS: Record<number, PointerButton> = { 0: "left", 1: "middle", 2: "right" };
-
 export function pointerButton(button: number): PointerButton {
-  return BUTTONS[button] ?? "left";
+  return button === 1 || button === 2 ? button : 0;
+}
+
+/** Wheel deltas in pixels, whatever unit the browser reported them in. */
+export function wheelPixels(e: { deltaX: number; deltaY: number; deltaMode: number }) {
+  const scale = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1;
+  return { dx: Math.round(e.deltaX * scale), dy: Math.round(e.deltaY * scale) };
 }

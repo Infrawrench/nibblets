@@ -3,7 +3,6 @@ import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
 import {
-  findModel,
   harnesses,
   randomHamsterLook,
   type Effort,
@@ -22,6 +21,7 @@ import { NibbletTools, type ToolsValue } from "./tools/NibbletTools.tsx";
 import { keys, useServers } from "../lib/servers.tsx";
 import { useServerNames } from "../lib/useServerNames.ts";
 import { nextHamsterName } from "../lib/hamsterNames.ts";
+import { useModels } from "../lib/models.ts";
 
 export function CreateNibbletDialog({
   open,
@@ -68,6 +68,7 @@ export function CreateNibbletDialog({
   }, [open]);
 
   const target = servers.byId(server);
+  const catalogue = useModels(target);
 
   const create = async () => {
     const connection = servers.byId(server);
@@ -127,14 +128,16 @@ export function CreateNibbletDialog({
             <div className="flex items-center gap-1">
               <ModelPicker
                 value={choice}
+                catalogue={catalogue}
                 className="border border-edge bg-field"
                 onChange={(c, option) => {
                   setChoice(c);
-                  if (!option.efforts.includes(effort)) setEffort(option.defaultEffort);
+                  if (option.efforts.length > 0 && !option.efforts.includes(effort))
+                    setEffort(option.defaultEffort);
                 }}
               />
               <EffortMenu
-                model={findModel(choice.harness, choice.model)}
+                model={catalogue.find(choice.harness, choice.model)}
                 value={effort}
                 onChange={setEffort}
               />

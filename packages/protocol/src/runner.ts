@@ -9,6 +9,17 @@ import { ThreadItem, TurnSource, Usage } from "./schema.ts";
  * server sends everything a turn needs and stores everything it produces.
  */
 
+/**
+ * The host's OpenCode config and auth.json, as text, for OpenCode nibblets
+ * to run on the user's own OpenCode account. Sent only over the runner
+ * socket; never stored.
+ */
+export const OpencodeLogin = z.object({
+  config: z.string().nullable(),
+  auth: z.string().nullable(),
+});
+export type OpencodeLogin = z.infer<typeof OpencodeLogin>;
+
 export const RunnerConfig = z.object({
   nibbletId: z.string(),
   name: z.string(),
@@ -23,6 +34,8 @@ export const RunnerConfig = z.object({
   mcpServers: z.array(McpServerDef).default([]),
   /** Borrowed host CLI logins, fetched fresh on every configure. Never stored. */
   cli: z.array(CliLogin).default([]),
+  /** For OpenCode nibblets: the host's OpenCode login, or null to use the credential proxy. */
+  opencodeLogin: OpencodeLogin.nullable().default(null),
 });
 export type RunnerConfig = z.infer<typeof RunnerConfig>;
 

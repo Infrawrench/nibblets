@@ -8,6 +8,7 @@ import {
   openBrowser,
   pointerButton,
   viewUrl,
+  wheelPixels,
   type ViewInput,
   type ViewState,
 } from "../../lib/browserView.ts";
@@ -76,10 +77,11 @@ export function BrowserPanel({
   }
   return (
     <LiveView
-      key={session.id}
+      key={session.session_id}
       connection={connection}
       nibbletId={nibblet.id}
-      sessionId={session.id}
+      sessionId={session.session_id}
+      onEnded={() => void qc.invalidateQueries({ queryKey: sessionsKey })}
     />
   );
 }
@@ -88,10 +90,13 @@ function LiveView({
   connection,
   nibbletId,
   sessionId,
+  onEnded,
 }: {
   connection: ServerConnection;
   nibbletId: string;
   sessionId: string;
+  /** The browser was closed: go back to offering to open one. */
+  onEnded: () => void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [view, setView] = useState<BrowserView | null>(null);
@@ -103,20 +108,29 @@ function LiveView({
   useEffect(() => {
     const v = new BrowserView(viewUrl(connection, nibbletId, sessionId));
     const offs = [
-      v.onState(setState),
+      v.onState((s) => {
+        setState(s);
+        if (s === "ended") onEnded();
+      }),
       v.onFrame((frame) => {
         const el = canvas.current;
         const ctx = el?.getContext("2d");
         if (!el || !ctx) return;
-        if (el.width !== frame.width || el.height !== frame.height) {
-          el.width = frame.width;
-          el.height = frame.height;
+        // Keyframes carry the whole window; anything else is a patch over it.
+        if (
+          frame.keyframe &&
+          (el.width !== frame.windowWidth || el.height !== frame.windowHeight)
+        ) {
+          el.width = frame.windowWidth;
+          el.height = frame.windowHeight;
         }
-        ctx.drawImage(frame, 0, 0);
-        frame.close();
+        ctx.drawImage(frame.bitmap, frame.x, frame.y);
+        frame.bitmap.close();
       }),
       v.onMessage((m) => {
-        if (m.type === "window" && "title" in m && typeof m.title === "string") setTitle(m.title);
+        if (m.type === "hello" || m.type === "windows") {
+          setTitle(m.windows.find((w) => w.id === m.window)?.title ?? null);
+        }
       }),
     ];
     setView(v);
@@ -202,9 +216,9 @@ function LiveView({
           onPointerUp={(e) =>
             send({ type: "pointer", action: "up", ...toWindow(e), button: pointerButton(e.button) })
           }
-          onWheel={(e) => send({ type: "wheel", ...toWindow(e), dx: e.deltaX, dy: e.deltaY })}
+          onWheel={(e) => send({ type: "wheel", ...toWindow(e), ...wheelPixels(e) })}
           onKeyDown={(e) => {
-            if (!control) return;
+            if (!control || e.nativeEvent.isComposing) return;
             e.preventDefault();
             send({ type: "key", action: "down", code: e.code, key: e.key });
           }}

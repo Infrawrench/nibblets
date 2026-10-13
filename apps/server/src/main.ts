@@ -10,6 +10,7 @@ import { loadConfig } from "./config.ts";
 import { Orchestrator } from "./docker.ts";
 import { createEmbedder } from "./embeddings.ts";
 import { serverName } from "./handlers.ts";
+import { HarnessModelLists } from "./opencode.ts";
 import { Scheduler } from "./scheduler.ts";
 import { Store } from "./store.ts";
 import { Tunnel } from "./tunnel.ts";
@@ -41,7 +42,16 @@ async function main(): Promise<void> {
   const tunnel = new Tunnel(docker, store, config);
 
   const app = createApp(
-    { config, store, conductor, scheduler, tunnel, serverId: id, version: VERSION },
+    {
+      config,
+      store,
+      conductor,
+      scheduler,
+      tunnel,
+      models: new HarnessModelLists(config, docker),
+      serverId: id,
+      version: VERSION,
+    },
     bus,
   );
   const wss = new WebSocketServer({ noServer: true });

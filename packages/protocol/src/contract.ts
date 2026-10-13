@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CliStatuses, HostTools } from "./mcp.ts";
+import { HarnessId, HarnessModels } from "./models.ts";
 import { procedure } from "./rpc.ts";
 import {
   CreateNibblet,
@@ -37,6 +38,10 @@ export const contract = {
     interrupt: procedure(Id, Ok),
     /** Runs the heartbeat now rather than waiting for the next one. */
     wake: procedure(Id, Ok),
+  },
+  harnesses: {
+    /** A harness's models: the fixed lists for Claude and Codex, the host's live list for OpenCode. */
+    models: procedure(z.object({ harness: HarnessId }), HarnessModels),
   },
   thread: {
     /** Items after `sinceSeq`, oldest first. Live updates come over `/api/live`. */

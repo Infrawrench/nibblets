@@ -15,14 +15,19 @@ export const effortLabels: Record<Effort, string> = {
   ultra: "Ultra",
 };
 
-/** Whose subscription a model bills to, which is also which credential the proxy injects. */
-export type Provider = "anthropic" | "openai";
+/**
+ * Who serves a model. For Claude and Codex it's whose subscription it bills
+ * to, which is also which credential the proxy injects; for OpenCode it's
+ * whichever provider the user's OpenCode is signed in to.
+ */
+export type Provider = string;
 
 export interface ModelOption {
   id: string;
   label: string;
   description: string;
   provider: Provider;
+  /** Empty when the harness has no effort setting for it. */
   efforts: readonly Effort[];
   defaultEffort: Effort;
   isNew?: boolean;
@@ -32,8 +37,11 @@ export interface HarnessInfo {
   id: HarnessId;
   label: string;
   description: string;
+  /** Empty for harnesses whose models are listed live (`dynamicModels`). */
   defaultModel: string;
   models: readonly ModelOption[];
+  /** The models come from the host's own setup, through `harnesses.models`. */
+  dynamicModels: boolean;
 }
 
 const claudeEfforts = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -103,12 +111,6 @@ const codexModels = [
   },
 ] as const satisfies readonly ModelOption[];
 
-/** OpenCode drives either provider; its model ids are `provider/model`. */
-const opencodeModels: readonly ModelOption[] = [...claudeModels, ...codexModels].map((m) => ({
-  ...m,
-  id: `${m.provider}/${m.id}`,
-}));
-
 export const harnesses: Record<HarnessId, HarnessInfo> = {
   claude: {
     id: "claude",
@@ -116,6 +118,7 @@ export const harnesses: Record<HarnessId, HarnessInfo> = {
     description: "Claude Agent SDK, on your Claude subscription",
     defaultModel: "claude-opus-5-5",
     models: claudeModels,
+    dynamicModels: false,
   },
   codex: {
     id: "codex",
@@ -123,16 +126,52 @@ export const harnesses: Record<HarnessId, HarnessInfo> = {
     description: "OpenAI Codex, on your ChatGPT subscription",
     defaultModel: "gpt-5.6-terra",
     models: codexModels,
+    dynamicModels: false,
   },
   opencode: {
     id: "opencode",
     label: "OpenCode",
-    description: "OpenCode, with either subscription",
-    defaultModel: "anthropic/claude-opus-5-5",
-    models: opencodeModels,
+    description: "OpenCode, on the account it's signed in to on this machine",
+    defaultModel: "",
+    models: [],
+    dynamicModels: true,
   },
 };
 
 export function findModel(harness: HarnessId, model: string): ModelOption | undefined {
   return harnesses[harness].models.find((m) => m.id === model);
 }
+
+/**
+ * OpenCode's models, as `opencode models` lists them for the host's login.
+ * OpenCode has no effort setting, so these carry no efforts.
+ */
+export function opencodeModel(m: { id: string; provider: string; name: string }): ModelOption {
+  return {
+    id: m.id,
+    label: m.name,
+    description: m.provider,
+    provider: m.provider,
+    efforts: [],
+    defaultEffort: "medium",
+  };
+}
+
+export const HarnessModels = z.object({
+  harness: HarnessId,
+  /** `unavailable` when the live list couldn't be fetched; `detail` says why. */
+  state: z.enum(["ready", "unavailable"]),
+  detail: z.string().nullable(),
+  models: z.array(
+    z.object({
+      id: z.string(),
+      label: z.string(),
+      description: z.string(),
+      provider: z.string(),
+      efforts: z.array(Effort).readonly(),
+      defaultEffort: Effort,
+      isNew: z.boolean().optional(),
+    }),
+  ),
+});
+export type HarnessModels = z.infer<typeof HarnessModels>;

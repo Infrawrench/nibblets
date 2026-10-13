@@ -3,14 +3,14 @@
 # Trixie rather than bookworm: the OpenComputerUse release needs glibc 2.39.
 FROM node:24-trixie-slim
 
-# Chromium and what it needs to draw text without a desktop; xkb-data and
-# libxkbcommon for keymaps under Wayland; Xvfb and the X libraries for
-# OpenComputerUse's X11 path; git for agents that clone things.
+# Chromium and what it needs to draw text without a desktop; xkb-data,
+# libxkbcommon and pixman for OpenComputerUse's headless Wayland compositor;
+# Xvfb and the X libraries for its X11 path; git for agents that clone things.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl git openssh-client tini dbus \
-      chromium fonts-liberation fonts-dejavu-core fonts-noto-color-emoji \
-      xkb-data libxkbcommon0 libxkbcommon-x11-0 xvfb libxtst6 libxext6 libx11-6 \
+      chromium fonts-liberation fonts-dejavu-core fonts-noto-color-emoji fonts-noto-cjk \
+      xkb-data libxkbcommon0 libxkbcommon-x11-0 libpixman-1-0 xvfb libxtst6 libxext6 libx11-6 \
  && rm -rf /var/lib/apt/lists/*
 
 # The GitHub CLI, from GitHub's own apt repository. Always installed; a
@@ -23,7 +23,7 @@ RUN curl -fsSL -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && apt-get install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/*
 
-ARG OCU_VERSION=0.6.0
+ARG OCU_VERSION=0.7.0
 ARG TARGETARCH
 RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
       amd64) arch=x86_64 ;; \
@@ -33,6 +33,12 @@ RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
  && curl -fsSL -o /usr/local/bin/opencomputeruse \
       "https://github.com/IAmJSD/OpenComputerUse/releases/download/v${OCU_VERSION}/opencomputeruse-linux-${arch}" \
  && chmod +x /usr/local/bin/opencomputeruse
+
+# Chromium can't use its own sandbox inside a container (the container is the
+# sandbox). --test-type hides the "unsupported flag" bar --no-sandbox brings,
+# which would otherwise push every page down. Earlier on PATH than the real one.
+RUN printf '#!/bin/sh\nexec /usr/bin/chromium --no-sandbox --test-type "$@"\n' > /usr/local/bin/chromium \
+ && chmod +x /usr/local/bin/chromium
 
 RUN corepack enable && corepack prepare pnpm@12.11.2 --activate
 WORKDIR /app
@@ -54,7 +60,8 @@ USER nibblet
 WORKDIR /home/nibblet/work
 ENV NODE_ENV=production \
     NIBBLET_WORKDIR=/home/nibblet/work \
-    CHROME_PATH=/usr/bin/chromium
+    CHROME_PATH=/usr/local/bin/chromium \
+    OCU_LINUX_DISPLAY=wayland
 # The browser view, served by OpenComputerUse and proxied by the server.
 EXPOSE 7900
 ENTRYPOINT ["/usr/bin/tini", "--"]

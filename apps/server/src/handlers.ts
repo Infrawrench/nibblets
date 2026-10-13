@@ -1,7 +1,7 @@
 import {
   contract,
   CredentialStatus,
-  findModel,
+  type HarnessId,
   mergeMcpServers,
   RpcError,
   ServerInfo,
@@ -11,6 +11,7 @@ import {
 import { z } from "zod";
 import { cliStatuses } from "./clilogins.ts";
 import type { Conductor } from "./conductor.ts";
+import type { HarnessModelLists } from "./opencode.ts";
 import { dropOverlaps, hostTools } from "./hostmcp.ts";
 import type { Config } from "./config.ts";
 import type { Scheduler } from "./scheduler.ts";
@@ -23,6 +24,7 @@ export interface Services {
   conductor: Conductor;
   scheduler: Scheduler;
   tunnel: Tunnel;
+  models: HarnessModelLists;
   serverId: string;
   version: string;
 }
@@ -57,8 +59,8 @@ export function serverName(store: Store): Promise<string> {
 export function createHandlers(s: Services): Handlers<Contract, Record<string, never>> {
   const { store, conductor, scheduler, tunnel } = s;
 
-  const checkModel = (harness: Parameters<typeof findModel>[0], model: string) => {
-    if (!findModel(harness, model))
+  const checkModel = async (harness: HarnessId, model: string) => {
+    if (!(await s.models.accepts(harness, model)))
       throw new RpcError("bad_request", `${model} isn't a ${harness} model`);
   };
 
@@ -83,7 +85,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       list: () => store.listNibblets(),
       get: ({ id }) => store.getNibblet(id),
       create: async ({ message, ...input }) => {
-        checkModel(input.harness, input.model);
+        await checkModel(input.harness, input.model);
         if (input.mcpServers?.length && input.hostTools?.length) {
           const host = await hostTools(s.config);
           input = {
@@ -100,7 +102,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         const before = await store.getNibblet(id);
         const harness = patch.harness ?? before.harness;
         const model = patch.model ?? before.model;
-        checkModel(harness, model);
+        await checkModel(harness, model);
         const harnessChanged = harness !== before.harness;
         const { mcpServers, ...rest } = patch;
         const row = await store.nibbletRow(id);
@@ -146,6 +148,10 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         await conductor.heartbeat(id);
         return ok;
       },
+    },
+
+    harnesses: {
+      models: ({ harness }) => s.models.list(harness),
     },
 
     thread: {

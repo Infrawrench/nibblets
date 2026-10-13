@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { mkdir, rm, symlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
@@ -11,9 +12,11 @@ import {
 } from "@opencode-ai/sdk";
 import { defineHarness, type HarnessContext, type McpServerSpec } from "@nibblet/harness";
 import type { Usage } from "@nibblet/protocol";
+import { installLogin, type OpencodeDirs } from "./login.ts";
 import { OpencodeMapper } from "./mapper.ts";
 
 export { OpencodeMapper } from "./mapper.ts";
+export * from "./login.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -43,14 +46,24 @@ function mcpFor(spec: McpServerSpec): McpLocalConfig | McpRemoteConfig {
 }
 
 /**
- * Both providers point at the credential proxy with the proxy key as their
- * API key: Anthropic sends it as `x-api-key`, OpenAI as a bearer token.
+ * With the host's OpenCode login, providers come from the user's own config
+ * (written to the container's XDG config dir), so this only adds what the
+ * nibblet brings. Without one, Anthropic and OpenAI go through the
+ * credential proxy with the proxy key as their API key: Anthropic sends it
+ * as `x-api-key`, OpenAI as a bearer token.
  */
 export function opencodeConfig(ctx: HarnessContext): Config {
-  return {
+  const own: Config = {
     model: ctx.config.model,
     autoupdate: false,
     share: "disabled",
+    mcp: Object.fromEntries(Object.entries(ctx.mcpServers).map(([n, s]) => [n, mcpFor(s)])),
+    // The container is the sandbox; nobody is there to approve prompts.
+    permission: { edit: "allow", bash: "allow", webfetch: "allow" },
+  };
+  if (ctx.config.opencodeLogin) return own;
+  return {
+    ...own,
     provider: {
       anthropic: {
         options: { baseURL: `${ctx.credproxyUrl}/anthropic/v1`, apiKey: ctx.credproxyKey },
@@ -60,10 +73,25 @@ export function opencodeConfig(ctx: HarnessContext): Config {
       },
     },
     enabled_providers: ["anthropic", "openai"],
-    mcp: Object.fromEntries(Object.entries(ctx.mcpServers).map(([n, s]) => [n, mcpFor(s)])),
-    // The container is the sandbox; nobody is there to approve prompts.
-    permission: { edit: "allow", bash: "allow", webfetch: "allow" },
   };
+}
+
+/**
+ * Points this process at a private OpenCode home: the CLI on PATH (the
+ * package ships it as `bin/opencode.exe`) and XDG directories under `home`.
+ */
+export async function prepareHome(home: string): Promise<OpencodeDirs> {
+  const bin = path.join(home, "bin");
+  await mkdir(bin, { recursive: true });
+  await rm(path.join(bin, "opencode"), { force: true });
+  await symlink(path.join(cliPackage().dir, "bin", "opencode.exe"), path.join(bin, "opencode"));
+  const dirs = { config: path.join(home, "config"), data: path.join(home, "data") };
+  process.env.PATH = `${bin}${path.delimiter}${process.env.PATH ?? ""}`;
+  process.env.XDG_DATA_HOME = dirs.data;
+  process.env.XDG_CONFIG_HOME = dirs.config;
+  process.env.XDG_STATE_HOME = path.join(home, "state");
+  process.env.XDG_CACHE_HOME = path.join(home, "cache");
+  return dirs;
 }
 
 function splitModel(model: string): { providerID: string; modelID: string } {
@@ -72,23 +100,28 @@ function splitModel(model: string): { providerID: string; modelID: string } {
   return { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) };
 }
 
+/**
+ * Fetches models.dev before OpenCode starts. A fresh container otherwise
+ * starts on the CLI's built-in snapshot, and a model that's newer than it
+ * fails until the background refresh lands.
+ */
+async function warmModelsCache(warn: (message: string) => void): Promise<void> {
+  await new Promise<void>((resolve) =>
+    execFile("opencode", ["models", "--refresh"], { timeout: 30_000 }, (err) => {
+      if (err) warn(`Couldn't refresh OpenCode's model list: ${err.message}`);
+      resolve();
+    }),
+  );
+}
+
 export const opencodeHarness = defineHarness({
   id: "opencode",
   version: () => `opencode ${cliPackage().version}`,
   async open(ctx) {
-    const home = path.join(ctx.workdir, ".opencode");
-    await mkdir(home, { recursive: true });
-    // createOpencodeServer spawns `opencode` from PATH with the parent's env,
-    // and the package ships its binary as `bin/opencode.exe`, so link it in.
-    const bin = path.join(home, "bin");
-    await mkdir(bin, { recursive: true });
-    await rm(path.join(bin, "opencode"), { force: true });
-    await symlink(path.join(cliPackage().dir, "bin", "opencode.exe"), path.join(bin, "opencode"));
-    process.env.PATH = `${bin}${path.delimiter}${process.env.PATH ?? ""}`;
-    process.env.XDG_DATA_HOME = path.join(home, "data");
-    process.env.XDG_CONFIG_HOME = path.join(home, "config");
-    process.env.XDG_STATE_HOME = path.join(home, "state");
-    process.env.XDG_CACHE_HOME = path.join(home, "cache");
+    // createOpencodeServer spawns `opencode` from PATH with the parent's env.
+    const dirs = await prepareHome(path.join(ctx.workdir, ".opencode"));
+    if (ctx.config.opencodeLogin) await installLogin(dirs, ctx.config.opencodeLogin);
+    await warmModelsCache((m) => ctx.log("warn", m));
 
     const server = await createOpencodeServer({
       port: await freePort(),

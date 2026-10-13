@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { mcpTarget } from "@nibblet/protocol";
+import { detectOpencode, readOpencodeLogin } from "./opencode.ts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -293,6 +294,12 @@ export async function startHostMcpBridge(opts: BridgeOptions): Promise<HostMcpBr
         return json(res, 200, await describeAll());
       if (req.method === "GET" && url.pathname === "/clis") {
         return json(res, 200, await Promise.all(clis.map((p) => p.detect(run))));
+      }
+      if (req.method === "GET" && url.pathname === "/harness/opencode") {
+        return json(res, 200, await detectOpencode(run));
+      }
+      if (req.method === "GET" && url.pathname === "/harness/opencode/login") {
+        return json(res, 200, await readOpencodeLogin());
       }
       const cli = /^\/clis\/([^/]+)\/credential$/.exec(url.pathname);
       if (req.method === "GET" && cli) {
