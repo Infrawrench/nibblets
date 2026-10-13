@@ -146,7 +146,12 @@ function LiveView({
       }),
       v.onMessage((m) => {
         if (m.type === "hello" || m.type === "windows") {
-          setTitle(m.windows.find((w) => w.id === m.window)?.title ?? null);
+          // Chromium is restarted on a blank page if every tab is closed;
+          // follow its new window rather than sit on an empty view.
+          const first = m.windows[0];
+          if (m.window === null && first) v.send({ type: "window", id: first.id });
+          const watched = m.windows.find((w) => w.id === (m.window ?? first?.id));
+          setTitle(watched?.title ?? null);
         }
       }),
     ];

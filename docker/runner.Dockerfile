@@ -34,11 +34,9 @@ RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
       "https://github.com/IAmJSD/OpenComputerUse/releases/download/v${OCU_VERSION}/opencomputeruse-linux-${arch}" \
  && chmod +x /usr/local/bin/opencomputeruse
 
-# Chromium can't use its own sandbox inside a container (the container is the
-# sandbox). --test-type hides the "unsupported flag" bar --no-sandbox brings,
-# which would otherwise push every page down. Earlier on PATH than the real one.
-RUN printf '#!/bin/sh\nexec /usr/bin/chromium --no-sandbox --test-type "$@"\n' > /usr/local/bin/chromium \
- && chmod +x /usr/local/bin/chromium
+# `chromium` on PATH: Chromium without its own sandbox, restarted on a blank
+# page if every tab is closed. See docker/chromium.sh.
+COPY --chmod=755 docker/chromium.sh /usr/local/bin/chromium
 
 RUN corepack enable && corepack prepare pnpm@12.11.2 --activate
 WORKDIR /app
