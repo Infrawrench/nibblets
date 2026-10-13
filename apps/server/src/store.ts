@@ -10,6 +10,7 @@ import {
   type Db,
 } from "@nibblet/db";
 import {
+  HamsterLook,
   maskMcpServers,
   McpServerList,
   randomHamsterLook,
@@ -159,7 +160,7 @@ export class Store {
       .values({
         id: newId("nib"),
         name: input.name,
-        look: input.look ?? randomHamsterLook(),
+        look: HamsterLook.parse(input.look ?? randomHamsterLook()),
         harness: input.harness,
         model: input.model,
         effort: input.effort,
