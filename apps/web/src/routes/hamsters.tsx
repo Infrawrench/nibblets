@@ -1,5 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { HamsterLook, defaultHamsterLook, type NibbletStatus } from "@nibblet/protocol";
+import {
+  EarPiercing,
+  HamsterLook,
+  NosePiercing,
+  PiercingMetal,
+  defaultHamsterLook,
+  type NibbletStatus,
+} from "@nibblet/protocol";
 import { Hamster } from "../components/hamster/Hamster.tsx";
 import { withField } from "../components/hamster/HamsterEditor.tsx";
 
@@ -18,6 +25,24 @@ function Gallery() {
     s.mouth.options.map((v) => withField(defaultHamsterLook, "mouth", v)),
     s.cheeks.options.map((v) => withField(defaultHamsterLook, "cheeks", v)),
     s.accessory.options.map((v) => withField(defaultHamsterLook, "accessory", v)),
+    // Every ear style with every ear spot pierced, then nose, septum and metals.
+    s.ears.options.map((ears) => ({
+      ...defaultHamsterLook,
+      ears,
+      earPiercings: [...EarPiercing.options],
+    })),
+    [
+      ...NosePiercing.options.map((nosePiercing) => ({ ...defaultHamsterLook, nosePiercing })),
+      { ...defaultHamsterLook, septum: true },
+      ...PiercingMetal.options.map((piercingMetal) => ({
+        ...defaultHamsterLook,
+        fur: "chocolate" as const,
+        earPiercings: ["left-lobe" as const, "right-helix" as const, "right-upper" as const],
+        nosePiercing: "left-hoop" as const,
+        septum: true,
+        piercingMetal,
+      })),
+    ],
   ];
   return (
     <div className="flex-1 overflow-auto p-6">

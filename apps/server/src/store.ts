@@ -53,7 +53,8 @@ export function toNibblet(row: NibbletRow): Nibblet {
   return {
     id: row.id,
     name: row.name,
-    look: row.look,
+    // Fills in fields added since the look was saved (piercings, say).
+    look: HamsterLook.parse(row.look),
     harness: row.harness,
     model: row.model,
     effort: row.effort,

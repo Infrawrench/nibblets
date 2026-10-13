@@ -10,6 +10,8 @@ import {
   eyeColours,
   furColours,
   markingFill,
+  metalColours,
+  type Metal,
 } from "./palette.ts";
 
 /**
@@ -65,7 +67,7 @@ export function Hamster({
       <Background look={look} />
       <g clipPath={look.background === "none" ? undefined : `url(#bg-${uid})`}>
         <g className="hamster-body">
-          {look.accessory === "beanie" ? null : <Ears look={look} />}
+          {look.accessory === "beanie" ? null : <Ears look={look} detailed={detailed} />}
           <Silhouette look={look} />
           <g clipPath={`url(#body-${uid})`}>
             <Markings look={look} detailed={detailed} />
@@ -88,7 +90,9 @@ export function Hamster({
             <Whiskers colour={look.fur === "black" ? "#9A918C" : fur.shade} />
           ) : null}
           <Eyes look={look} asleep={asleep} dizzy={dizzy} />
+          <Septum look={look} />
           <Nose />
+          <NoseJewel look={look} />
           <Mouth look={look} asleep={asleep} />
           {detailed ? <Paws /> : null}
           <Accessory look={look} />
@@ -104,8 +108,69 @@ function Background({ look }: { look: HamsterLook }) {
   return fill ? <circle cx="50" cy="50" r="50" fill={fill} /> : null;
 }
 
-function Ears({ look }: { look: HamsterLook }) {
+/** Where each piercing sits on one ear, in that ear's own (untilted) frame. */
+type EarSpot = "helix" | "upper" | "lobe" | "conch";
+type Point = { x: number; y: number };
+
+function earSpots(style: HamsterLook["ears"], cx: number, side: 1 | -1): Record<EarSpot, Point> {
+  const at = (dx: number, y: number): Point => ({ x: cx + side * dx, y });
+  switch (style) {
+    case "round":
+      return {
+        helix: at(5.6, 26.6),
+        upper: at(9.2, 30.6),
+        lobe: at(9.6, 40),
+        conch: at(1.6, 37.6),
+      };
+    case "tiny":
+      return { helix: at(5, 31.4), upper: at(7.8, 34), lobe: at(8.2, 40.4), conch: at(2.6, 38.4) };
+    case "tall":
+      return { helix: at(5.4, 16.6), upper: at(7.8, 23), lobe: at(7.8, 34.6), conch: at(1, 31.6) };
+    case "floppy":
+      return { helix: at(5.2, 20.6), upper: at(7.8, 26.4), lobe: at(7.6, 36.6), conch: at(1, 34) };
+  }
+}
+
+/** A small ring through the edge, or a stud in the bowl of the ear. */
+function EarJewel({ spot, at, metal }: { spot: EarSpot; at: Point; metal: Metal }) {
+  if (spot === "conch") return <Stud at={at} metal={metal} r={1.3} />;
+  return <Hoop at={at} metal={metal} r={spot === "lobe" ? 2.3 : 1.8} />;
+}
+
+function Stud({ at, metal, r }: { at: Point; metal: Metal; r: number }) {
+  return (
+    <g>
+      <circle cx={at.x} cy={at.y} r={r} fill={metal.base} stroke={metal.edge} strokeWidth="0.5" />
+      <circle cx={at.x - r * 0.35} cy={at.y - r * 0.35} r={r * 0.32} fill={metal.shine} />
+    </g>
+  );
+}
+
+function Hoop({ at, metal, r }: { at: Point; metal: Metal; r: number }) {
+  return (
+    <g fill="none" strokeLinecap="round">
+      <circle cx={at.x} cy={at.y} r={r} stroke={metal.edge} strokeWidth="1.8" />
+      <circle cx={at.x} cy={at.y} r={r} stroke={metal.base} strokeWidth="1.05" />
+    </g>
+  );
+}
+
+function Ears({ look, detailed }: { look: HamsterLook; detailed: boolean }) {
   const { base, shade } = furColours[look.fur];
+  const metal = metalColours[look.piercingMetal];
+  const jewels = (cx: number, side: 1 | -1): ReactNode => {
+    if (!detailed) return null;
+    const prefix = side === -1 ? "left-" : "right-";
+    const spots = earSpots(look.ears, cx, side);
+    return look.earPiercings
+      .filter((p) => p.startsWith(prefix))
+      .map((p) => {
+        const spot = p.slice(prefix.length);
+        return spot === "helix" || spot === "upper" || spot === "lobe" || spot === "conch" ? (
+          <EarJewel key={p} spot={spot} at={spots[spot]} metal={metal} />
+        ) : null;
+      });
+  };
   const ear = (cx: number, side: 1 | -1): ReactNode => {
     switch (look.ears) {
       case "round":
@@ -113,6 +178,7 @@ function Ears({ look }: { look: HamsterLook }) {
           <g key={side}>
             <circle cx={cx} cy="35" r="10" fill={base} stroke={shade} strokeWidth="2.2" />
             <circle cx={cx + side * 0.5} cy="35.5" r="5.6" fill={PINK} />
+            {jewels(cx, side)}
           </g>
         );
       case "tiny":
@@ -120,6 +186,7 @@ function Ears({ look }: { look: HamsterLook }) {
           <g key={side}>
             <circle cx={cx + side * 2} cy="37" r="6.5" fill={base} stroke={shade} strokeWidth="2" />
             <circle cx={cx + side * 2} cy="37.5" r="3.4" fill={PINK} />
+            {jewels(cx, side)}
           </g>
         );
       case "tall":
@@ -127,6 +194,7 @@ function Ears({ look }: { look: HamsterLook }) {
           <g key={side} transform={`rotate(${side * 14} ${cx} 34)`}>
             <ellipse cx={cx} cy="28" rx="8" ry="14" fill={base} stroke={shade} strokeWidth="2.2" />
             <ellipse cx={cx} cy="29" rx="4.4" ry="9" fill={PINK} />
+            {jewels(cx, side)}
           </g>
         );
       case "floppy":
@@ -134,6 +202,7 @@ function Ears({ look }: { look: HamsterLook }) {
           <g key={side} transform={`rotate(${side * 58} ${cx} 40)`}>
             <ellipse cx={cx} cy="31" rx="8" ry="12" fill={base} stroke={shade} strokeWidth="2.2" />
             <ellipse cx={cx} cy="32" rx="4.2" ry="7.5" fill={PINK} />
+            {jewels(cx, side)}
           </g>
         );
     }
@@ -143,6 +212,31 @@ function Ears({ look }: { look: HamsterLook }) {
       {ear(30, -1)}
       {ear(70, 1)}
     </g>
+  );
+}
+
+/** A septum ring, drawn before the nose so the nose sits over its top. */
+function Septum({ look }: { look: HamsterLook }) {
+  if (!look.septum) return null;
+  const metal = metalColours[look.piercingMetal];
+  return (
+    <g fill="none" strokeLinecap="round">
+      <path d="M47.2 61 A3.1 3.1 0 1 0 52.8 61" stroke={metal.edge} strokeWidth="2" />
+      <path d="M47.2 61 A3.1 3.1 0 1 0 52.8 61" stroke={metal.base} strokeWidth="1.15" />
+    </g>
+  );
+}
+
+/** A nostril stud or hoop, on the hamster's left or right (the viewer's right or left). */
+function NoseJewel({ look }: { look: HamsterLook }) {
+  if (look.nosePiercing === "none") return null;
+  const metal = metalColours[look.piercingMetal];
+  const [side, kind] = look.nosePiercing.split("-");
+  const x = side === "left" ? 52.6 : 47.4;
+  return kind === "hoop" ? (
+    <Hoop at={{ x: side === "left" ? x + 0.4 : x - 0.4, y: 61.4 }} metal={metal} r={2} />
+  ) : (
+    <Stud at={{ x, y: 59.9 }} metal={metal} r={1.1} />
   );
 }
 

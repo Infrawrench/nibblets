@@ -66,3 +66,16 @@ export function markingFill(look: HamsterLook): string {
   const dark = look.fur === "black" || look.fur === "chocolate";
   return dark ? bellyFill(look) : furColours[look.fur].shade;
 }
+
+export interface Metal {
+  base: string;
+  edge: string;
+  shine: string;
+}
+
+export const metalColours: Record<HamsterLook["piercingMetal"], Metal> = {
+  silver: { base: "#D7DCE2", edge: "#6F7A88", shine: "#FFFFFF" },
+  gold: { base: "#E8C15A", edge: "#A9832A", shine: "#FFF3C4" },
+  rose: { base: "#E9A898", edge: "#B06A5B", shine: "#FFE4DC" },
+  black: { base: "#34343A", edge: "#111114", shine: "#8A8A94" },
+};

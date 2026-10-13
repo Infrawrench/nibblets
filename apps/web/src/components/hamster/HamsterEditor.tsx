@@ -1,6 +1,12 @@
 import { useState, type ReactNode } from "react";
-import { Crown, Dices, Ear, Heart, Image, Palette, Shapes, Smile } from "lucide-react";
-import { HamsterLook, randomHamsterLook } from "@nibblet/protocol";
+import { Crown, Dices, Ear, Gem, Heart, Image, Palette, Shapes, Smile } from "lucide-react";
+import {
+  EarPiercing,
+  HamsterLook,
+  NosePiercing,
+  PiercingMetal,
+  randomHamsterLook,
+} from "@nibblet/protocol";
 import { Hamster } from "./Hamster.tsx";
 import {
   accessoryColours,
@@ -8,6 +14,7 @@ import {
   bellyColours,
   eyeColours,
   furColours,
+  metalColours,
 } from "./palette.ts";
 import { Button } from "../ui/Button.tsx";
 import { Input } from "../ui/Field.tsx";
@@ -31,6 +38,8 @@ const options: { [K in EnumField]: readonly HamsterLook[K][] } = {
   accessory: s.accessory.options,
   accessoryColour: s.accessoryColour.options,
   background: s.background.options,
+  nosePiercing: NosePiercing.options,
+  piercingMetal: PiercingMetal.options,
 };
 
 /** Swatch colours for the fields chosen by colour rather than by picture. */
@@ -41,6 +50,7 @@ const swatches: { [K in EnumField]?: (value: HamsterLook[K], look: HamsterLook) 
     eyeColour: (v) => eyeColours[v],
     accessoryColour: (v) => accessoryColours[v],
     background: (v) => backgroundColours[v],
+    piercingMetal: (v) => metalColours[v].base,
   };
 
 export function withField<K extends keyof HamsterLook>(
@@ -58,7 +68,8 @@ export function optionLabel(value: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-type Category = "fur" | "pattern" | "face" | "ears" | "cheeks" | "accessories" | "background";
+type Category =
+  "fur" | "pattern" | "face" | "ears" | "cheeks" | "piercings" | "accessories" | "background";
 
 const categories: { id: Category; label: string; icon: ReactNode }[] = [
   { id: "fur", label: "Fur", icon: <Palette /> },
@@ -66,6 +77,7 @@ const categories: { id: Category; label: string; icon: ReactNode }[] = [
   { id: "face", label: "Face", icon: <Smile /> },
   { id: "ears", label: "Ears", icon: <Ear /> },
   { id: "cheeks", label: "Cheeks", icon: <Heart /> },
+  { id: "piercings", label: "Piercings", icon: <Gem /> },
   { id: "accessories", label: "Accessories", icon: <Crown /> },
   { id: "background", label: "Background", icon: <Image /> },
 ];
@@ -184,6 +196,24 @@ function CategoryBody({
           </label>
         </>
       );
+    case "piercings":
+      return (
+        <>
+          <EarPiercings look={look} onChange={onChange} />
+          {grid("nosePiercing", "Nose")}
+          <label className="flex items-center gap-2 text-sm text-dim">
+            <Switch
+              checked={look.septum}
+              onChange={(septum) => onChange({ ...look, septum })}
+              label="Septum"
+            />
+            Septum ring
+          </label>
+          {look.earPiercings.length > 0 || look.nosePiercing !== "none" || look.septum
+            ? grid("piercingMetal", "Metal")
+            : null}
+        </>
+      );
     case "accessories":
       return (
         <>
@@ -273,4 +303,57 @@ function OptionGroup<K extends EnumField>({
 function previewFor(look: HamsterLook, field: EnumField): HamsterLook {
   if (field === "ears" && look.accessory === "beanie") return { ...look, accessory: "none" };
   return look;
+}
+
+const earSpotLabels: Record<EarPiercing, string> = {
+  "left-helix": "Left rim",
+  "left-upper": "Left upper",
+  "left-lobe": "Left lobe",
+  "left-conch": "Left conch",
+  "right-helix": "Right rim",
+  "right-upper": "Right upper",
+  "right-lobe": "Right lobe",
+  "right-conch": "Right conch",
+};
+
+/** Ear piercings go in as many places as you like, so each tile is a toggle. */
+function EarPiercings({
+  look,
+  onChange,
+}: {
+  look: HamsterLook;
+  onChange: (look: HamsterLook) => void;
+}) {
+  // A beanie would hide the ears being pierced.
+  const base = look.accessory === "beanie" ? { ...look, accessory: "none" as const } : look;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-2xs font-semibold tracking-wider text-faint uppercase">
+        Ears <span className="font-normal normal-case">(pick any)</span>
+      </div>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(68px,1fr))] gap-1.5">
+        {EarPiercing.options.map((spot) => {
+          const on = look.earPiercings.includes(spot);
+          const toggled = on
+            ? look.earPiercings.filter((p) => p !== spot)
+            : [...look.earPiercings, spot];
+          return (
+            <button
+              key={spot}
+              type="button"
+              aria-pressed={on}
+              onClick={() => onChange({ ...look, earPiercings: toggled })}
+              className={cn(
+                "flex flex-col items-center gap-0.5 rounded-lg border p-1 transition-colors hover:bg-hover",
+                on ? "border-accent bg-accent-soft/50" : "border-line bg-surface",
+              )}
+            >
+              <Hamster look={{ ...base, earPiercings: [spot] }} size={56} decorative />
+              <span className="text-2xs text-dim">{earSpotLabels[spot]}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }

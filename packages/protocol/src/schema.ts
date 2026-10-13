@@ -39,6 +39,22 @@ export type Heartbeat = z.infer<typeof Heartbeat>;
 
 export const MAX_HEARTBEATS = 10;
 
+/** Where an ear can be pierced, on either side: the rim, higher up it, the lobe, the bowl. */
+export const EarPiercing = z.enum([
+  "left-helix",
+  "left-upper",
+  "left-lobe",
+  "left-conch",
+  "right-helix",
+  "right-upper",
+  "right-lobe",
+  "right-conch",
+]);
+export type EarPiercing = z.infer<typeof EarPiercing>;
+
+export const NosePiercing = z.enum(["none", "left-stud", "right-stud", "left-hoop", "right-hoop"]);
+export const PiercingMetal = z.enum(["silver", "gold", "rose", "black"]);
+
 /**
  * What a nibblet's hamster looks like. Each field is a choice among a small
  * set, the way a Mii is, so any combination draws well and a random one is
@@ -67,6 +83,11 @@ export const HamsterLook = z.object({
   ]),
   accessoryColour: z.enum(["red", "orange", "yellow", "green", "teal", "blue", "purple", "pink"]),
   background: z.enum(["sky", "mint", "peach", "lavender", "lemon", "rose", "slate", "none"]),
+  // Defaults, so looks saved before piercings existed still parse.
+  earPiercings: z.array(EarPiercing).default([]),
+  nosePiercing: NosePiercing.default("none"),
+  septum: z.boolean().default(false),
+  piercingMetal: PiercingMetal.default("silver"),
 });
 export type HamsterLook = z.infer<typeof HamsterLook>;
 
@@ -83,6 +104,10 @@ export const defaultHamsterLook: HamsterLook = {
   accessory: "none",
   accessoryColour: "blue",
   background: "sky",
+  earPiercings: [],
+  nosePiercing: "none",
+  septum: false,
+  piercingMetal: "silver",
 };
 
 /** A random but always valid look, for new nibblets and the editor's dice button. */
@@ -106,6 +131,11 @@ export function randomHamsterLook(random: () => number = Math.random): HamsterLo
     accessory: random() > 0.5 ? pick(s.accessory.options) : "none",
     accessoryColour: pick(s.accessoryColour.options),
     background: pick(s.background.options),
+    // Most hamsters are unpierced; a few get one or two.
+    earPiercings: EarPiercing.options.filter(() => random() > 0.88),
+    nosePiercing: random() > 0.85 ? pick(NosePiercing.options.slice(1)) : "none",
+    septum: random() > 0.88,
+    piercingMetal: pick(PiercingMetal.options),
   };
 }
 
