@@ -1,7 +1,7 @@
 import { defaultHamsterLook, MASKED } from "@nibblet/protocol";
 import { describe, expect, it } from "vitest";
 import { cliLogins } from "./clilogins.ts";
-import { defaultHeartbeat, toNibblet } from "./store.ts";
+import { toNibblet } from "./store.ts";
 
 const bridge = { HOST_MCP_URL: "http://bridge", HOST_MCP_TOKEN: "t" };
 
@@ -47,7 +47,7 @@ describe("toNibblet", () => {
       parentId: null,
       status: "idle",
       statusDetail: null,
-      heartbeat: defaultHeartbeat,
+      heartbeats: [],
       browser: false,
       hostTools: ["files"],
       cliCredentials: ["gh"],
@@ -66,7 +66,6 @@ describe("toNibblet", () => {
       createdAt: now,
       updatedAt: now,
       lastActivityAt: null,
-      lastHeartbeatAt: null,
     });
     const text = JSON.stringify(nibblet);
     expect(text).not.toContain("secret");

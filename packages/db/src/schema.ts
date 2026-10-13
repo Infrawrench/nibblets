@@ -41,7 +41,8 @@ export const nibblets = pgTable("nibblets", {
   parentId: text("parent_id"),
   status: text("status").$type<NibbletStatus>().notNull().default("stopped"),
   statusDetail: text("status_detail"),
-  heartbeat: jsonb("heartbeat").$type<Heartbeat>().notNull(),
+  /** Stored in the column that held the single heartbeat before there were several. */
+  heartbeats: jsonb("heartbeat").$type<Heartbeat[]>().notNull().default([]),
   browser: boolean("browser").notNull().default(true),
   hostTools: text("host_tools").array().notNull().default([]),
   cliCredentials: text("cli_credentials").array().notNull().default([]),
@@ -54,7 +55,6 @@ export const nibblets = pgTable("nibblets", {
   createdAt: createdAt(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
-  lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
 });
 
 /** One global sequence, so "everything since seq N" works across nibblets. */

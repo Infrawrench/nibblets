@@ -15,17 +15,29 @@ export const ActiveHours = z.object({
 });
 export type ActiveHours = z.infer<typeof ActiveHours>;
 
+export const HeartbeatName = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9-]{0,39}$/, "Use lowercase letters, digits and dashes");
+
+/**
+ * One of a nibblet's regular check-ins. A nibblet keeps as many as it needs
+ * (the inbox every 15 minutes in working hours, the deploys hourly) and sets
+ * them itself with the `heartbeat_*` tools.
+ */
 export const Heartbeat = z.object({
-  enabled: z.boolean(),
+  name: HeartbeatName,
   everyMinutes: z
     .int()
-    .min(1)
+    .min(5)
     .max(24 * 60),
   activeHours: ActiveHours.nullable(),
-  /** Overrides the default heartbeat prompt. */
-  prompt: z.string().nullable(),
+  /** What to look at each time it fires. */
+  checklist: z.string(),
+  lastRunAt: z.iso.datetime().nullable(),
 });
 export type Heartbeat = z.infer<typeof Heartbeat>;
+
+export const MAX_HEARTBEATS = 10;
 
 /**
  * What a nibblet's hamster looks like. Each field is a choice among a small
@@ -113,7 +125,7 @@ export const Nibblet = z.object({
   parentId: z.string().nullable(),
   status: NibbletStatus,
   statusDetail: z.string().nullable(),
-  heartbeat: Heartbeat,
+  heartbeats: z.array(Heartbeat),
   /** Whether the container gets a browser it and the user can drive. */
   browser: z.boolean(),
   /** Host MCP servers this nibblet may use, by name. None unless ticked. */
@@ -140,7 +152,6 @@ export const CreateNibblet = z.object({
   hostTools: z.array(z.string()).default([]),
   cliCredentials: z.array(z.string()).default([]),
   mcpServers: McpServerList.default([]),
-  heartbeat: Heartbeat.optional(),
   /** First message, sent once the container is up. */
   message: z.string().optional(),
 });
@@ -159,7 +170,7 @@ export const UpdateNibblet = z.object({
   cliCredentials: z.array(z.string()).optional(),
   /** Values equal to `MASKED` keep the stored secret. */
   mcpServers: McpServerList.optional(),
-  heartbeat: Heartbeat.optional(),
+  // No heartbeats: the nibblet sets its own with the `heartbeat_*` tools.
 });
 
 /** What started a turn. Anything but `user` is the nibblet acting on its own. */

@@ -1,4 +1,4 @@
-import type { Memory, Nibblet, ThreadItem, TurnSource } from "@nibblet/protocol";
+import type { Heartbeat, Memory, Nibblet, ThreadItem, TurnSource } from "@nibblet/protocol";
 
 export const QUIET_REPLY = "NO_REPLY";
 
@@ -6,9 +6,20 @@ const DEFAULT_HEARTBEAT = `This is a heartbeat: a regular check-in with no messa
 Look after anything you're responsible for: follow up on open threads, check things you said you'd keep an eye on, and tidy your memory.
 If something needs the user's attention, say so plainly. If nothing does, reply with exactly ${QUIET_REPLY} and nothing else.`;
 
-export function heartbeatInput(nibblet: Nibblet): string {
-  const checklist = nibblet.heartbeat.prompt?.trim();
-  return checklist ? `${DEFAULT_HEARTBEAT}\n\nYour checklist:\n${checklist}` : DEFAULT_HEARTBEAT;
+/** The turn input for one heartbeat, or for a check-in the user asked for. */
+export function heartbeatInput(heartbeat: Heartbeat | null): string {
+  if (!heartbeat) return `${DEFAULT_HEARTBEAT}\n\n(The user asked for this check-in.)`;
+  const checklist = heartbeat.checklist.trim();
+  const head = `${DEFAULT_HEARTBEAT}\n\nThis is your "${heartbeat.name}" heartbeat.`;
+  return checklist ? `${head} Its checklist:\n${checklist}` : head;
+}
+
+export function describeHeartbeat(h: Heartbeat): string {
+  const hours = h.activeHours
+    ? `, ${h.activeHours.start} to ${h.activeHours.end} ${h.activeHours.timezone}`
+    : "";
+  const checklist = h.checklist.trim() ? `: ${h.checklist.trim()}` : "";
+  return `"${h.name}" every ${h.everyMinutes} min${hours}${checklist}`;
 }
 
 export function scheduleInput(name: string, prompt: string): string {
@@ -81,7 +92,7 @@ export function systemPrompt(input: SystemPromptInput): string {
   const rules = [
     "Your instructions are yours to maintain: when the user tells you what you're for or how they want things done, fold it into them with `instructions_update`.",
     "Your container's disk is scratch space and can be wiped at any time. Anything worth keeping goes into memory with `memory_save`; check `memory_search` before asking the user something you may already know.",
-    "Use `schedule_create` for anything that should happen at a set time or repeatedly, and `heartbeat_configure` for regular check-ins. Don't promise to do something later without scheduling it.",
+    "Use `schedule_create` for anything at a set time, and heartbeats (`heartbeat_set`) for regular check-ins on things you're looking after. Keep as many heartbeats as you need, each with its own interval, hours and checklist, and remove ones that are no longer useful. Don't promise to do something later without scheduling it or setting a heartbeat.",
     "For work that splits into independent pieces, `spawn_subagent` starts a child nibblet; its answer comes back to you as a message.",
     `On heartbeat and scheduled turns, if there's nothing worth telling the user, reply with exactly ${QUIET_REPLY}.`,
   ];
@@ -91,6 +102,12 @@ export function systemPrompt(input: SystemPromptInput): string {
     );
   }
   parts.push(`## How you work\n\n${rules.map((r) => `- ${r}`).join("\n")}`);
+
+  parts.push(
+    nibblet.heartbeats.length > 0
+      ? `## Your heartbeats\n\n${nibblet.heartbeats.map((h) => `- ${describeHeartbeat(h)}`).join("\n")}`
+      : "## Your heartbeats\n\nNone yet. Set one with `heartbeat_set` once there's something worth checking on regularly.",
+  );
 
   if (input.memories.length > 0) {
     const lines = input.memories.map(

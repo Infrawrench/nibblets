@@ -158,11 +158,23 @@ export class Conductor {
     return turnId;
   }
 
-  async heartbeat(nibbletId: string): Promise<void> {
+  /**
+   * Runs one of a nibblet's heartbeats by name, or with no name a general
+   * check-in (the "Check in now" button). Skipped while it's busy.
+   */
+  async heartbeat(nibbletId: string, name: string | null = null): Promise<void> {
     if (this.busy(nibbletId)) return;
     const nibblet = await this.store.getNibblet(nibbletId);
-    await this.store.updateNibblet(nibbletId, { lastHeartbeatAt: new Date() });
-    await this.enqueue(nibbletId, "heartbeat", heartbeatInput(nibblet));
+    const beat = name ? (nibblet.heartbeats.find((h) => h.name === name) ?? null) : null;
+    if (name && !beat) return;
+    if (beat) {
+      const ranAt = new Date().toISOString();
+      await this.store.setHeartbeats(
+        nibbletId,
+        nibblet.heartbeats.map((h) => (h.name === beat.name ? { ...h, lastRunAt: ranAt } : h)),
+      );
+    }
+    await this.enqueue(nibbletId, "heartbeat", heartbeatInput(beat));
   }
 
   busy(nibbletId: string): boolean {

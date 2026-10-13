@@ -1,4 +1,4 @@
-import type { ActiveHours, Schedule } from "@nibblet/protocol";
+import type { ActiveHours, Heartbeat, Schedule } from "@nibblet/protocol";
 import { Cron } from "croner";
 import type { Conductor } from "./conductor.ts";
 import { scheduleInput } from "./context.ts";
@@ -21,6 +21,25 @@ export function withinActiveHours(hours: ActiveHours | null, at: Date): boolean 
   return hours.start <= hours.end
     ? current >= hours.start && current < hours.end
     : current >= hours.start || current < hours.end;
+}
+
+/**
+ * The heartbeat that's most overdue and inside its active hours, if any. One
+ * fires per tick, so a nibblet with several due catches up a turn at a time.
+ */
+export function dueHeartbeat(
+  heartbeats: readonly Heartbeat[],
+  createdAt: Date,
+  now: Date,
+): Heartbeat | null {
+  let best: { beat: Heartbeat; overdue: number } | null = null;
+  for (const beat of heartbeats) {
+    const last = beat.lastRunAt ? new Date(beat.lastRunAt) : createdAt;
+    const overdue = now.getTime() - last.getTime() - beat.everyMinutes * 60_000;
+    if (overdue < 0 || !withinActiveHours(beat.activeHours, now)) continue;
+    if (!best || overdue > best.overdue) best = { beat, overdue };
+  }
+  return best?.beat ?? null;
 }
 
 /**
@@ -95,15 +114,12 @@ export class Scheduler {
     const now = new Date();
     const rows = await this.store.db.query.nibblets.findMany();
     for (const row of rows) {
-      const hb = row.heartbeat;
-      if (!hb.enabled || row.status === "error") continue;
-      if (this.conductor.busy(row.id)) continue;
-      const last = row.lastHeartbeatAt ?? row.createdAt;
-      if (now.getTime() - last.getTime() < hb.everyMinutes * 60_000) continue;
-      if (!withinActiveHours(hb.activeHours, now)) continue;
+      if (row.status === "error" || this.conductor.busy(row.id)) continue;
+      const due = dueHeartbeat(row.heartbeats, row.createdAt, now);
+      if (!due) continue;
       await this.conductor
-        .heartbeat(row.id)
-        .catch((err: unknown) => console.error(`heartbeat ${row.id} failed`, err));
+        .heartbeat(row.id, due.name)
+        .catch((err: unknown) => console.error(`heartbeat ${row.id}/${due.name} failed`, err));
     }
   }
 }

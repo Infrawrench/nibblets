@@ -15,6 +15,13 @@
       "when": 1791927483779,
       "tag": "0001_host_tools",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791930325845,
+      "tag": "0002_heartbeats",
+      "breakpoints": true
     }
   ]
 }

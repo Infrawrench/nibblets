@@ -106,7 +106,22 @@ export function createMockServer(): ServerConnection {
     parentId: null,
     status: "idle",
     statusDetail: null,
-    heartbeat: { enabled: true, everyMinutes: 30, activeHours: null, prompt: null },
+    heartbeats: [
+      {
+        name: "inbox",
+        everyMinutes: 15,
+        activeHours: { start: "08:00", end: "19:00", timezone: "Europe/London" },
+        checklist: "Anything urgent in the work inbox or calendar?",
+        lastRunAt: null,
+      },
+      {
+        name: "flights",
+        everyMinutes: 120,
+        activeHours: null,
+        checklist: "Has the Lisbon fare dropped below £80?",
+        lastRunAt: null,
+      },
+    ],
     browser: true,
     hostTools: [],
     cliCredentials: [],
@@ -525,12 +540,7 @@ export function createMockServer(): ServerConnection {
             hostTools: input.hostTools,
             cliCredentials: input.cliCredentials,
             mcpServers: keepSecrets(id, input.mcpServers),
-            heartbeat: input.heartbeat ?? {
-              enabled: true,
-              everyMinutes: 30,
-              activeHours: null,
-              prompt: null,
-            },
+            heartbeats: [],
             status: "idle",
             createdAt: now(),
             lastActivityAt: now(),
@@ -555,7 +565,6 @@ export function createMockServer(): ServerConnection {
           mcpServers: patch.mcpServers
             ? keepSecrets(id, mergeMcpServers(patch.mcpServers, secrets.get(id) ?? []))
             : current.mcpServers,
-          heartbeat: patch.heartbeat ?? current.heartbeat,
           updatedAt: now(),
         });
       },

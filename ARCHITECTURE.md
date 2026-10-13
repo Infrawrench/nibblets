@@ -56,17 +56,17 @@ OpenCode nibblets use the host's own OpenCode account, not the credential proxy.
 
 ## Tools (`/mcp` on the server)
 
-| Tool                                | What it does                                                                              |
-| ----------------------------------- | ----------------------------------------------------------------------------------------- |
-| `memory_search`                     | Semantic search over this nibblet's notes, shared notes, and indexed transcript           |
-| `memory_save`                       | Saves a note (optionally shared with every nibblet)                                       |
-| `memory_forget`                     | Deletes a note by id                                                                      |
-| `schedule_create`                   | Cron or one-shot schedule that sends the nibblet a prompt                                 |
-| `schedule_list` / `schedule_delete` |                                                                                           |
-| `instructions_update`               | Rewrites the nibblet's own standing instructions as it learns what it's for from the chat |
-| `heartbeat_configure`               | Turns the heartbeat on or off, sets its interval, active hours, and checklist             |
-| `spawn_subagent`                    | Starts a child nibblet on a task; its final answer comes back as a `subagent` turn        |
-| `subagent_status`                   | Lists children and their status                                                           |
+| Tool                                                    | What it does                                                                                                                                              |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory_search`                                         | Semantic search over this nibblet's notes, shared notes, and indexed transcript                                                                           |
+| `memory_save`                                           | Saves a note (optionally shared with every nibblet)                                                                                                       |
+| `memory_forget`                                         | Deletes a note by id                                                                                                                                      |
+| `schedule_create`                                       | Cron or one-shot schedule that sends the nibblet a prompt                                                                                                 |
+| `schedule_list` / `schedule_delete`                     |                                                                                                                                                           |
+| `instructions_update`                                   | Rewrites the nibblet's own standing instructions as it learns what it's for from the chat                                                                 |
+| `heartbeat_set` / `heartbeat_remove` / `heartbeat_list` | The nibblet's own heartbeats: as many as it needs, each named, with its own interval, active hours and checklist. The UI shows them but doesn't edit them |
+| `spawn_subagent`                                        | Starts a child nibblet on a task; its final answer comes back as a `subagent` turn                                                                        |
+| `subagent_status`                                       | Lists children and their status                                                                                                                           |
 
 A heartbeat or schedule turn whose reply is `NO_REPLY` is stored with `quiet: true` and collapsed in the UI.
 

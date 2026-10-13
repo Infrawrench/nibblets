@@ -1,7 +1,7 @@
-import { defaultHamsterLook, type Nibblet } from "@nibblet/protocol";
+import { defaultHamsterLook, type ActiveHours, type Nibblet } from "@nibblet/protocol";
 import { describe, expect, it } from "vitest";
-import { isQuiet, recap, systemPrompt } from "./context.ts";
-import { withinActiveHours } from "./scheduler.ts";
+import { heartbeatInput, isQuiet, recap, systemPrompt } from "./context.ts";
+import { dueHeartbeat, withinActiveHours } from "./scheduler.ts";
 
 const nibblet: Nibblet = {
   id: "nib_1",
@@ -14,7 +14,15 @@ const nibblet: Nibblet = {
   parentId: null,
   status: "idle",
   statusDetail: null,
-  heartbeat: { enabled: true, everyMinutes: 30, activeHours: null, prompt: null },
+  heartbeats: [
+    {
+      name: "inbox",
+      everyMinutes: 15,
+      activeHours: null,
+      checklist: "Anything urgent?",
+      lastRunAt: null,
+    },
+  ],
   browser: true,
   hostTools: [],
   cliCredentials: [],
@@ -113,5 +121,59 @@ describe("systemPrompt", () => {
         },
       ]),
     ).toBe("");
+  });
+});
+
+describe("dueHeartbeat", () => {
+  const created = new Date("2026-10-13T08:00:00Z");
+  const now = new Date("2026-10-13T12:00:00Z");
+  const beat = (
+    name: string,
+    everyMinutes: number,
+    lastRunAt: string | null,
+    hours: ActiveHours | null = null,
+  ) => ({
+    name,
+    everyMinutes,
+    activeHours: hours,
+    checklist: "",
+    lastRunAt,
+  });
+
+  it("picks the most overdue heartbeat that's due", () => {
+    const due = dueHeartbeat(
+      [
+        beat("inbox", 15, "2026-10-13T11:50:00Z"),
+        beat("deploys", 60, "2026-10-13T10:30:00Z"),
+        beat("news", 30, "2026-10-13T11:00:00Z"),
+      ],
+      created,
+      now,
+    );
+    expect(due?.name).toBe("deploys");
+  });
+
+  it("waits from creation when a heartbeat has never run", () => {
+    expect(dueHeartbeat([beat("a", 600, null)], created, now)).toBeNull();
+    expect(dueHeartbeat([beat("a", 60, null)], created, now)?.name).toBe("a");
+  });
+
+  it("respects each heartbeat's own active hours", () => {
+    const hours = { start: "14:00", end: "18:00", timezone: "UTC" };
+    expect(dueHeartbeat([beat("a", 5, null, hours)], created, now)).toBeNull();
+  });
+});
+
+describe("heartbeatInput", () => {
+  it("names the heartbeat and carries its checklist", () => {
+    const text = heartbeatInput({
+      name: "inbox",
+      everyMinutes: 15,
+      activeHours: null,
+      checklist: "Anything urgent?",
+      lastRunAt: null,
+    });
+    expect(text).toContain('"inbox" heartbeat');
+    expect(text).toContain("Anything urgent?");
   });
 });

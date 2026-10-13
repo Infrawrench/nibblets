@@ -32,13 +32,6 @@ import type { Embedder } from "./embeddings.ts";
 type NibbletRow = typeof nibblets.$inferSelect;
 type ScheduleRow = typeof schedules.$inferSelect;
 
-export const defaultHeartbeat: Heartbeat = {
-  enabled: false,
-  everyMinutes: 30,
-  activeHours: null,
-  prompt: null,
-};
-
 export function newId(prefix: string): string {
   return `${prefix}_${randomBytes(9).toString("base64url")}`;
 }
@@ -68,7 +61,7 @@ export function toNibblet(row: NibbletRow): Nibblet {
     parentId: row.parentId,
     status: row.status,
     statusDetail: row.statusDetail,
-    heartbeat: row.heartbeat,
+    heartbeats: row.heartbeats,
     browser: row.browser,
     hostTools: row.hostTools,
     cliCredentials: row.cliCredentials,
@@ -171,7 +164,6 @@ export class Store {
         effort: input.effort,
         instructions: input.instructions ?? "",
         parentId,
-        heartbeat: input.heartbeat ?? defaultHeartbeat,
         browser: input.browser ?? true,
         hostTools: input.hostTools ?? [],
         cliCredentials: input.cliCredentials ?? [],
@@ -212,6 +204,11 @@ export class Store {
       .set({ tokenHash: hashToken(token) })
       .where(eq(nibblets.id, id));
     return token;
+  }
+
+  /** Replaces a nibblet's heartbeats, keeping its other fields as they are. */
+  async setHeartbeats(id: string, heartbeats: Heartbeat[]): Promise<Nibblet> {
+    return this.updateNibblet(id, { heartbeats });
   }
 
   async deleteNibblet(id: string): Promise<void> {

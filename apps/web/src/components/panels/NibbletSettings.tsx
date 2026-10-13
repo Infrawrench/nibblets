@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Moon, Pencil, Power, Trash2 } from "lucide-react";
 import type { Heartbeat, Nibblet } from "@nibblet/protocol";
+import { HeartPulse } from "lucide-react";
 import { modelLabel, useModels } from "../../lib/models.ts";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { Hamster } from "../hamster/Hamster.tsx";
@@ -24,7 +25,6 @@ export function NibbletSettings({
   const catalogue = useModels(connection);
   const [name, setName] = useState(nibblet.name);
   const [instructions, setInstructions] = useState(nibblet.instructions);
-  const [heartbeat, setHeartbeat] = useState<Heartbeat>(nibblet.heartbeat);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -33,16 +33,10 @@ export function NibbletSettings({
   useEffect(() => {
     setName(nibblet.name);
     setInstructions(nibblet.instructions);
-    setHeartbeat(nibblet.heartbeat);
   }, [nibblet.id]);
 
-  const dirty =
-    name !== nibblet.name ||
-    instructions !== nibblet.instructions ||
-    JSON.stringify(heartbeat) !== JSON.stringify(nibblet.heartbeat);
+  const dirty = name !== nibblet.name || instructions !== nibblet.instructions;
   const update = connection.client.nibblets.update;
-  const hours = heartbeat.activeHours;
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   return (
     <div className="flex flex-col gap-2 p-3">
@@ -126,72 +120,11 @@ export function NibbletSettings({
         onChange={(tools) => void update({ id: nibblet.id, ...tools })}
       />
 
-      <SectionHeading>Heartbeat</SectionHeading>
-      <FieldRow label="Enabled">
-        <Switch
-          checked={heartbeat.enabled}
-          onChange={(enabled) => setHeartbeat({ ...heartbeat, enabled })}
-          label="Heartbeat"
-        />
-      </FieldRow>
-      <FieldRow label="Every" hint="Minutes between check-ins.">
-        <Input
-          type="number"
-          min={1}
-          max={1440}
-          value={heartbeat.everyMinutes}
-          onChange={(e) =>
-            setHeartbeat({ ...heartbeat, everyMinutes: Math.max(1, Number(e.target.value) || 1) })
-          }
-          className="w-24"
-        />
-      </FieldRow>
-      <FieldRow label="Active hours" hint={hours ? `In ${hours.timezone}` : "Around the clock"}>
-        <div className="flex items-center gap-1.5">
-          <Switch
-            checked={hours !== null}
-            onChange={(on) =>
-              setHeartbeat({
-                ...heartbeat,
-                activeHours: on ? { start: "08:00", end: "22:00", timezone } : null,
-              })
-            }
-            label="Limit to active hours"
-          />
-          {hours ? (
-            <>
-              <Input
-                type="time"
-                value={hours.start}
-                onChange={(e) =>
-                  setHeartbeat({ ...heartbeat, activeHours: { ...hours, start: e.target.value } })
-                }
-                className="w-24"
-              />
-              <span className="text-faint">to</span>
-              <Input
-                type="time"
-                value={hours.end}
-                onChange={(e) =>
-                  setHeartbeat({ ...heartbeat, activeHours: { ...hours, end: e.target.value } })
-                }
-                className="w-24"
-              />
-            </>
-          ) : null}
-        </div>
-      </FieldRow>
-      <FieldRow
-        label="Checklist"
-        top
-        hint="What to look at on each heartbeat. Empty uses the default."
-      >
-        <Textarea
-          value={heartbeat.prompt ?? ""}
-          onChange={(e) => setHeartbeat({ ...heartbeat, prompt: e.target.value || null })}
-          placeholder="Check my inbox for anything urgent…"
-        />
-      </FieldRow>
+      <SectionHeading>Heartbeats</SectionHeading>
+      <HeartbeatSummary
+        nibblet={nibblet}
+        onWake={() => void connection.client.nibblets.wake({ id: nibblet.id })}
+      />
 
       <div className="flex justify-end gap-1.5 pt-1">
         <Button
@@ -201,7 +134,7 @@ export function NibbletSettings({
           onClick={async () => {
             setSaving(true);
             try {
-              await update({ id: nibblet.id, name: name.trim(), instructions, heartbeat });
+              await update({ id: nibblet.id, name: name.trim(), instructions });
             } finally {
               setSaving(false);
             }
@@ -245,6 +178,58 @@ export function NibbletSettings({
         >
           <Trash2 />
           {confirmDelete ? "Really delete?" : "Delete"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function every(minutes: number): string {
+  if (minutes % 60 === 0) return minutes === 60 ? "every hour" : `every ${minutes / 60} hours`;
+  return `every ${minutes} min`;
+}
+
+function when(h: Heartbeat): string {
+  const hours = h.activeHours
+    ? `, ${h.activeHours.start} to ${h.activeHours.end} (${h.activeHours.timezone})`
+    : "";
+  return `${every(h.everyMinutes)}${hours}`;
+}
+
+/**
+ * The heartbeats are the nibblet's to run: it adds one per thing it's
+ * keeping an eye on, each with its own interval, hours and checklist, using
+ * the `heartbeat_*` tools. Here they're shown, not edited.
+ */
+function HeartbeatSummary({ nibblet, onWake }: { nibblet: Nibblet; onWake: () => void }) {
+  return (
+    <div className="flex flex-col gap-1.5 rounded-lg border border-line bg-surface p-2.5 text-xs">
+      {nibblet.heartbeats.length === 0 ? (
+        <div className="flex items-center gap-2">
+          <HeartPulse className="size-3.5 text-faint" />
+          <span className="flex-1 text-dim">None yet</span>
+        </div>
+      ) : (
+        nibblet.heartbeats.map((h) => (
+          <div key={h.name} className="flex gap-2">
+            <HeartPulse className="mt-0.5 size-3.5 shrink-0 text-accent" />
+            <div className="min-w-0 flex-1">
+              <div>
+                <span className="font-medium">{h.name}</span>
+                <span className="text-dim"> · {when(h)}</span>
+              </div>
+              {h.checklist ? <p className="whitespace-pre-wrap text-dim">{h.checklist}</p> : null}
+            </div>
+          </div>
+        ))
+      )}
+      <div className="flex items-center gap-2 pt-0.5">
+        <p className="flex-1 text-faint">
+          {nibblet.name} sets these itself as it learns what to keep an eye on. Ask it in the chat
+          to change them.
+        </p>
+        <Button size="sm" variant="ghost" onClick={onWake} title="Run a check-in now">
+          Check in now
         </Button>
       </div>
     </div>

@@ -1,10 +1,11 @@
 import { StreamableHTTPTransport } from "@hono/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ActiveHours, type Nibblet } from "@nibblet/protocol";
+import { ActiveHours, HeartbeatName, MAX_HEARTBEATS, type Nibblet } from "@nibblet/protocol";
 import { Cron } from "croner";
 import type { Context } from "hono";
 import { z } from "zod";
 import type { Conductor } from "./conductor.ts";
+import { describeHeartbeat } from "./context.ts";
 import type { Scheduler } from "./scheduler.ts";
 import { toNibblet, type Store } from "./store.ts";
 
@@ -172,33 +173,67 @@ function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
   );
 
   server.registerTool(
-    "heartbeat_configure",
+    "heartbeat_set",
     {
       description:
-        "Set up your heartbeat: a regular turn where you check on things without being asked. The checklist is what you look at each time.",
+        "Add or change one of your heartbeats: a regular turn, without the user asking, where you check on something you're looking after. Keep one per concern (say `inbox` every 15 minutes in working hours, `deploys` hourly), each with its own checklist. Setting a name that exists replaces it.",
       inputSchema: {
-        enabled: z.boolean(),
+        name: HeartbeatName.describe("Short, lowercase, e.g. inbox"),
         everyMinutes: z
           .int()
           .min(5)
-          .max(24 * 60)
-          .optional(),
-        checklist: z.string().optional().describe("What to check on each heartbeat"),
+          .max(24 * 60),
+        checklist: z.string().min(1).describe("What to look at each time it fires"),
         activeHours: ActiveHours.nullable()
-          .optional()
-          .describe("Only beat between these local times"),
+          .default(null)
+          .describe("Only fire between these local times; null for around the clock"),
       },
     },
-    async ({ enabled, everyMinutes, checklist, activeHours }) => {
-      const current = (await store.getNibblet(nibblet.id)).heartbeat;
-      const heartbeat = {
-        enabled,
-        everyMinutes: everyMinutes ?? current.everyMinutes,
-        prompt: checklist ?? current.prompt,
-        activeHours: activeHours === undefined ? current.activeHours : activeHours,
+    async ({ name, everyMinutes, checklist, activeHours }) => {
+      const { heartbeats } = await store.getNibblet(nibblet.id);
+      const existing = heartbeats.find((h) => h.name === name);
+      if (!existing && heartbeats.length >= MAX_HEARTBEATS) {
+        return text(`You already have ${MAX_HEARTBEATS} heartbeats. Remove one first.`);
+      }
+      const beat = {
+        name,
+        everyMinutes,
+        checklist,
+        activeHours,
+        // A changed heartbeat keeps its rhythm; a new one waits a full interval.
+        lastRunAt: existing?.lastRunAt ?? new Date().toISOString(),
       };
-      await store.updateNibblet(nibblet.id, { heartbeat });
-      return json({ heartbeat });
+      await store.setHeartbeats(
+        nibblet.id,
+        existing ? heartbeats.map((h) => (h.name === name ? beat : h)) : [...heartbeats, beat],
+      );
+      return text(`${existing ? "Updated" : "Added"} heartbeat ${describeHeartbeat(beat)}.`);
+    },
+  );
+
+  server.registerTool(
+    "heartbeat_remove",
+    {
+      description: "Remove one of your heartbeats by name, once it's no longer needed.",
+      inputSchema: { name: HeartbeatName },
+    },
+    async ({ name }) => {
+      const { heartbeats } = await store.getNibblet(nibblet.id);
+      if (!heartbeats.some((h) => h.name === name)) return text(`No heartbeat called ${name}.`);
+      await store.setHeartbeats(
+        nibblet.id,
+        heartbeats.filter((h) => h.name !== name),
+      );
+      return text(`Removed ${name}.`);
+    },
+  );
+
+  server.registerTool(
+    "heartbeat_list",
+    { description: "List your heartbeats and when each last ran.", inputSchema: {} },
+    async () => {
+      const { heartbeats } = await store.getNibblet(nibblet.id);
+      return heartbeats.length ? json(heartbeats) : text("You have no heartbeats.");
     },
   );
 

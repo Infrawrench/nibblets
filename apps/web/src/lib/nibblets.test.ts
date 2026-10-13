@@ -20,7 +20,7 @@ const nibblet = (id: string, parentId: string | null, active: string): Nibblet =
   parentId,
   status: "idle",
   statusDetail: null,
-  heartbeat: { enabled: false, everyMinutes: 30, activeHours: null, prompt: null },
+  heartbeats: [],
   browser: false,
   hostTools: [],
   cliCredentials: [],

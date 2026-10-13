@@ -82,10 +82,13 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
             <span className="flex items-center gap-1 truncate text-2xs text-faint">
               <HarnessIcon harness={nibblet.harness} className="size-3" />
               {harnesses[nibblet.harness].label} · {modelLabel(model, nibblet.model)}
-              {nibblet.heartbeat.enabled ? (
+              {nibblet.heartbeats.length > 0 ? (
                 <>
                   {" · "}
-                  <HeartPulse className="size-3" /> every {nibblet.heartbeat.everyMinutes} min
+                  <HeartPulse className="size-3" />{" "}
+                  {nibblet.heartbeats.length === 1
+                    ? `${nibblet.heartbeats[0]?.name}, every ${nibblet.heartbeats[0]?.everyMinutes} min`
+                    : `${nibblet.heartbeats.length} heartbeats`}
                 </>
               ) : null}
               {nibblet.status === "error" && nibblet.statusDetail ? (
