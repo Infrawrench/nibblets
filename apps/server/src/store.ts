@@ -121,6 +121,9 @@ export class Store {
       .values({ key, value })
       .onConflictDoUpdate({ target: settings.key, set: { value } });
   }
+  async deleteSetting(key: string): Promise<void> {
+    await this.db.delete(settings).where(eq(settings.key, key));
+  }
 
   // Nibblets
 

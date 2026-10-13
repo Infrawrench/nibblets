@@ -37,7 +37,7 @@ interface Pending {
 }
 
 export interface ConnectDeps {
-  store: Pick<Store, "getSetting" | "setSetting">;
+  store: Pick<Store, "getSetting" | "setSetting" | "deleteSetting">;
   tunnel: Pick<Tunnel, "configure" | "current">;
   config: Pick<
     Config,
@@ -105,7 +105,7 @@ export class Connect {
 
   /** Picks up an earlier link after a restart. */
   async restore(): Promise<void> {
-    const saved = await this.deps.store.getSetting(SETTING, (v) => Link.nullable().parse(v), null);
+    const saved = await this.deps.store.getSetting(SETTING, (v) => Link.parse(v), null);
     if (saved) await this.activate(saved);
   }
 
@@ -256,7 +256,7 @@ export class Connect {
     this.lastHeartbeatAt = null;
     this.lastError = null;
     this.routes = { lan: [], tailscale: null, tunnel: null };
-    await this.deps.store.setSetting(SETTING, null);
+    await this.deps.store.deleteSetting(SETTING);
     await this.deps.tunnel.configure({ mode: "off" }).catch(() => undefined);
   }
 

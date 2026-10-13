@@ -13,8 +13,7 @@
     {
       "binding": "DB",
       "database_name": "nibblets-connect",
-      // Filled in by `wrangler d1 create nibblets-connect` before the first deploy.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "cd9f7ecb-0ff7-4fbd-88e3-407f59076c7b",
       "migrations_dir": "migrations",
     },
   ],

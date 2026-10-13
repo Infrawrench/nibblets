@@ -190,7 +190,12 @@ describe("a server's Connect against the central service", () => {
           getSetting: async <T>(key: string, parse: (v: unknown) => T, fallback: T) =>
             settings.has(key) ? parse(settings.get(key)) : fallback,
           setSetting: async (key: string, value: unknown) => {
+            // Like the real table: a setting is a value, never null.
+            if (value === null || value === undefined) throw new Error("settings can't be null");
             settings.set(key, value);
+          },
+          deleteSetting: async (key: string) => {
+            settings.delete(key);
           },
         },
         tunnel: {
@@ -263,6 +268,7 @@ describe("a server's Connect against the central service", () => {
 
       await connect.unlink();
       expect(connect.status().state).toBe("unlinked");
+      expect(settings.has("connect")).toBe(false);
       expect(tunnelMode).toBe("off");
       connect.stop();
     } finally {
