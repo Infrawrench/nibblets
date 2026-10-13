@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { BRIDGE_PORT } from "./bridge.ts";
 
@@ -39,6 +40,8 @@ const secret = () => randomBytes(32).toString("hex");
 export class Stack {
   readonly paths: StackPaths;
   private readonly cli: string;
+  /** Nibblets Connect, for the server to link to; its own default when unset. */
+  centralUrl: string | null = null;
   env: EnvFile = {};
 
   constructor(paths: StackPaths, cli: string) {
@@ -62,6 +65,12 @@ export class Stack {
       HOST_MCP_TOKEN: existing.HOST_MCP_TOKEN ?? secret(),
       HOST_MCP_URL: `http://host.docker.internal:${HOST_MCP_PORT}`,
       // Docker Desktop and OrbStack forward the host's agent at this path in their VM.
+      // Who this machine is, for Nibblets Connect; the container can't see it.
+      NIBBLET_HOST_NAME: hostname(),
+      NIBBLET_HOST_PLATFORM: ["darwin", "linux", "win32"].includes(process.platform)
+        ? process.platform
+        : "other",
+      ...(this.centralUrl ? { NIBBLET_CENTRAL_URL: this.centralUrl } : {}),
       HOST_SSH_AUTH_SOCK:
         process.platform === "linux"
           ? (process.env.SSH_AUTH_SOCK ?? "")
@@ -109,11 +118,24 @@ export class Stack {
     }
   }
 
+  /** Calls the local server's API as its owner, for the app's own prompts. */
+  async rpc(path: string, input: object = {}): Promise<unknown> {
+    const res = await fetch(`http://127.0.0.1:8420/api/rpc/${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${this.env.NIBBLET_OWNER_TOKEN ?? ""}`,
+      },
+      body: JSON.stringify(input),
+    });
+    const body: unknown = await res.json();
+    return body;
+  }
+
   down(onLine: (line: string) => void): Promise<void> {
     return this.compose(["stop"], onLine);
   }
 
-  /** Waits for the server, then asks it for a one-time sign-in link. */
   /** Resolves once the server answers, which can lag `compose up` when it was recreated. */
   async waitForServer(timeoutMs = 90_000): Promise<boolean> {
     const until = Date.now() + timeoutMs;
@@ -129,6 +151,7 @@ export class Stack {
     return false;
   }
 
+  /** Waits for the server, then asks it for a one-time sign-in link. */
   async pairingUrl(): Promise<string> {
     await this.waitForServer();
     let out = "";

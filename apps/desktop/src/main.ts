@@ -2,7 +2,19 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { join, resolve } from "node:path";
-import { app, BrowserWindow, Menu, nativeImage, nativeTheme, shell, Tray } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  Menu,
+  nativeImage,
+  nativeTheme,
+  shell,
+  Tray,
+  type MenuItemConstructorOptions,
+} from "electron";
+import { ConnectStatus } from "@nibblet/protocol";
+import { z } from "zod";
 import { ipcMain } from "electron/main";
 import { startHostMcpBridge, type HostMcpBridge } from "@nibblet/host-mcp";
 import { startKeychainBridge } from "./bridge.ts";
@@ -11,20 +23,34 @@ import { checkDocker } from "./docker.ts";
 import type { SetupStep } from "./preload.ts";
 import { HOST_MCP_PORT, Stack } from "./stack.ts";
 
-const UI_URL = "http://127.0.0.1:8420/";
+const SERVER_URL = "http://127.0.0.1:8420/";
+const DEFAULT_CENTRAL_URL = "https://nibblets-connect.astrid-906.workers.dev/";
 
 interface Settings {
   paired: boolean;
   stopOnQuit: boolean;
+  /** Whether this computer runs a server, or only shows ones elsewhere. Null until asked. */
+  runServer: boolean | null;
+  centralUrl: string;
+  /** The "connect this server to your account?" prompt has been shown. */
+  offeredConnect: boolean;
 }
 
 const settingsPath = () => join(app.getPath("userData"), "settings.json");
 
 async function loadSettings(): Promise<Settings> {
-  const defaults: Settings = { paired: false, stopOnQuit: false };
+  const defaults: Settings = {
+    paired: false,
+    stopOnQuit: false,
+    runServer: null,
+    centralUrl: DEFAULT_CENTRAL_URL,
+    offeredConnect: false,
+  };
   try {
     const parsed: Partial<Settings> = JSON.parse(await readFile(settingsPath(), "utf8"));
-    return { ...defaults, ...parsed };
+    // Installs from before the question was asked were already running a server.
+    const runServer = parsed.runServer ?? (parsed.paired ? true : null);
+    return { ...defaults, ...parsed, runServer };
   } catch {
     return defaults;
   }
@@ -55,7 +81,16 @@ let mainWindow: BrowserWindow | null = null;
 let stack: Stack | null = null;
 let bridge: Server | null = null;
 let hostMcp: HostMcpBridge | null = null;
-let settings: Settings = { paired: false, stopOnQuit: false };
+let settings: Settings = {
+  paired: false,
+  stopOnQuit: false,
+  runServer: null,
+  centralUrl: DEFAULT_CENTRAL_URL,
+  offeredConnect: false,
+};
+
+/** The UI the main window shows: this computer's server, or Nibblets Connect. */
+const uiUrl = (): string => (settings.runServer ? SERVER_URL : settings.centralUrl);
 
 function step(s: SetupStep) {
   setupWindow?.webContents.send("setup:step", s);
@@ -77,9 +112,9 @@ function openSetupWindow(): BrowserWindow {
   return setupWindow;
 }
 
-function openMainWindow(url = UI_URL) {
+function openMainWindow(url = uiUrl()) {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    if (url !== UI_URL) void mainWindow.loadURL(url);
+    if (mainWindow.webContents.getURL() !== url) void mainWindow.loadURL(url);
     mainWindow.show();
     mainWindow.focus();
     return;
@@ -97,7 +132,7 @@ function openMainWindow(url = UI_URL) {
   // Links out of the UI open in the user's browser, not in the app.
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
     // The UI's own pop-outs (a nibblet's browser) open as app windows.
-    if (target.startsWith(new URL("/browser/", UI_URL).href)) {
+    if (target.startsWith(new URL("/browser/", uiUrl()).href)) {
       return {
         action: "allow",
         overrideBrowserWindowOptions: {
@@ -180,6 +215,7 @@ async function bringUp(): Promise<void> {
 
   step({ id: "stack", state: "running", detail: "Starting containers" });
   stack = new Stack(stackPaths(), docker.cli);
+  stack.centralUrl = settings.centralUrl.replace(/\/+$/, "");
   try {
     await stack.prepare(creds);
     if (creds.claude === "keychain" && !bridge) {
@@ -212,6 +248,7 @@ async function bringUp(): Promise<void> {
     step({ id: "signin", state: "done", detail: "Already signed in" });
     win.close();
     openMainWindow();
+    void offerConnect();
     return;
   }
   step({ id: "signin", state: "running", detail: "Waiting for the server" });
@@ -222,9 +259,79 @@ async function bringUp(): Promise<void> {
     step({ id: "signin", state: "done", detail: "Signed in" });
     win.close();
     openMainWindow(url);
+    void offerConnect();
   } catch (err) {
     step({ id: "signin", state: "error", detail: String(err) });
   }
+}
+
+/**
+ * Once, after a server first comes up here: offer to link it to a Nibblets
+ * account, so it shows up on Nibblets Connect. Approving happens in the
+ * browser, where the person signs in.
+ */
+async function offerConnect(): Promise<void> {
+  if (settings.offeredConnect || !stack) return;
+  const status = await connectStatus();
+  if (!status || status.state !== "unlinked") return;
+  settings.offeredConnect = true;
+  await saveSettings(settings);
+  const { response } = await dialog.showMessageBox({
+    type: "question",
+    message: "Connect this server to your Nibblets account?",
+    detail:
+      "Then you can see and use its nibblets from any computer or phone, signed in to Nibblets Connect. You can do this later in Settings → Remote access.",
+    buttons: ["Connect", "Not now"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (response === 0) await startConnect();
+}
+
+const RpcResult = z.object({ ok: z.literal(true), data: ConnectStatus });
+
+async function connectStatus(path = "connect.status"): Promise<ConnectStatus | null> {
+  if (!stack) return null;
+  const parsed = RpcResult.safeParse(await stack.rpc(path).catch(() => null));
+  return parsed.success ? parsed.data.data : null;
+}
+
+async function startConnect(): Promise<void> {
+  const status = await connectStatus("connect.start");
+  if (status?.state === "linking") void shell.openExternal(status.approveUrl);
+  // The code also shows in Settings → Remote access while it waits.
+  openMainWindow(new URL("/settings", SERVER_URL).href);
+}
+
+/** Asks, once, whether this computer should run a server or only show servers elsewhere. */
+async function askRunServer(): Promise<boolean> {
+  const { response } = await dialog.showMessageBox({
+    type: "question",
+    message: "Run a Nibblets server on this computer?",
+    detail:
+      'A server runs your nibblets here, in Docker, using this computer\'s Claude and ChatGPT logins. If your nibblets live on another machine, choose "Just view" and sign in to Nibblets Connect to see them.',
+    buttons: ["Run a server here", "Just view"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  return response === 0;
+}
+
+/** Starts or stops being a server, from the first-run question or the tray. */
+async function setRunServer(run: boolean): Promise<void> {
+  settings.runServer = run;
+  await saveSettings(settings);
+  buildTray();
+  if (run) {
+    await bringUp();
+    return;
+  }
+  if (stack) await stack.down(() => {}).catch(() => undefined);
+  bridge?.close();
+  bridge = null;
+  await hostMcp?.close();
+  hostMcp = null;
+  openMainWindow();
 }
 
 function buildTray() {
@@ -233,13 +340,15 @@ function buildTray() {
     ? nativeImage.createFromPath(iconPath)
     : nativeImage.createEmpty();
   icon.setTemplateImage(true);
-  tray = new Tray(icon);
+  tray ??= new Tray(icon);
   tray.setToolTip("Nibblets");
-  const menu = () =>
-    Menu.buildFromTemplate([
-      { label: "Open Nibblets", click: () => openMainWindow() },
+  const machine = process.platform === "darwin" ? "this Mac" : "this computer";
+  const menu = () => {
+    const serverItems: MenuItemConstructorOptions[] = [
       { label: "Restart containers", click: () => void bringUp() },
-      { type: "separator" },
+      { label: "Connect to your account…", click: () => void startConnect() },
+    ];
+    const serverOptions: MenuItemConstructorOptions[] = [
       {
         label: "Stop containers on quit",
         type: "checkbox",
@@ -256,9 +365,21 @@ function buildTray() {
           void saveSettings(settings).then(bringUp);
         },
       },
+    ];
+    return Menu.buildFromTemplate([
+      { label: "Open Nibblets", click: () => openMainWindow() },
+      {
+        label: `Run a server on ${machine}`,
+        type: "checkbox",
+        checked: settings.runServer === true,
+        click: (item) => void setRunServer(item.checked),
+      },
+      ...(settings.runServer ? serverItems : []),
       { type: "separator" },
+      ...(settings.runServer ? [...serverOptions, { type: "separator" as const }] : []),
       { label: "Quit", role: "quit" },
     ]);
+  };
   tray.setContextMenu(menu());
 }
 
@@ -270,8 +391,13 @@ app.on("second-instance", () => openMainWindow());
 app.whenReady().then(async () => {
   settings = await loadSettings();
   ipcMain.on("setup:retry", () => void bringUp());
+  if (settings.runServer === null) {
+    settings.runServer = await askRunServer();
+    await saveSettings(settings);
+  }
   buildTray();
-  await bringUp();
+  if (settings.runServer) await bringUp();
+  else openMainWindow();
 });
 
 // Closing every window leaves the app in the menu bar; the stack keeps running.
