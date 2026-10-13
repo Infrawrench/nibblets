@@ -96,6 +96,20 @@ function openMainWindow(url = UI_URL) {
   });
   // Links out of the UI open in the user's browser, not in the app.
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+    // The UI's own pop-outs (a nibblet's browser) open as app windows.
+    if (target.startsWith(new URL("/browser/", UI_URL).href)) {
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          width: 1440,
+          height: 960,
+          minWidth: 720,
+          minHeight: 480,
+          backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a1a1a" : "#f0f0f0",
+          webPreferences: { sandbox: true },
+        },
+      };
+    }
     void shell.openExternal(target);
     return { action: "deny" };
   });

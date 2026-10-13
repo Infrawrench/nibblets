@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Globe, Hand, Loader2, MousePointerClick, RefreshCw } from "lucide-react";
+import { ExternalLink, Globe, Hand, Loader2, MousePointerClick, RefreshCw } from "lucide-react";
 import type { Nibblet } from "@nibblet/protocol";
 import {
   BrowserView,
@@ -24,9 +24,12 @@ import { cn } from "../../lib/cn.ts";
 export function BrowserPanel({
   connection,
   nibblet,
+  popout = false,
 }: {
   connection: ServerConnection;
   nibblet: Nibblet;
+  /** In a window of its own: fills it, and sizes the display to match. */
+  popout?: boolean;
 }) {
   const qc = useQueryClient();
   const sessionsKey = ["browser-sessions", connection.id, nibblet.id];
@@ -82,6 +85,14 @@ export function BrowserPanel({
       nibbletId={nibblet.id}
       sessionId={session.session_id}
       onEnded={() => void qc.invalidateQueries({ queryKey: sessionsKey })}
+      popout={popout}
+      onPopOut={() =>
+        window.open(
+          `/browser/${encodeURIComponent(connection.id)}/${encodeURIComponent(nibblet.id)}`,
+          `nibblet-browser-${nibblet.id}`,
+          "popup,width=1440,height=960",
+        )
+      }
     />
   );
 }
@@ -91,17 +102,23 @@ function LiveView({
   nibbletId,
   sessionId,
   onEnded,
+  popout,
+  onPopOut,
 }: {
   connection: ServerConnection;
   nibbletId: string;
   sessionId: string;
   /** The browser was closed: go back to offering to open one. */
   onEnded: () => void;
+  popout: boolean;
+  onPopOut: () => void;
 }) {
+  const stage = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [view, setView] = useState<BrowserView | null>(null);
   const [state, setState] = useState<ViewState>("connecting");
-  const [control, setControl] = useState(false);
+  // Popping the browser out is a request to use it, so start in control.
+  const [control, setControl] = useState(popout);
   const [title, setTitle] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0);
 
@@ -139,6 +156,29 @@ function LiveView({
       v.close();
     };
   }, [connection, nibbletId, sessionId, generation]);
+
+  // A pop-out window sizes the browser's display to itself, so the page is
+  // drawn at the size it's shown rather than shrunk to fit.
+  useEffect(() => {
+    if (!popout || !view || state !== "open") return;
+    const el = stage.current;
+    if (!el) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const fit = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const width = Math.max(640, Math.min(4096, Math.floor(el.clientWidth)));
+        const height = Math.max(400, Math.min(4096, Math.floor(el.clientHeight)));
+        view.send({ type: "resize", width, height });
+      }, 250);
+    };
+    const observer = new ResizeObserver(fit);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      clearTimeout(timer);
+    };
+  }, [popout, view, state]);
 
   /** Canvas pixels from a pointer event, since the canvas is scaled to fit. */
   const toWindow = (e: { clientX: number; clientY: number }) => {
@@ -178,6 +218,11 @@ function LiveView({
             <RefreshCw />
           </Button>
         ) : null}
+        {popout ? null : (
+          <Button size="icon" variant="ghost" title="Open in its own window" onClick={onPopOut}>
+            <ExternalLink />
+          </Button>
+        )}
         <Button
           size="sm"
           variant={control ? "primary" : "secondary"}
@@ -187,7 +232,13 @@ function LiveView({
           {control ? "You're in control" : "Take control"}
         </Button>
       </div>
-      <div className="flex min-h-0 flex-1 items-center justify-center bg-deep p-2">
+      <div
+        ref={stage}
+        className={cn(
+          "flex min-h-0 flex-1 items-center justify-center bg-deep",
+          popout ? "overflow-hidden" : "p-2",
+        )}
+      >
         <canvas
           ref={canvas}
           tabIndex={0}
