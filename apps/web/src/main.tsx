@@ -6,7 +6,9 @@ import { routeTree } from "./routeTree.gen.ts";
 import { isMockMode, loadToken, redeemPairingLink } from "./lib/auth.ts";
 import { createConnection, type ServerConnection } from "./lib/connection.ts";
 import { createMockServer } from "./lib/mock.ts";
-import { ServersProvider } from "./lib/servers.tsx";
+import { LocalServers } from "./lib/servers.tsx";
+import { isCentralMode } from "./lib/central.ts";
+import { CentralApp } from "./components/CentralApp.tsx";
 import { Gate } from "./components/Gate.tsx";
 import "./styles.css";
 
@@ -27,20 +29,31 @@ const queryClient = new QueryClient({
 });
 
 async function boot(): Promise<void> {
+  const root = document.getElementById("root");
+  if (!root) throw new Error("No #root");
+  const app = <RouterProvider router={router} />;
+
+  if (isCentralMode()) {
+    createRoot(root).render(
+      <StrictMode>
+        <QueryClientProvider client={queryClient}>
+          <CentralApp>{app}</CentralApp>
+        </QueryClientProvider>
+      </StrictMode>,
+    );
+    return;
+  }
+
   const mock = isMockMode();
   if (!mock) await redeemPairingLink();
   const local: ServerConnection = mock
     ? createMockServer()
-    : createConnection("local", "", loadToken);
-  const root = document.getElementById("root");
-  if (!root) throw new Error("No #root");
+    : createConnection("local", () => "", loadToken);
   createRoot(root).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
         <Gate local={local}>
-          <ServersProvider local={local} connectPeers={!mock}>
-            <RouterProvider router={router} />
-          </ServersProvider>
+          <LocalServers connection={local}>{app}</LocalServers>
         </Gate>
       </QueryClientProvider>
     </StrictMode>,

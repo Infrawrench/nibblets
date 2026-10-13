@@ -1,0 +1,293 @@
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ExternalLink, Globe, Loader2, Network, Unplug, Wifi } from "lucide-react";
+import type { ConnectStatus, RouteKind, ServerRoutes } from "@nibblet/protocol";
+import type { ServerConnection } from "../lib/connection.ts";
+import { keys, useServers } from "../lib/servers.tsx";
+import { relativeTime } from "../lib/time.ts";
+import { cn } from "../lib/cn.ts";
+import { Button } from "./ui/Button.tsx";
+import { FieldRow, Input, SectionHeading } from "./ui/Field.tsx";
+import { Switch } from "./ui/Switch.tsx";
+
+/*
+ * Remote access, after T3 Connect: link a server to your Nibblets account
+ * with a code, and it shows up wherever you're signed in, reached directly
+ * over the nearest route.
+ */
+
+const routeLabels: Record<RouteKind, string> = {
+  lan: "Local network",
+  tailscale: "Tailscale",
+  tunnel: "Cloudflare Tunnel",
+};
+
+const routeIcons: Record<RouteKind, typeof Globe> = {
+  lan: Wifi,
+  tailscale: Network,
+  tunnel: Globe,
+};
+
+function routeList(routes: ServerRoutes): { kind: RouteKind; url: string }[] {
+  return [
+    ...routes.lan.map((url) => ({ kind: "lan" as const, url })),
+    ...(routes.tailscale ? [{ kind: "tailscale" as const, url: routes.tailscale }] : []),
+    ...(routes.tunnel ? [{ kind: "tunnel" as const, url: routes.tunnel }] : []),
+  ];
+}
+
+export function RemoteAccessSection({ connection }: { connection: ServerConnection }) {
+  return (
+    <>
+      <SectionHeading>Remote access</SectionHeading>
+      <AccountCard connection={connection} />
+      <TailscaleRow connection={connection} />
+    </>
+  );
+}
+
+function AccountCard({ connection }: { connection: ServerConnection }) {
+  const qc = useQueryClient();
+  const key = keys.connect(connection.id);
+  const status = useQuery({
+    queryKey: key,
+    queryFn: () => connection.client.connect.status({}),
+    // While waiting for approval, and until the first heartbeat lands, check often.
+    refetchInterval: (q) => {
+      const s = q.state.data;
+      return s?.state === "linking" || (s?.state === "linked" && !s.lastHeartbeatAt)
+        ? 2000
+        : 15_000;
+    },
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const act = async (fn: () => Promise<ConnectStatus>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      qc.setQueryData(key, await fn());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const s = status.data;
+  return (
+    <div className="flex flex-col gap-2.5 rounded-lg border border-line bg-surface p-3">
+      <div className="flex items-start gap-2.5">
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent">
+          <Globe className="size-4" />
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="text-sm font-medium">Nibblets account</span>
+          <span className="text-xs text-dim">
+            {s?.state === "linked"
+              ? `Connected as ${s.account}. This server shows up wherever you sign in.`
+              : "Connect this server to your account to see and use its nibblets from anywhere."}
+          </span>
+        </div>
+        {s?.state === "unlinked" ? (
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={busy}
+            onClick={() => void act(() => connection.client.connect.start({}))}
+          >
+            {busy ? <Loader2 className="animate-spin" /> : null}
+            Connect
+          </Button>
+        ) : null}
+        {s?.state === "linked" ? (
+          <Button
+            size="sm"
+            disabled={busy}
+            onClick={() => void act(() => connection.client.connect.unlink({}))}
+          >
+            <Unplug />
+            Disconnect
+          </Button>
+        ) : null}
+      </div>
+
+      {s?.state === "linking" ? (
+        <div className="flex flex-col items-center gap-2 rounded-md border border-dashed border-edge p-3 text-center">
+          <span className="text-2xs tracking-wider text-faint uppercase">Your code</span>
+          <span className="font-mono text-2xl font-semibold tracking-[0.2em]">{s.code}</span>
+          <span className="text-xs text-dim">
+            Approve it on Nibblets Connect, signed in to your account. Waiting
+            <Loader2 className="ml-1 inline size-3 animate-spin" />
+          </span>
+          <div className="flex gap-1.5">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => window.open(s.approveUrl, "_blank", "noopener")}
+            >
+              <ExternalLink />
+              Open approval page
+            </Button>
+            <Button size="sm" onClick={() => void act(() => connection.client.connect.cancel({}))}>
+              Cancel
+            </Button>
+          </div>
+          <span className="text-2xs text-faint">Expires {relativeTime(s.expiresAt)}</span>
+        </div>
+      ) : null}
+
+      {s?.state === "linked" ? (
+        <div className="flex flex-col gap-1">
+          {routeList(s.routes).map((r) => {
+            const Icon = routeIcons[r.kind];
+            return (
+              <div key={`${r.kind}${r.url}`} className="flex items-center gap-2 text-xs">
+                <Icon className="size-3.5 text-faint" />
+                <span className="w-32 shrink-0 text-dim">{routeLabels[r.kind]}</span>
+                <a
+                  href={r.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="truncate font-mono text-2xs text-accent underline"
+                >
+                  {r.url}
+                </a>
+              </div>
+            );
+          })}
+          {routeList(s.routes).length === 0 ? (
+            <span className="text-xs text-dim">
+              <Loader2 className="mr-1 inline size-3 animate-spin" />
+              Starting the tunnel…
+            </span>
+          ) : null}
+          <span className={cn("text-2xs", s.lastError ? "text-danger" : "text-faint")}>
+            {s.lastError
+              ? `Couldn't reach Nibblets Connect: ${s.lastError}`
+              : s.lastHeartbeatAt
+                ? `Checked in ${relativeTime(s.lastHeartbeatAt)}${s.managedTunnel ? "" : " · quick tunnel (its address changes on restart)"}`
+                : "Checking in…"}
+          </span>
+        </div>
+      ) : null}
+
+      {s ? (
+        <span className="text-2xs text-faint">
+          Nibblets Connect:{" "}
+          <a href={s.centralUrl} target="_blank" rel="noreferrer" className="underline">
+            {s.centralUrl.replace(/^https?:\/\//, "")}
+          </a>
+        </span>
+      ) : null}
+      {error ? <span className="text-xs text-danger">{error}</span> : null}
+    </div>
+  );
+}
+
+function TailscaleRow({ connection }: { connection: ServerConnection }) {
+  const qc = useQueryClient();
+  const key = keys.tailscale(connection.id);
+  const status = useQuery({
+    queryKey: key,
+    queryFn: () => connection.client.tailscale.status({}),
+  });
+  const [busy, setBusy] = useState(false);
+  const s = status.data;
+  const hint = !s
+    ? "Checking…"
+    : !s.installed
+      ? (s.detail ?? "Install Tailscale on this computer to reach it over your tailnet.")
+      : !s.running
+        ? (s.detail ?? "Tailscale isn't connected.")
+        : s.serving && s.url
+          ? s.url
+          : "Share this server on your tailnet over HTTPS.";
+  return (
+    <FieldRow label="Tailscale" hint={hint}>
+      <div className="flex items-center gap-2">
+        <Switch
+          checked={s?.serving ?? false}
+          disabled={busy || !s?.running}
+          label="Share on Tailscale"
+          onChange={async (serving) => {
+            setBusy(true);
+            try {
+              qc.setQueryData(key, await connection.client.tailscale.set({ serving }));
+              void qc.invalidateQueries({ queryKey: keys.connect(connection.id) });
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+        {busy ? <Loader2 className="size-3.5 animate-spin text-faint" /> : null}
+      </div>
+    </FieldRow>
+  );
+}
+
+/** Central mode: who's signed in, and the servers on the account. */
+export function AccountSection() {
+  const { central, systems } = useServers();
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+  if (!central) return null;
+  return (
+    <>
+      <SectionHeading>Account</SectionHeading>
+      <p className="text-xs text-dim">Signed in as {central.user.name}.</p>
+      <SectionHeading>Your servers</SectionHeading>
+      <p className="text-xs text-faint">
+        To add one, open Settings on that server (or the Nibblets app on it) and press Connect.
+      </p>
+      {systems.map((s) => (
+        <div
+          key={s.id}
+          className="flex items-center gap-2 rounded-md border border-line bg-surface px-2.5 py-1.5"
+        >
+          <span className={cn("size-1.5 shrink-0 rounded-full", s.online ? "bg-ok" : "bg-faint")} />
+          <div className="flex min-w-0 flex-1 flex-col">
+            {renaming?.id === s.id ? (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  await central.api.rename(s.id, renaming.name.trim());
+                  setRenaming(null);
+                  central.refresh();
+                }}
+              >
+                <Input
+                  autoFocus
+                  value={renaming.name}
+                  onChange={(e) => setRenaming({ id: s.id, name: e.target.value })}
+                  onBlur={() => setRenaming(null)}
+                />
+              </form>
+            ) : (
+              <button
+                type="button"
+                className="truncate text-left text-sm font-medium"
+                title="Rename"
+                onClick={() => setRenaming({ id: s.id, name: s.name })}
+              >
+                {s.name}
+              </button>
+            )}
+            <span className="truncate text-2xs text-faint">
+              {s.online && s.route ? `Online via ${routeLabels[s.route.kind]}` : "Offline"}
+            </span>
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={async () => {
+              await central.api.remove(s.id);
+              central.refresh();
+            }}
+          >
+            Remove
+          </Button>
+        </div>
+      ))}
+    </>
+  );
+}

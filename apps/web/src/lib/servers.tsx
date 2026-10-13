@@ -1,6 +1,15 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import type { LiveMessage, Nibblet, Peer, StoredItem } from "@nibblet/protocol";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { useQueries, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import type { LiveMessage, Nibblet, StoredItem } from "@nibblet/protocol";
+import { chooseRoute, TokenCache, type CentralApi, type ChosenRoute } from "./central.ts";
 import { createConnection, type LiveState, type ServerConnection } from "./connection.ts";
 import { maxSeq, upsertItems } from "./thread.ts";
 
@@ -12,18 +21,39 @@ export const keys = {
   schedules: (server: string, id: string) => ["schedules", server, id] as const,
   memories: (server: string, id: string | null, query: string) =>
     ["memories", server, id, query] as const,
-  peers: () => ["peers"] as const,
-  tunnel: () => ["tunnel"] as const,
   hostTools: (server: string) => ["hostTools", server] as const,
   clis: (server: string) => ["clis", server] as const,
+  connect: (server: string) => ["connect", server] as const,
+  tailscale: (server: string) => ["tailscale", server] as const,
+  centralServers: () => ["central", "servers"] as const,
+  route: (server: string, routes: string) => ["central", "route", server, routes] as const,
 };
 
+/** A machine running a nibblet server, whether or not it can be reached right now. */
+export interface System {
+  id: string;
+  name: string;
+  platform: string | null;
+  online: boolean;
+  /** How it's being reached, in central mode. */
+  route: ChosenRoute | null;
+  connection: ServerConnection | null;
+}
+
+/** Signed in to Nibblets Connect: the central-mode extras. */
+export interface CentralSession {
+  api: CentralApi;
+  user: { id: string; name: string };
+  refresh(): void;
+}
+
 interface Servers {
-  local: ServerConnection;
-  /** This server first, then each peer. */
+  systems: System[];
+  /** Every system that can be reached. */
   all: ServerConnection[];
-  peers: Peer[];
   byId(id: string): ServerConnection | undefined;
+  system(id: string): System | undefined;
+  central: CentralSession | null;
 }
 
 const ServersContext = createContext<Servers | null>(null);
@@ -39,36 +69,24 @@ export function useServer(id: string): ServerConnection | undefined {
 }
 
 export function ServersProvider({
-  local,
-  connectPeers = true,
+  systems,
+  central = null,
   children,
 }: {
-  local: ServerConnection;
-  /** Off in mock mode, where peers are fixtures with nothing behind them. */
-  connectPeers?: boolean;
+  systems: System[];
+  central?: CentralSession | null;
   children: ReactNode;
 }) {
-  const peersQuery = useQuery({
-    queryKey: keys.peers(),
-    queryFn: () => local.client.peers.list({}),
-  });
-  const peers = peersQuery.data ?? [];
-  const peerKey = peers.map((p) => `${p.id}|${p.url}|${p.token}`).join(",");
-
-  const peerConnections = useMemo(
-    () =>
-      connectPeers
-        ? peers.map((p) => createConnection(p.id, p.url.replace(/\/$/, ""), () => p.token))
-        : [],
-    // Rebuilt only when the set of peers actually changes.
-    [peerKey, connectPeers],
-  );
-  useEffect(() => () => peerConnections.forEach((c) => c.live.close()), [peerConnections]);
-
   const value = useMemo<Servers>(() => {
-    const all = [local, ...peerConnections];
-    return { local, all, peers, byId: (id) => all.find((c) => c.id === id) };
-  }, [local, peerConnections, peerKey]);
+    const all = systems.flatMap((s) => (s.connection ? [s.connection] : []));
+    return {
+      systems,
+      all,
+      byId: (id) => all.find((c) => c.id === id),
+      system: (id) => systems.find((s) => s.id === id),
+      central,
+    };
+  }, [systems, central]);
 
   return (
     <ServersContext.Provider value={value}>
@@ -77,6 +95,116 @@ export function ServersProvider({
       ))}
       {children}
     </ServersContext.Provider>
+  );
+}
+
+/** Local mode: just the server that served this page. */
+export function LocalServers({
+  connection,
+  children,
+}: {
+  connection: ServerConnection;
+  children: ReactNode;
+}) {
+  const info = useQuery({
+    queryKey: keys.info(connection.id),
+    queryFn: () => connection.client.system.info({}),
+    staleTime: 60_000,
+  });
+  const name = info.data?.name ?? "This server";
+  const systems = useMemo<System[]>(
+    () => [{ id: connection.id, name, platform: null, online: true, route: null, connection }],
+    [connection, name],
+  );
+  return <ServersProvider systems={systems}>{children}</ServersProvider>;
+}
+
+/**
+ * Central mode: every server on the account, each reached directly over the
+ * best route that answers, with tokens from the central service.
+ */
+export function CentralServers({ api, children }: { api: CentralApi; children: ReactNode }) {
+  const qc = useQueryClient();
+  const list = useQuery({
+    queryKey: keys.centralServers(),
+    queryFn: () => api.servers(),
+    refetchInterval: 15_000,
+  });
+  const servers = list.data?.servers ?? [];
+  const tokens = useMemo(() => new TokenCache(api), [api]);
+  const routes = useQueries({
+    queries: servers.map((s) => ({
+      queryKey: keys.route(s.id, JSON.stringify(s.routes)),
+      queryFn: () => chooseRoute(s.routes),
+      enabled: s.online,
+      // Re-probe now and then, so a closer route is picked up when it appears.
+      refetchInterval: 30_000,
+      staleTime: 25_000,
+    })),
+  });
+
+  // One connection per server for as long as it's listed; its base follows the route.
+  const bases = useRef(new Map<string, string>());
+  const connections = useRef(new Map<string, ServerConnection>());
+  servers.forEach((s, i) => {
+    const route = routes[i]?.data;
+    if (route) bases.current.set(s.id, route.url);
+  });
+
+  const systems = useMemo<System[]>(() => {
+    const listed = new Set(servers.map((s) => s.id));
+    for (const [id, c] of connections.current) {
+      if (!listed.has(id)) {
+        c.live.close();
+        connections.current.delete(id);
+      }
+    }
+    return servers.map((s, i) => {
+      const route = s.online ? (routes[i]?.data ?? null) : null;
+      let connection = connections.current.get(s.id) ?? null;
+      if (route && !connection) {
+        connection = createConnection(
+          s.id,
+          () => bases.current.get(s.id) ?? route.url,
+          () => tokens.get(s.id),
+        );
+        connections.current.set(s.id, connection);
+      }
+      return {
+        id: s.id,
+        name: s.name,
+        platform: s.platform,
+        online: s.online && route !== null,
+        route,
+        connection: route ? connection : null,
+      };
+    });
+  }, [servers, routes.map((r) => r.data?.url ?? "").join("|"), tokens]);
+
+  useEffect(
+    () => () => {
+      for (const c of connections.current.values()) c.live.close();
+      connections.current.clear();
+    },
+    [],
+  );
+
+  const central = useMemo<CentralSession | null>(
+    () =>
+      list.data
+        ? {
+            api,
+            user: list.data.user,
+            refresh: () => void qc.invalidateQueries({ queryKey: keys.centralServers() }),
+          }
+        : null,
+    [api, list.data, qc],
+  );
+
+  return (
+    <ServersProvider systems={systems} central={central}>
+      {children}
+    </ServersProvider>
   );
 }
 

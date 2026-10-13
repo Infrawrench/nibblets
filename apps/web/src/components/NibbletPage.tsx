@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { Brain, CalendarClock, Globe, HeartPulse, PanelRight, Settings2 } from "lucide-react";
 import { harnesses } from "@nibblet/protocol";
 import { modelLabel, useModels } from "../lib/models.ts";
-import { useNibblets, useServer, useThread } from "../lib/servers.tsx";
+import { useNibblets, useServer, useServers, useThread } from "../lib/servers.tsx";
 import { runningTurn } from "../lib/thread.ts";
 import { storage } from "../lib/storage.ts";
 import { relativeTime } from "../lib/time.ts";
@@ -38,6 +38,10 @@ export function NibbletPage({ server, id }: { server: string; id: string }) {
 
 function NibbletView({ connection, id }: { connection: ServerConnection; id: string }) {
   const nibblets = useNibblets(connection);
+  const servers = useServers();
+  // Which machine it runs on, whenever there's more than one to choose from.
+  const systemName =
+    servers.systems.length > 1 || servers.central ? servers.system(connection.id)?.name : null;
   const thread = useThread(connection, id);
   const catalogue = useModels(connection);
   const [panel, setPanelState] = useState<PanelTab | null>(initialPanel);
@@ -81,6 +85,7 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
             </span>
             <span className="flex items-center gap-1 truncate text-2xs text-faint">
               <HarnessIcon harness={nibblet.harness} className="size-3" />
+              {systemName ? <>{systemName} · </> : null}
               {harnesses[nibblet.harness].label} · {modelLabel(model, nibblet.model)}
               {nibblet.heartbeats.length > 0 ? (
                 <>

@@ -37,7 +37,7 @@ export function CreateNibbletDialog({
   const [step, setStep] = useState<"look" | "setup">("look");
   const [look, setLook] = useState<HamsterLook>(() => randomHamsterLook());
   const [name, setName] = useState("");
-  const [server, setServer] = useState("local");
+  const [server, setServer] = useState(() => servers.all[0]?.id ?? "local");
   const [choice, setChoice] = useState<ModelChoice>({
     harness: "claude",
     model: harnesses.claude.defaultModel,

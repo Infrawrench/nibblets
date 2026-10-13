@@ -1,37 +1,59 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Copy, Link2, Loader2, Plus, Trash2, XCircle } from "lucide-react";
-import type { CredentialStatus, TunnelConfig } from "@nibblet/protocol";
+import { CheckCircle2, Copy, Link2, XCircle } from "lucide-react";
+import type { CredentialStatus } from "@nibblet/protocol";
+import type { ServerConnection } from "../lib/connection.ts";
+import { AccountSection, RemoteAccessSection } from "./RemoteAccess.tsx";
 import { keys, useServers } from "../lib/servers.tsx";
 import { relativeTime } from "../lib/time.ts";
 import { Button } from "./ui/Button.tsx";
 import { FieldRow, Input, SectionHeading } from "./ui/Field.tsx";
 import { Segmented } from "./ui/Segmented.tsx";
-import { cn } from "../lib/cn.ts";
 import { hostToolSummary } from "./tools/NibbletTools.tsx";
 
 export function SettingsPage() {
+  const { all, central, systems } = useServers();
+  const [selected, setSelected] = useState<string | null>(null);
+  const connection = all.find((c) => c.id === selected) ?? all[0] ?? null;
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex max-w-[40rem] flex-col gap-2 px-5 py-6">
         <h1 className="text-lg font-semibold">Settings</h1>
-        <ServerSection />
-        <CredentialsSection />
-        <HostToolsSection />
-        <TunnelSection />
-        <PairingSection />
-        <PeersSection />
+        {central ? <AccountSection /> : null}
+        {all.length > 1 && connection ? (
+          <FieldRow label="Server" hint="Settings below are for this one.">
+            <Segmented
+              className="self-start"
+              value={connection.id}
+              onChange={setSelected}
+              options={all.map((c) => ({
+                value: c.id,
+                label: systems.find((s) => s.id === c.id)?.name ?? c.id,
+              }))}
+            />
+          </FieldRow>
+        ) : null}
+        {connection ? (
+          <>
+            <ServerSection connection={connection} />
+            <CredentialsSection connection={connection} />
+            <HostToolsSection connection={connection} />
+            <RemoteAccessSection connection={connection} />
+            <PairingSection connection={connection} />
+          </>
+        ) : (
+          <p className="text-sm text-dim">None of your servers can be reached right now.</p>
+        )}
       </div>
     </div>
   );
 }
 
-function ServerSection() {
-  const { local } = useServers();
+function ServerSection({ connection }: { connection: ServerConnection }) {
   const qc = useQueryClient();
   const info = useQuery({
-    queryKey: keys.info("local"),
-    queryFn: () => local.client.system.info({}),
+    queryKey: keys.info(connection.id),
+    queryFn: () => connection.client.system.info({}),
   });
   const [name, setName] = useState("");
   useEffect(() => {
@@ -39,15 +61,16 @@ function ServerSection() {
   }, [info.data]);
   return (
     <>
-      <SectionHeading>This server</SectionHeading>
+      <SectionHeading>Server</SectionHeading>
       <FieldRow label="Name" hint="Shown when you look at nibblets from several servers.">
         <div className="flex gap-1.5">
           <Input value={name} onChange={(e) => setName(e.target.value)} />
           <Button
             disabled={!name.trim() || name === info.data?.name}
             onClick={async () => {
-              await local.client.system.rename({ name: name.trim() });
-              void qc.invalidateQueries({ queryKey: keys.info("local") });
+              await connection.client.system.rename({ name: name.trim() });
+              void qc.invalidateQueries({ queryKey: keys.info(connection.id) });
+              void qc.invalidateQueries({ queryKey: keys.centralServers() });
             }}
           >
             Rename
@@ -66,11 +89,10 @@ const providerNames: Record<CredentialStatus["provider"], string> = {
   openai: "ChatGPT",
 };
 
-function CredentialsSection() {
-  const { local } = useServers();
+function CredentialsSection({ connection }: { connection: ServerConnection }) {
   const info = useQuery({
-    queryKey: keys.info("local"),
-    queryFn: () => local.client.system.info({}),
+    queryKey: keys.info(connection.id),
+    queryFn: () => connection.client.system.info({}),
   });
   return (
     <>
@@ -109,135 +131,15 @@ function CredentialsSection() {
   );
 }
 
-function TunnelSection() {
-  const { local } = useServers();
-  const qc = useQueryClient();
-  const status = useQuery({
-    queryKey: keys.tunnel(),
-    queryFn: () => local.client.tunnel.status({}),
-    refetchInterval: (q) => (q.state.data?.state === "starting" ? 1500 : false),
-  });
-  const [mode, setMode] = useState<TunnelConfig["mode"]>("off");
-  const [token, setToken] = useState("");
-  const [hostname, setHostname] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (status.data) setMode(status.data.mode);
-  }, [status.data?.mode]);
-
-  const apply = async () => {
-    setBusy(true);
-    try {
-      const config: TunnelConfig =
-        mode === "token"
-          ? { mode, token, hostname }
-          : mode === "quick"
-            ? { mode }
-            : { mode: "off" };
-      qc.setQueryData(keys.tunnel(), await local.client.tunnel.configure(config));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const s = status.data;
-  return (
-    <>
-      <SectionHeading>Remote access</SectionHeading>
-      <p className="text-xs text-faint">
-        A Cloudflare tunnel lets you reach this server, and add it to another one, from anywhere.
-      </p>
-      <FieldRow label="Tunnel">
-        <Segmented
-          className="self-start"
-          value={mode}
-          onChange={setMode}
-          options={[
-            { value: "off", label: "Off" },
-            {
-              value: "quick",
-              label: "Quick",
-              title: "A random trycloudflare.com address. Good for trying it out.",
-            },
-            { value: "token", label: "Named", title: "A tunnel from your Cloudflare dashboard." },
-          ]}
-        />
-      </FieldRow>
-      {mode === "token" ? (
-        <>
-          <FieldRow
-            label="Tunnel token"
-            hint="Zero Trust → Networks → Tunnels → your tunnel → the token in its install command."
-          >
-            <Input
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              type="password"
-              placeholder="eyJh…"
-            />
-          </FieldRow>
-          <FieldRow label="Hostname" hint="The public hostname you routed to http://server:8420.">
-            <Input
-              value={hostname}
-              onChange={(e) => setHostname(e.target.value)}
-              placeholder="nibblets.example.com"
-            />
-          </FieldRow>
-        </>
-      ) : null}
-      <div className="flex items-center gap-2">
-        <Button
-          variant="primary"
-          size="sm"
-          disabled={busy || (mode === "token" && (!token || !hostname))}
-          onClick={() => void apply()}
-        >
-          {busy ? <Loader2 className="animate-spin" /> : null}
-          Apply
-        </Button>
-        {s ? (
-          <span className="flex min-w-0 items-center gap-1.5 text-xs text-dim">
-            <span
-              className={cn(
-                "size-1.5 shrink-0 rounded-full",
-                s.state === "up"
-                  ? "bg-ok"
-                  : s.state === "starting"
-                    ? "animate-pulse bg-warning"
-                    : s.state === "error"
-                      ? "bg-danger"
-                      : "bg-faint",
-              )}
-            />
-            {s.url ? (
-              <a
-                href={s.url}
-                target="_blank"
-                rel="noreferrer"
-                className="truncate text-accent underline"
-              >
-                {s.url}
-              </a>
-            ) : (
-              (s.detail ?? (s.state === "off" ? "Not exposed" : s.state))
-            )}
-          </span>
-        ) : null}
-      </div>
-    </>
-  );
-}
-
-function PairingSection() {
-  const { local } = useServers();
+function PairingSection({ connection }: { connection: ServerConnection }) {
   const [link, setLink] = useState<{ url: string; expiresAt: string } | null>(null);
   const [copied, setCopied] = useState(false);
   return (
     <>
       <SectionHeading>Pair a device</SectionHeading>
       <p className="text-xs text-faint">
-        Open this link on a phone or laptop to sign it in, or paste it into another server's "Add a
-        server". It works once.
+        Open this link on a phone or laptop on the same network to sign it in to this server
+        directly. It works once.
       </p>
       {link ? (
         <div className="flex items-center gap-1.5">
@@ -264,7 +166,7 @@ function PairingSection() {
       <div className="flex items-center gap-2">
         <Button
           size="sm"
-          onClick={async () => setLink(await local.client.auth.createPairingLink({}))}
+          onClick={async () => setLink(await connection.client.auth.createPairingLink({}))}
         >
           <Link2 />
           {link ? "New link" : "Create pairing link"}
@@ -273,74 +175,6 @@ function PairingSection() {
           <span className="text-2xs text-faint">Expires {relativeTime(link.expiresAt)}</span>
         ) : null}
       </div>
-    </>
-  );
-}
-
-function PeersSection() {
-  const { local, peers } = useServers();
-  const qc = useQueryClient();
-  const [link, setLink] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  return (
-    <>
-      <SectionHeading>Other servers</SectionHeading>
-      <p className="text-xs text-faint">
-        Show nibblets from your other machines here too. On the other server, open Settings → Pair a
-        device, then paste its link below.
-      </p>
-      {peers.map((p) => (
-        <div
-          key={p.id}
-          className="flex items-center gap-2 rounded-md border border-line bg-surface px-2.5 py-1.5"
-        >
-          <div className="flex min-w-0 flex-1 flex-col">
-            <span className="text-sm font-medium">{p.name}</span>
-            <span className="truncate text-2xs text-faint">{p.url}</span>
-          </div>
-          <Button
-            size="icon"
-            variant="ghost"
-            title="Remove"
-            onClick={async () => {
-              await local.client.peers.remove({ id: p.id });
-              void qc.invalidateQueries({ queryKey: keys.peers() });
-            }}
-          >
-            <Trash2 />
-          </Button>
-        </div>
-      ))}
-      <form
-        className="flex gap-1.5"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setError(null);
-          try {
-            await local.client.peers.add({ link: link.trim() });
-            setLink("");
-            void qc.invalidateQueries({ queryKey: keys.peers() });
-          } catch (err) {
-            setError(err instanceof Error ? err.message : String(err));
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <Input
-          value={link}
-          onChange={(e) => setLink(e.target.value)}
-          placeholder="https://other-server.example.com/#pair=…"
-          className="font-mono text-xs"
-        />
-        <Button type="submit" disabled={busy || !link.trim()}>
-          {busy ? <Loader2 className="animate-spin" /> : <Plus />}
-          Add a server
-        </Button>
-      </form>
-      {error ? <p className="text-xs text-danger">{error}</p> : null}
     </>
   );
 }
@@ -362,15 +196,14 @@ function StatusRow({ ok, title, detail }: { ok: boolean; title: React.ReactNode;
 }
 
 /** The host bridge: MCP servers and CLI logins each nibblet can be given. */
-function HostToolsSection() {
-  const { local } = useServers();
+function HostToolsSection({ connection }: { connection: ServerConnection }) {
   const tools = useQuery({
-    queryKey: keys.hostTools("local"),
-    queryFn: () => local.client.hostTools.list({}),
+    queryKey: keys.hostTools(connection.id),
+    queryFn: () => connection.client.hostTools.list({}),
   });
   const clis = useQuery({
-    queryKey: keys.clis("local"),
-    queryFn: () => local.client.clis.list({}),
+    queryKey: keys.clis(connection.id),
+    queryFn: () => connection.client.clis.list({}),
   });
   return (
     <>

@@ -15,11 +15,11 @@ import {
   type LiveMessage,
   type Memory,
   type Nibblet,
-  type Peer,
+  type ConnectStatus,
   type Schedule,
   type StoredItem,
   type ThreadItem,
-  type TunnelStatus,
+  type TailscaleStatus,
 } from "@nibblet/protocol";
 import {
   createMockConnection,
@@ -418,8 +418,15 @@ export function createMockServer(): ServerConnection {
       },
     ],
   ]);
-  const peers = new Map<string, Peer>();
-  let tunnel: TunnelStatus = { mode: "off", state: "off", url: null, detail: null };
+  const CENTRAL = "https://nibblets-connect.example.workers.dev";
+  let connect: ConnectStatus = { state: "unlinked", centralUrl: CENTRAL };
+  let tailscale: TailscaleStatus = {
+    installed: true,
+    running: true,
+    serving: false,
+    url: null,
+    detail: null,
+  };
   let serverName = "Astrid's Mac mini";
 
   const get = (id: string) => {
@@ -515,7 +522,6 @@ export function createMockServer(): ServerConnection {
             expiresAt: ago(-60 * 24),
           },
         ],
-        tunnel,
       }),
       rename: async ({ name }) => {
         serverName = name;
@@ -640,21 +646,54 @@ export function createMockServer(): ServerConnection {
         return { ok: true };
       },
     },
-    tunnel: {
-      status: async () => tunnel,
-      configure: async (config) => {
-        tunnel =
-          config.mode === "off"
-            ? { mode: "off", state: "off", url: null, detail: null }
-            : config.mode === "quick"
-              ? {
-                  mode: "quick",
-                  state: "up",
-                  url: "https://hamster-wheel-example.trycloudflare.com",
-                  detail: null,
-                }
-              : { mode: "token", state: "up", url: `https://${config.hostname}`, detail: null };
-        return tunnel;
+    connect: {
+      status: async () => connect,
+      start: async () => {
+        connect = {
+          state: "linking",
+          centralUrl: CENTRAL,
+          code: "HMST-R8WL",
+          approveUrl: `${CENTRAL}/link?code=HMST-R8WL`,
+          expiresAt: ago(-10),
+        };
+        // Pretend someone approves it a few seconds later.
+        setTimeout(() => {
+          if (connect.state !== "linking") return;
+          connect = {
+            state: "linked",
+            centralUrl: CENTRAL,
+            serverId: "srv_mock",
+            account: "Astrid",
+            routes: {
+              lan: [],
+              tailscale: null,
+              tunnel: "https://hamster-wheel-example.trycloudflare.com",
+            },
+            managedTunnel: false,
+            lastHeartbeatAt: now(),
+            lastError: null,
+          };
+        }, 4000);
+        return connect;
+      },
+      cancel: async () => {
+        connect = { state: "unlinked", centralUrl: CENTRAL };
+        return connect;
+      },
+      unlink: async () => {
+        connect = { state: "unlinked", centralUrl: CENTRAL };
+        return connect;
+      },
+    },
+    tailscale: {
+      status: async () => tailscale,
+      set: async ({ serving }) => {
+        tailscale = {
+          ...tailscale,
+          serving,
+          url: serving ? "https://pogair.tail1234.ts.net" : null,
+        };
+        return tailscale;
       },
     },
     harnesses: {
@@ -681,25 +720,6 @@ export function createMockServer(): ServerConnection {
           },
         ],
       }),
-    },
-    peers: {
-      list: async () => [...peers.values()],
-      add: async ({ link }) => {
-        const url = new URL(link);
-        const p: Peer = {
-          id: crypto.randomUUID(),
-          name: url.hostname,
-          url: url.origin,
-          token: "mock",
-          createdAt: now(),
-        };
-        peers.set(p.id, p);
-        return p;
-      },
-      remove: async ({ id }) => {
-        peers.delete(id);
-        return { ok: true };
-      },
     },
     auth: {
       createPairingLink: async () => ({

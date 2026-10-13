@@ -10,13 +10,14 @@ import {
 } from "@nibblet/protocol";
 
 /**
- * One nibblet server the UI talks to: this one (`local`) or a peer. Each has
- * its own typed client and its own live socket.
+ * One nibblet server the UI talks to: the one that served this page
+ * (`local`), or one reached through Nibblets Connect. Each has its own typed
+ * client and its own live socket.
  */
 export interface ServerConnection {
   id: string;
-  /** Empty for the server that served this page; otherwise its origin. */
-  base: string;
+  /** Empty for the server that served this page; otherwise its current origin. */
+  base(): string;
   client: Client<Contract>;
   live: LiveFeed;
   /** A WebSocket URL with a fresh ticket, for any of this server's sockets. */
@@ -38,32 +39,39 @@ export interface LiveFeed {
 
 const TicketResponse = z.object({ ticket: z.string() });
 
+/**
+ * `base` is asked for on every call, so a connection can move to a better
+ * route; `token` may be a short-lived one fetched just in time.
+ */
 export function createConnection(
   id: string,
-  base: string,
-  token: () => string | null,
+  base: () => string,
+  token: () => string | null | Promise<string | null>,
 ): ServerConnection {
-  const headers = (): Record<string, string> => {
-    const t = token();
+  const headers = async (): Promise<Record<string, string>> => {
+    const t = await token();
     return t ? { authorization: `Bearer ${t}` } : {};
   };
-  const client = createClient(contract, fetchTransport(`${base}/api/rpc`, headers));
+  const client = createClient(
+    contract,
+    fetchTransport(() => `${base()}/api/rpc`, headers),
+  );
 
   const socketUrl = async (path: string): Promise<string> => {
-    const res = await fetch(`${base}/api/ticket`, { method: "POST", headers: headers() });
+    const res = await fetch(`${base()}/api/ticket`, { method: "POST", headers: await headers() });
     if (!res.ok) throw new Error(`Ticket refused (${res.status})`);
     const { ticket } = TicketResponse.parse(await res.json());
-    const origin = base || window.location.origin;
+    const origin = base() || window.location.origin;
     const url = new URL(path, origin);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.searchParams.set("ticket", ticket);
     return url.toString();
   };
 
-  const request = (path: string, init: RequestInit = {}) =>
-    fetch(`${base}${path}`, {
+  const request = async (path: string, init: RequestInit = {}) =>
+    fetch(`${base()}${path}`, {
       ...init,
-      headers: { ...headers(), ...Object.fromEntries(new Headers(init.headers)) },
+      headers: { ...(await headers()), ...Object.fromEntries(new Headers(init.headers)) },
     });
 
   return {
@@ -155,7 +163,7 @@ export function safeJson(text: string): unknown {
 export function createMockConnection(transport: Transport, live: LiveFeed): ServerConnection {
   return {
     id: "local",
-    base: "",
+    base: () => "",
     client: createClient(contract, transport),
     live,
     socketUrl: async () => "mock://",
