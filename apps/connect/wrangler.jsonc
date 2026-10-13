@@ -5,7 +5,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "nibblets-connect",
   "main": "src/index.ts",
-  "compatibility_date": "2026-10-14",
+  "compatibility_date": "2026-10-06",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "observability": { "enabled": true, "head_sampling_rate": 1 },

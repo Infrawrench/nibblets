@@ -47,7 +47,42 @@ export class Tunnel {
     return this.apply(config);
   }
 
+  /** cloudflared's arguments for a config. */
+  private command(config: Exclude<TunnelConfig, { mode: "off" }>): string[] {
+    return config.mode === "quick"
+      ? ["tunnel", "--no-autoupdate", "--url", this.config.NIBBLET_INTERNAL_URL]
+      : ["tunnel", "--no-autoupdate", "run", "--token", config.token];
+  }
+
+  /**
+   * Whether cloudflared is already running exactly this config. A server
+   * restart then keeps the tunnel, and with a quick tunnel its address, rather
+   * than handing out a new one.
+   */
+  private async alreadyRunning(cmd: string[]): Promise<boolean> {
+    try {
+      const info = await this.docker.docker.getContainer(NAME).inspect();
+      return info.State.Running && JSON.stringify(info.Config.Cmd) === JSON.stringify(cmd);
+    } catch {
+      return false;
+    }
+  }
+
   private async apply(config: TunnelConfig): Promise<TunnelStatus> {
+    if (config.mode !== "off" && (await this.alreadyRunning(this.command(config)))) {
+      if (config.mode === "token") {
+        this.status = {
+          mode: "token",
+          state: "up",
+          url: `https://${config.hostname}`,
+          detail: null,
+        };
+      } else {
+        this.status = { mode: "quick", state: "starting", url: null, detail: null };
+        void this.watchForQuickUrl();
+      }
+      return this.status;
+    }
     await this.docker.removeContainer(NAME);
     if (config.mode === "off") {
       this.status = { mode: "off", state: "off", url: null, detail: null };
@@ -56,11 +91,7 @@ export class Tunnel {
     this.status = { mode: config.mode, state: "starting", url: null, detail: null };
     try {
       await this.pull();
-      const origin = this.config.NIBBLET_INTERNAL_URL;
-      const cmd =
-        config.mode === "quick"
-          ? ["tunnel", "--no-autoupdate", "--url", origin]
-          : ["tunnel", "--no-autoupdate", "run", "--token", config.token];
+      const cmd = this.command(config);
       const container = await this.docker.docker.createContainer({
         name: NAME,
         Image: IMAGE,
@@ -122,7 +153,7 @@ export class Tunnel {
     try {
       const buf = await this.docker.docker
         .getContainer(NAME)
-        .logs({ stdout: true, stderr: true, tail: 200 });
+        .logs({ stdout: true, stderr: true, tail: 5000 });
       return buf.toString("utf8");
     } catch {
       return "";

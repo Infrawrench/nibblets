@@ -67,6 +67,8 @@ export function createApp(services: Services, bus: Bus) {
     "/api/*",
     cors({ origin: "*", allowHeaders: ["authorization", "content-type"], maxAge: 600 }),
   );
+  // Nibblets Connect's UI checks which route to a server answers before using it.
+  app.use("/healthz", cors({ origin: "*", maxAge: 600 }));
 
   app.get("/healthz", (c) => c.json({ ok: true }));
 
