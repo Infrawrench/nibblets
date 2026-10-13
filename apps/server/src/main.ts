@@ -14,6 +14,8 @@ import { HarnessModelLists } from "./opencode.ts";
 import { Scheduler } from "./scheduler.ts";
 import { Store } from "./store.ts";
 import { Tunnel } from "./tunnel.ts";
+import { Connect } from "./connect.ts";
+import { tailscaleStatus } from "./hostmcp.ts";
 
 const VERSION = "0.1.0";
 
@@ -40,6 +42,15 @@ async function main(): Promise<void> {
   conductor.serverName = await serverName(store);
   const scheduler = new Scheduler(store, conductor);
   const tunnel = new Tunnel(docker, store, config);
+  const central = new Connect({
+    store,
+    tunnel,
+    config,
+    version: VERSION,
+    serverName: () => serverName(store),
+    nibbletCount: async () => (await store.listNibblets()).length,
+    tailscaleUrl: async () => (await tailscaleStatus(config)).url,
+  });
 
   const app = createApp(
     {
@@ -48,6 +59,7 @@ async function main(): Promise<void> {
       conductor,
       scheduler,
       tunnel,
+      connect: central,
       models: new HarnessModelLists(config, docker),
       serverId: id,
       version: VERSION,
@@ -69,10 +81,12 @@ async function main(): Promise<void> {
 
   await conductor.reconcile();
   await scheduler.start();
-  await tunnel.restore();
+  // The tunnel follows the Connect link: on with it, off without.
+  await central.restore();
 
   const shutdown = () => {
     scheduler.stop();
+    central.stop();
     process.exit(0);
   };
   process.on("SIGTERM", shutdown);

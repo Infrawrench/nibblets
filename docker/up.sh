@@ -53,6 +53,14 @@ if ! grep -q '^HOST_SSH_AUTH_SOCK=' .env; then
   fi
 fi
 
+# Who this machine is, for Nibblets Connect (the server container can't tell).
+grep -q '^NIBBLET_HOST_NAME=' .env || echo "NIBBLET_HOST_NAME=$(hostname -s 2>/dev/null || hostname)" >> .env
+grep -q '^NIBBLET_HOST_PLATFORM=' .env || case "$(uname)" in
+  Darwin) echo "NIBBLET_HOST_PLATFORM=darwin" >> .env ;;
+  Linux) echo "NIBBLET_HOST_PLATFORM=linux" >> .env ;;
+  *) echo "NIBBLET_HOST_PLATFORM=other" >> .env ;;
+esac
+
 compose() { docker compose -f compose.yaml -f compose.creds.yaml "$@"; }
 
 compose --profile build build runner

@@ -1,18 +1,16 @@
 import { z } from "zod";
 import { CliStatuses, HostTools } from "./mcp.ts";
 import { HarnessId, HarnessModels } from "./models.ts";
+import { ConnectStatus, TailscaleStatus } from "./connect.ts";
 import { procedure } from "./rpc.ts";
 import {
   CreateNibblet,
   CreateSchedule,
   Memory,
   Nibblet,
-  Peer,
   Schedule,
   ServerInfo,
   StoredItem,
-  TunnelConfig,
-  TunnelStatus,
   UpdateNibblet,
 } from "./schema.ts";
 
@@ -71,9 +69,20 @@ export const contract = {
     ),
     delete: procedure(Id, Ok),
   },
-  tunnel: {
-    status: procedure(z.object({}), TunnelStatus),
-    configure: procedure(TunnelConfig, TunnelStatus),
+  connect: {
+    /** This server's link to a Nibblets account on the central service. */
+    status: procedure(z.object({}), ConnectStatus),
+    /** Starts linking: returns a code to approve on the central site. */
+    start: procedure(z.object({}), ConnectStatus),
+    /** Abandons a link that hasn't been approved. */
+    cancel: procedure(z.object({}), ConnectStatus),
+    /** Forgets the account and stops the tunnel. */
+    unlink: procedure(z.object({}), ConnectStatus),
+  },
+  tailscale: {
+    status: procedure(z.object({}), TailscaleStatus),
+    /** Shares this server on the tailnet with `tailscale serve`, or stops. */
+    set: procedure(z.object({ serving: z.boolean() }), TailscaleStatus),
   },
   hostTools: {
     /** The MCP servers on the host bridge, for ticking per nibblet. */
@@ -82,12 +91,6 @@ export const contract = {
   clis: {
     /** Host CLIs and whether each is installed and signed in. */
     list: procedure(z.object({}), CliStatuses),
-  },
-  peers: {
-    list: procedure(z.object({}), z.array(Peer)),
-    /** Adds a server from a pairing link made on that server (`https://host/#pair=code`). */
-    add: procedure(z.object({ link: z.url() }), Peer),
-    remove: procedure(Id, Ok),
   },
   auth: {
     /** A one-time link another device opens to sign in to this server. */

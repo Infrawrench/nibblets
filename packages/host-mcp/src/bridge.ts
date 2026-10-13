@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import { mcpTarget } from "@nibblet/protocol";
 import { detectOpencode, readOpencodeLogin } from "./opencode.ts";
+import { setTailscaleServe, tailscaleState } from "./tailscale.ts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -213,6 +215,8 @@ export interface BridgeOptions {
   clis?: readonly CliPlugin[];
   /** How CLIs are run; swapped in tests. */
   run?: Run;
+  /** What `tailscale serve` shares: the nibblet server as the host sees it. */
+  serveTarget?: string;
 }
 
 export interface HostMcpBridge {
@@ -232,6 +236,7 @@ export async function startHostMcpBridge(opts: BridgeOptions): Promise<HostMcpBr
   const upstreams = new Map<string, Upstream>();
   const clis = opts.clis ?? cliPlugins;
   const run = opts.run ?? runOnHost;
+  const serveTarget = opts.serveTarget ?? "http://127.0.0.1:8420";
 
   const reload = async (): Promise<void> => {
     const next = await loadServers(sources);
@@ -295,6 +300,12 @@ export async function startHostMcpBridge(opts: BridgeOptions): Promise<HostMcpBr
       if (req.method === "GET" && url.pathname === "/clis") {
         return json(res, 200, await Promise.all(clis.map((p) => p.detect(run))));
       }
+      if (url.pathname === "/tailscale" && (req.method === "GET" || req.method === "POST")) {
+        if (req.method === "GET") return json(res, 200, await tailscaleState(run, serveTarget));
+        const body = z.object({ serving: z.boolean() }).safeParse(await readJson(req));
+        if (!body.success) return json(res, 400, { error: "Send { serving: boolean }" });
+        return json(res, 200, await setTailscaleServe(run, serveTarget, body.data.serving));
+      }
       if (req.method === "GET" && url.pathname === "/harness/opencode") {
         return json(res, 200, await detectOpencode(run));
       }
@@ -356,4 +367,14 @@ export async function startHostMcpBridge(opts: BridgeOptions): Promise<HostMcpBr
       await new Promise<void>((r) => http.close(() => r()));
     },
   };
+}
+
+async function readJson(req: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    return null;
+  }
 }

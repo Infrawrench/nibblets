@@ -8,3 +8,6 @@ apps/web/src/routeTree.gen.ts
 apps/desktop/out
 docker/.env
 docker/compose.creds.yaml
+.dev.vars
+apps/web/dist-central
+.wrangler

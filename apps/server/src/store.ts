@@ -4,7 +4,6 @@ import {
   memories,
   nibblets,
   pairingCodes,
-  peers,
   schedules,
   settings,
   type Db,
@@ -20,7 +19,6 @@ import {
   type Memory,
   type Nibblet,
   type NibbletStatus,
-  type Peer,
   type Schedule,
   type StoredItem,
   type ThreadItem,
@@ -425,26 +423,6 @@ export class Store {
       : eq(memories.id, id);
     const rows = await this.db.delete(memories).where(where).returning({ id: memories.id });
     return rows.length > 0;
-  }
-
-  // Peers
-
-  async listPeers(): Promise<Peer[]> {
-    const rows = await this.db.select().from(peers).orderBy(asc(peers.createdAt));
-    return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
-  }
-
-  async addPeer(peer: { name: string; url: string; token: string }): Promise<Peer> {
-    const [row] = await this.db
-      .insert(peers)
-      .values({ id: newId("peer"), ...peer })
-      .returning();
-    if (!row) throw new Error("insert returned nothing");
-    return { ...row, createdAt: row.createdAt.toISOString() };
-  }
-
-  async removePeer(id: string): Promise<void> {
-    await this.db.delete(peers).where(eq(peers.id, id));
   }
 
   // Sign-ins

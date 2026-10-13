@@ -111,14 +111,6 @@ export const memories = pgTable(
   ],
 );
 
-export const peers = pgTable("peers", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  url: text("url").notNull(),
-  token: text("token").notNull(),
-  createdAt: createdAt(),
-});
-
 /** Long-lived sign-ins: the desktop app, a paired phone, a peer server. */
 export const authTokens = pgTable("auth_tokens", {
   id: text("id").primaryKey(),

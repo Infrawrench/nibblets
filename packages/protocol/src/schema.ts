@@ -351,21 +351,10 @@ export const TunnelStatus = z.object({
 });
 export type TunnelStatus = z.infer<typeof TunnelStatus>;
 
-/** Another nibblet server whose nibblets this one's UI shows alongside its own. */
-export const Peer = z.object({
-  id: z.string(),
-  name: z.string(),
-  url: z.string(),
-  token: z.string(),
-  createdAt: Timestamp,
-});
-export type Peer = z.infer<typeof Peer>;
-
 export const ServerInfo = z.object({
   serverId: z.string(),
   name: z.string(),
   version: z.string(),
   credentials: z.array(CredentialStatus),
-  tunnel: TunnelStatus,
 });
 export type ServerInfo = z.infer<typeof ServerInfo>;

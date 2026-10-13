@@ -35,9 +35,15 @@ export function createApp(services: Services, bus: Bus) {
     return header.startsWith("Bearer ") ? header.slice(7) : "";
   };
 
+  /**
+   * The owner token, a paired device's token, or a short-lived token Nibblets
+   * Connect minted for the account this server is linked to.
+   */
   const signedIn = async (token: string): Promise<boolean> =>
     token.length > 0 &&
-    (safeEqual(token, config.NIBBLET_OWNER_TOKEN) || (await store.checkAuthToken(token)));
+    (safeEqual(token, config.NIBBLET_OWNER_TOKEN) ||
+      (await store.checkAuthToken(token)) ||
+      (await services.connect.verify(token)) !== null);
 
   const requireUser = async (c: Context, next: Next) => {
     if (!(await signedIn(bearer(c))))

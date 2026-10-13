@@ -22,6 +22,13 @@
       "when": 1791930325845,
       "tag": "0002_heartbeats",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791934360660,
+      "tag": "0003_drop_peers",
+      "breakpoints": true
     }
   ]
 }

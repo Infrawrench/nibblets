@@ -1,3 +1,4 @@
+import { hostname } from "node:os";
 import { z } from "zod";
 
 const Env = z.object({
@@ -28,6 +29,21 @@ const Env = z.object({
    * the host's $SSH_AUTH_SOCK. Empty turns SSH key sharing off.
    */
   HOST_SSH_AUTH_SOCK: z.string().default(""),
+  /** Nibblets Connect, where this server can be linked to an account. */
+  NIBBLET_CENTRAL_URL: z.url().default("https://nibblets-connect.astrid-906.workers.dev"),
+  /** The machine's own name and OS; inside Docker the container can't see them. */
+  NIBBLET_HOST_NAME: z.string().default(hostname()),
+  NIBBLET_HOST_PLATFORM: z.enum(["darwin", "linux", "win32", "other"]).default("other"),
+  /** Comma-separated addresses this server answers on from the local network, if any. */
+  NIBBLET_LAN_URLS: z
+    .string()
+    .default("")
+    .transform((s) =>
+      s
+        .split(",")
+        .map((u) => u.trim())
+        .filter(Boolean),
+    ),
 });
 
 export type Config = z.infer<typeof Env>;

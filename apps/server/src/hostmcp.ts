@@ -1,4 +1,11 @@
-import { HostTools, mcpTarget, type HostTool, type McpServerDef } from "@nibblet/protocol";
+import {
+  HostTools,
+  mcpTarget,
+  RpcError,
+  TailscaleStatus,
+  type HostTool,
+  type McpServerDef,
+} from "@nibblet/protocol";
 import { createHash } from "node:crypto";
 import type { Context } from "hono";
 import type { Config } from "./config.ts";
@@ -101,4 +108,44 @@ export function dropOverlaps(
 
 function fingerprint(target: string): string {
   return createHash("sha256").update(target).digest("hex");
+}
+
+const noTailscale = (detail: string): TailscaleStatus => ({
+  installed: false,
+  running: false,
+  serving: false,
+  url: null,
+  detail,
+});
+
+/** Tailscale on the host, through the bridge, which is what can run `tailscale serve`. */
+export async function tailscaleStatus(config: Config): Promise<TailscaleStatus> {
+  if (!config.HOST_MCP_URL) return noTailscale("Needs the host bridge (the desktop app runs it)");
+  try {
+    const res = await fetch(`${config.HOST_MCP_URL}/tailscale`, {
+      headers: { authorization: `Bearer ${config.HOST_MCP_TOKEN}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return TailscaleStatus.parse(await res.json());
+  } catch (err) {
+    return noTailscale(
+      `Host bridge unreachable: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+export async function setTailscale(config: Config, serving: boolean): Promise<TailscaleStatus> {
+  if (!config.HOST_MCP_URL) return noTailscale("Needs the host bridge (the desktop app runs it)");
+  const res = await fetch(`${config.HOST_MCP_URL}/tailscale`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${config.HOST_MCP_TOKEN}`,
+    },
+    body: JSON.stringify({ serving }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) throw new RpcError("unavailable", `The host bridge refused (${res.status})`);
+  return TailscaleStatus.parse(await res.json());
 }

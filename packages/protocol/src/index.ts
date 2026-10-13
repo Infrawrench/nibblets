@@ -5,3 +5,4 @@ export * from "./contract.ts";
 export * from "./runner.ts";
 export * from "./codex.ts";
 export * from "./mcp.ts";
+export * from "./connect.ts";

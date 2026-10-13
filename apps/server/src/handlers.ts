@@ -12,10 +12,11 @@ import { z } from "zod";
 import { cliStatuses } from "./clilogins.ts";
 import type { Conductor } from "./conductor.ts";
 import type { HarnessModelLists } from "./opencode.ts";
-import { dropOverlaps, hostTools } from "./hostmcp.ts";
+import { dropOverlaps, hostTools, setTailscale, tailscaleStatus } from "./hostmcp.ts";
 import type { Config } from "./config.ts";
 import type { Scheduler } from "./scheduler.ts";
 import type { Store } from "./store.ts";
+import type { Connect } from "./connect.ts";
 import type { Tunnel } from "./tunnel.ts";
 
 export interface Services {
@@ -24,6 +25,7 @@ export interface Services {
   conductor: Conductor;
   scheduler: Scheduler;
   tunnel: Tunnel;
+  connect: Connect;
   models: HarnessModelLists;
   serverId: string;
   version: string;
@@ -72,7 +74,6 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
           name: await serverName(store),
           version: s.version,
           credentials: await credentialStatus(s.config),
-          tunnel: tunnel.current(),
         }),
       rename: async ({ name }) => {
         await store.setSetting("name", name);
@@ -194,9 +195,22 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       },
     },
 
-    tunnel: {
-      status: async () => tunnel.current(),
-      configure: (config) => tunnel.configure(config),
+    connect: {
+      status: async () => s.connect.status(),
+      start: async () => {
+        try {
+          return await s.connect.start();
+        } catch (err) {
+          throw new RpcError("unavailable", err instanceof Error ? err.message : String(err));
+        }
+      },
+      cancel: async () => s.connect.cancel(),
+      unlink: () => s.connect.unlink(),
+    },
+
+    tailscale: {
+      status: () => tailscaleStatus(s.config),
+      set: ({ serving }) => setTailscale(s.config, serving),
     },
 
     hostTools: {
@@ -205,46 +219,6 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
 
     clis: {
       list: () => cliStatuses(s.config),
-    },
-
-    peers: {
-      list: () => store.listPeers(),
-      add: async ({ link }) => {
-        const parsed = new URL(link);
-        const code = new URLSearchParams(parsed.hash.slice(1)).get("pair");
-        if (!code) throw new RpcError("bad_request", "That isn't a pairing link");
-        const base = parsed.origin;
-        const paired = await fetch(`${base}/api/pair`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ code, label: `Peer: ${await serverName(store)}` }),
-          signal: AbortSignal.timeout(10_000),
-        }).catch(() => null);
-        const token = z
-          .object({ token: z.string() })
-          .safeParse(await paired?.json().catch(() => null));
-        if (!paired?.ok || !token.success)
-          throw new RpcError("unavailable", `${base} didn't accept that link`);
-        const res = await fetch(`${base}/api/rpc/system.info`, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            authorization: `Bearer ${token.data.token}`,
-          },
-          body: "{}",
-          signal: AbortSignal.timeout(10_000),
-        });
-        const info = z
-          .object({ ok: z.literal(true), data: ServerInfo })
-          .safeParse(await res.json());
-        if (!info.success)
-          throw new RpcError("unavailable", `${base} doesn't look like a nibblet server`);
-        return store.addPeer({ name: info.data.data.name, url: base, token: token.data.token });
-      },
-      remove: async ({ id }) => {
-        await store.removePeer(id);
-        return ok;
-      },
     },
 
     auth: {

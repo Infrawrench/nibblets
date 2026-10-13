@@ -147,12 +147,20 @@ export function createClient<R extends Router>(router: R, transport: Transport):
   return build(router, "") as Client<R>;
 }
 
-/** A transport over fetch, for browsers and for server-to-server calls. */
-export function fetchTransport(base: string, headers: () => Record<string, string> = () => ({})) {
+/**
+ * A transport over fetch, for browsers and for server-to-server calls. Both
+ * the base and the headers are asked for on every call, so a client can move
+ * between routes to a server and refresh short-lived tokens.
+ */
+export function fetchTransport(
+  base: string | (() => string),
+  headers: () => Record<string, string> | Promise<Record<string, string>> = () => ({}),
+) {
   return async (path: string, input: unknown): Promise<RpcResponse> => {
-    const res = await fetch(`${base}/${path}`, {
+    const root = typeof base === "string" ? base : base();
+    const res = await fetch(`${root}/${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json", ...headers() },
+      headers: { "content-type": "application/json", ...(await headers()) },
       body: JSON.stringify(input ?? {}),
     });
     const body: unknown = await res.json().catch(() => null);
