@@ -1,5 +1,5 @@
 import Docker from "dockerode";
-import type { RunnerEnv } from "@nibblet/protocol";
+import { CONTAINER_SSH_AUTH_SOCK, type RunnerEnv } from "@nibblet/protocol";
 import type { Config } from "./config.ts";
 
 const MANAGED = "nibblet.managed";
@@ -44,7 +44,11 @@ export class Orchestrator {
     });
   }
 
-  async startRunner(nibbletId: string, env: RunnerEnv): Promise<string> {
+  async startRunner(
+    nibbletId: string,
+    env: RunnerEnv,
+    opts: { sshAgent: boolean } = { sshAgent: false },
+  ): Promise<string> {
     await this.removeContainer(runnerName(nibbletId));
     const container = await this.docker.createContainer({
       name: runnerName(nibbletId),
@@ -57,6 +61,14 @@ export class Orchestrator {
         ShmSize: 1024 * 1024 * 1024,
         Memory: 4 * 1024 * 1024 * 1024,
         RestartPolicy: { Name: "no" },
+        // The host's agent, never its keys: the container can sign, not copy.
+        ...(opts.sshAgent && this.config.HOST_SSH_AUTH_SOCK
+          ? {
+              Binds: [`${this.config.HOST_SSH_AUTH_SOCK}:${CONTAINER_SSH_AUTH_SOCK}`],
+              // Docker Desktop and OrbStack forward it as root:root 0660.
+              GroupAdd: ["0"],
+            }
+          : {}),
       },
       NetworkingConfig: {
         EndpointsConfig: { [this.config.NIBBLET_NETWORK]: { Aliases: [runnerName(nibbletId)] } },

@@ -82,3 +82,6 @@ export const RunnerEnv = z.object({
   NIBBLET_VIEW_TOKEN: z.string().default(""),
 });
 export type RunnerEnv = z.infer<typeof RunnerEnv>;
+
+/** Where a nibblet that borrows the host's SSH agent finds its socket. */
+export const CONTAINER_SSH_AUTH_SOCK = "/run/nibblet/ssh-agent.sock";

@@ -71,6 +71,7 @@ services:
       # The host MCP bridge (desktop app, or packages/host-mcp/src/cli.ts). Empty turns host tools off.
       HOST_MCP_URL: ${HOST_MCP_URL:-}
       HOST_MCP_TOKEN: ${HOST_MCP_TOKEN:-}
+      HOST_SSH_AUTH_SOCK: ${HOST_SSH_AUTH_SOCK:-}
     # Reaches the host MCP bridge; Docker Desktop provides this name, Linux needs the mapping.
     extra_hosts:
       - host.docker.internal:host-gateway

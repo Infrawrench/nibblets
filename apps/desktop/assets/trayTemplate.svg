@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- A macOS template image: black on transparent; the system tints it. -->
+  <defs>
+    <mask id="face">
+      <rect width="32" height="32" fill="white"/>
+      <circle cx="12.6" cy="15.2" r="1.6" fill="black"/>
+      <circle cx="19.4" cy="15.2" r="1.6" fill="black"/>
+      <path d="M14.9 18.6h2.2l-1.1 1.3z" fill="black"/>
+    </mask>
+  </defs>
+  <g mask="url(#face)">
+    <circle cx="10.2" cy="8.4" r="2.9"/>
+    <circle cx="21.8" cy="8.4" r="2.9"/>
+    <ellipse cx="16" cy="16.6" rx="8.6" ry="8"/>
+    <!-- Chubby cheeks. -->
+    <ellipse cx="10.4" cy="20.6" rx="4.6" ry="4.2"/>
+    <ellipse cx="21.6" cy="20.6" rx="4.6" ry="4.2"/>
+  </g>
+  <g stroke="black" stroke-width="1.1" stroke-linecap="round" fill="none">
+    <path d="M6.4 18.6 3.6 17.8"/>
+    <path d="M6.2 20.2H3.2"/>
+    <path d="M6.4 21.8 3.8 22.6"/>
+    <path d="M25.6 18.6l2.8-.8"/>
+    <path d="M25.8 20.2h3"/>
+    <path d="M25.6 21.8l2.6.8"/>
+  </g>
+</svg>

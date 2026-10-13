@@ -61,6 +61,11 @@ export class Stack {
       KEYCHAIN_BRIDGE_TOKEN: existing.KEYCHAIN_BRIDGE_TOKEN ?? secret(),
       HOST_MCP_TOKEN: existing.HOST_MCP_TOKEN ?? secret(),
       HOST_MCP_URL: `http://host.docker.internal:${HOST_MCP_PORT}`,
+      // Docker Desktop and OrbStack forward the host's agent at this path in their VM.
+      HOST_SSH_AUTH_SOCK:
+        process.platform === "linux"
+          ? (process.env.SSH_AUTH_SOCK ?? "")
+          : "/run/host-services/ssh-auth.sock",
       CLAUDE_CREDENTIALS_SOURCE: creds.claude === "none" ? "auto" : creds.claude,
       CODEX_AUTH_SOURCE: creds.codex === "none" ? "auto" : creds.codex,
       KEYCHAIN_BRIDGE_URL:
@@ -109,16 +114,23 @@ export class Stack {
   }
 
   /** Waits for the server, then asks it for a one-time sign-in link. */
-  async pairingUrl(): Promise<string> {
-    for (let i = 0; i < 90; i++) {
+  /** Resolves once the server answers, which can lag `compose up` when it was recreated. */
+  async waitForServer(timeoutMs = 90_000): Promise<boolean> {
+    const until = Date.now() + timeoutMs;
+    while (Date.now() < until) {
       try {
         const res = await fetch("http://127.0.0.1:8420/healthz");
-        if (res.ok) break;
+        if (res.ok) return true;
       } catch {
         // Not up yet.
       }
       await new Promise((r) => setTimeout(r, 1000));
     }
+    return false;
+  }
+
+  async pairingUrl(): Promise<string> {
+    await this.waitForServer();
     let out = "";
     await this.compose(
       ["exec", "-T", "server", "node", "apps/server/src/cli.ts", "pair"],

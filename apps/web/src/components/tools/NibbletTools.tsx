@@ -110,7 +110,12 @@ function CliLogins({ connection, value, onChange }: SectionProps) {
             >
               <Terminal className="size-3.5 text-dim" />
               <span>
-                {c.label} <span className="text-dim">— share login as {c.account ?? "you"}</span>
+                {c.label}{" "}
+                <span className="text-dim">
+                  {c.id === "ssh"
+                    ? `· let it use ${c.account ?? "your keys"} (keys stay on this machine)`
+                    : `· share login as ${c.account ?? "you"}`}
+                </span>
               </span>
             </Check>
           ) : (

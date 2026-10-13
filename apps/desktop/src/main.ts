@@ -103,6 +103,11 @@ function openMainWindow(url = UI_URL) {
   const ua = mainWindow.webContents.getUserAgent();
   mainWindow.webContents.setUserAgent(`${ua} NibbletsDesktop/${process.platform}`);
   // The UI is served by the local stack and changes with it; never show a stale copy.
+  // If the server was mid-restart, try again rather than sit on an error page.
+  mainWindow.webContents.on("did-fail-load", (_e, code, _desc, failed, isMainFrame) => {
+    if (!isMainFrame || code === -3) return; // -3 is an aborted load, e.g. a redirect.
+    setTimeout(() => void mainWindow?.loadURL(failed), 1500);
+  });
   void mainWindow.webContents.session.clearCache().finally(() => void mainWindow?.loadURL(url));
 }
 
@@ -185,6 +190,11 @@ async function bringUp(): Promise<void> {
   step({ id: "stack", state: "done", detail: "Running" });
 
   if (settings.paired) {
+    step({ id: "signin", state: "running", detail: "Waiting for the server" });
+    if (!(await stack.waitForServer())) {
+      step({ id: "signin", state: "error", detail: "The server didn't come up" });
+      return;
+    }
     step({ id: "signin", state: "done", detail: "Already signed in" });
     win.close();
     openMainWindow();

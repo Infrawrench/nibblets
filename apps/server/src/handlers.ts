@@ -118,7 +118,12 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
           // A different harness can't resume the old one's session.
           ...(harnessChanged ? { harnessSessionId: null } : {}),
         });
-        const needsRestart = patch.browser !== undefined && patch.browser !== before.browser;
+        // The browser and the SSH agent are fixed when the container is made.
+        const sshBefore = before.cliCredentials.includes("ssh");
+        const sshAfter = (patch.cliCredentials ?? before.cliCredentials).includes("ssh");
+        const needsRestart =
+          (patch.browser !== undefined && patch.browser !== before.browser) ||
+          sshBefore !== sshAfter;
         if (needsRestart && before.status !== "stopped") return conductor.start(id);
         await conductor.reconfigure(id);
         return updated;

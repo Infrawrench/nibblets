@@ -22,6 +22,12 @@ const Env = z.object({
   /** The host MCP bridge (desktop app or `packages/host-mcp` CLI). Empty turns host tools off. */
   HOST_MCP_URL: z.string().default(""),
   HOST_MCP_TOKEN: z.string().default(""),
+  /**
+   * The host's SSH agent socket as the Docker engine sees it. Docker Desktop
+   * and OrbStack forward it at /run/host-services/ssh-auth.sock; on Linux it's
+   * the host's $SSH_AUTH_SOCK. Empty turns SSH key sharing off.
+   */
+  HOST_SSH_AUTH_SOCK: z.string().default(""),
 });
 
 export type Config = z.infer<typeof Env>;

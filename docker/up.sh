@@ -44,6 +44,15 @@ codex="${CODEX_AUTH_HOST_FILE:-$HOME/.codex/auth.json}"
 [ -f "$claude" ] || echo "No Claude login at $claude. Run 'claude' and sign in (on a Mac, use the desktop app: Claude Code keeps its login in the keychain)."
 [ -f "$codex" ] || echo "No Codex login at $codex. Run 'codex login' to use your ChatGPT subscription."
 
+if ! grep -q '^HOST_SSH_AUTH_SOCK=' .env; then
+  # Docker Desktop and OrbStack forward the host's SSH agent at this path.
+  if [ "$(uname)" = Darwin ]; then
+    echo "HOST_SSH_AUTH_SOCK=/run/host-services/ssh-auth.sock" >> .env
+  else
+    echo "HOST_SSH_AUTH_SOCK=${SSH_AUTH_SOCK:-}" >> .env
+  fi
+fi
+
 compose() { docker compose -f compose.yaml -f compose.creds.yaml "$@"; }
 
 compose --profile build build runner

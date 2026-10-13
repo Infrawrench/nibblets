@@ -79,16 +79,24 @@ export class Conductor {
       harnessSessionId: null,
     });
     try {
-      const containerId = await this.docker.startRunner(nibbletId, {
-        NIBBLET_ID: nibbletId,
-        NIBBLET_TOKEN: token,
-        NIBBLET_SERVER_WS: `${this.config.NIBBLET_INTERNAL_URL.replace(/^http/, "ws")}/runner`,
-        NIBBLET_MCP_URL: `${this.config.NIBBLET_INTERNAL_URL}/mcp`,
-        NIBBLET_CREDPROXY_URL: this.config.CREDPROXY_URL,
-        NIBBLET_CREDPROXY_KEY: this.config.CREDPROXY_KEY,
-        NIBBLET_BROWSER: nibblet.browser ? "1" : "0",
-        NIBBLET_VIEW_TOKEN: viewToken(this.config.NIBBLET_OWNER_TOKEN, nibbletId, hashToken(token)),
-      });
+      const containerId = await this.docker.startRunner(
+        nibbletId,
+        {
+          NIBBLET_ID: nibbletId,
+          NIBBLET_TOKEN: token,
+          NIBBLET_SERVER_WS: `${this.config.NIBBLET_INTERNAL_URL.replace(/^http/, "ws")}/runner`,
+          NIBBLET_MCP_URL: `${this.config.NIBBLET_INTERNAL_URL}/mcp`,
+          NIBBLET_CREDPROXY_URL: this.config.CREDPROXY_URL,
+          NIBBLET_CREDPROXY_KEY: this.config.CREDPROXY_KEY,
+          NIBBLET_BROWSER: nibblet.browser ? "1" : "0",
+          NIBBLET_VIEW_TOKEN: viewToken(
+            this.config.NIBBLET_OWNER_TOKEN,
+            nibbletId,
+            hashToken(token),
+          ),
+        },
+        { sshAgent: nibblet.cliCredentials.includes("ssh") },
+      );
       return await this.store.updateNibblet(nibbletId, { containerId });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

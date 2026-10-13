@@ -8,7 +8,7 @@ FROM node:24-trixie-slim
 # OpenComputerUse's X11 path; git for agents that clone things.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl git tini dbus \
+      ca-certificates curl git openssh-client tini dbus \
       chromium fonts-liberation fonts-dejavu-core fonts-noto-color-emoji \
       xkb-data libxkbcommon0 libxkbcommon-x11-0 xvfb libxtst6 libxext6 libx11-6 \
  && rm -rf /var/lib/apt/lists/*
