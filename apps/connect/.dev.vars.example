@@ -1,0 +1,10 @@
+# Copy to .dev.vars for `wrangler dev`. Never commit .dev.vars.
+CLERK_SECRET_KEY=sk_test_...
+CLERK_PUBLISHABLE_KEY=pk_test_...
+# From `node scripts/gen-key.mjs`.
+JWT_PRIVATE_KEY={"kty":"EC",...}
+# Optional: Cloudflare Tunnel Edit + DNS Edit, for managed tunnels.
+CF_API_TOKEN=
+# Development only: signs every request to localhost in as this user, without
+# Clerk. Ignored on any other host.
+DEV_AUTH_USER=

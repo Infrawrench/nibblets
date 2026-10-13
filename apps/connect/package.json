@@ -1,0 +1,25 @@
+{
+  "name": "@nibblet/connect",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build:ui": "pnpm --filter @nibblet/web build:central",
+    "deploy": "pnpm run build:ui && wrangler d1 migrations apply nibblets-connect --remote && wrangler deploy",
+    "types": "wrangler types",
+    "typecheck": "tsc -p . && tsc -p test"
+  },
+  "dependencies": {
+    "@clerk/backend": "^3.23.2",
+    "@nibblet/protocol": "workspace:*",
+    "hono": "^4.13.13",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261013.1",
+    "jose": "^6.2.12",
+    "miniflare": "^4.20260730.0",
+    "wrangler": "^4.150.0"
+  }
+}

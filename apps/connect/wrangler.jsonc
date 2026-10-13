@@ -1,0 +1,38 @@
+// Nibblets Connect: the central service. Secrets (CLERK_SECRET_KEY,
+// CLERK_PUBLISHABLE_KEY, JWT_PRIVATE_KEY, and optionally CF_API_TOKEN) are set
+// with `wrangler secret put`; see README.md.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nibblets-connect",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nibblets-connect",
+      // Filled in by `wrangler d1 create nibblets-connect` before the first deploy.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  // The central UI: the web app built in central mode. The API and JWKS run
+  // the Worker first; everything else is the single-page app.
+  "assets": {
+    "directory": "../web/dist-central",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/v1/*", "/.well-known/*"],
+  },
+  "vars": {
+    // The address servers and tokens use for this service. Empty: whatever
+    // address the request came in on. Set it when adding a custom domain.
+    "PUBLIC_URL": "",
+    // Where managed tunnels go. Empty: servers use quick tunnels instead.
+    "CF_ACCOUNT_ID": "906034adfe1c457d2388331e220efcc7",
+    "CF_ZONE_ID": "",
+    "CF_ZONE_NAME": "",
+  },
+}
