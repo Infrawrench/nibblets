@@ -142,6 +142,22 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * Whether a nibblet's container was made from an older build of the runner
+   * image than the one tagged now, so it's missing fixes until it's recreated.
+   */
+  async runnerOutdated(nibbletId: string): Promise<boolean> {
+    try {
+      const [container, image] = await Promise.all([
+        this.docker.getContainer(runnerName(nibbletId)).inspect(),
+        this.docker.getImage(this.config.NIBBLET_RUNNER_IMAGE).inspect(),
+      ]);
+      return container.Image !== image.Id;
+    } catch {
+      return false;
+    }
+  }
+
   async stopRunner(nibbletId: string): Promise<void> {
     await this.removeContainer(runnerName(nibbletId));
   }

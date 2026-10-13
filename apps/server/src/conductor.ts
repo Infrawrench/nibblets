@@ -57,7 +57,10 @@ export class Conductor {
     const runners = await this.docker.runners();
     for (const nibblet of await this.store.listNibblets()) {
       const runner = runners.get(nibblet.id);
-      if (runner?.running) {
+      if (runner?.running && (await this.docker.runnerOutdated(nibblet.id))) {
+        // The runner image was rebuilt: give it a container with the fixes.
+        await this.start(nibblet.id).catch(() => undefined);
+      } else if (runner?.running) {
         // Its runner keeps its token and reconnects by itself.
         await this.store.setStatus(nibblet.id, "starting", "Reconnecting");
       } else if (nibblet.status !== "stopped" && nibblet.status !== "error") {
@@ -150,10 +153,18 @@ export class Conductor {
 
     // The caller only needs the message recorded; waking the container and
     // preparing the turn carry on without holding up the reply.
-    const wake =
-      nibblet.status === "stopped" || nibblet.status === "error"
-        ? this.start(nibbletId).then(() => undefined)
-        : this.dispatch(nibbletId);
+    const wake = (async () => {
+      const outdated =
+        !this.active.has(nibbletId) &&
+        nibblet.status !== "stopped" &&
+        (await this.docker.runnerOutdated(nibbletId));
+      if (nibblet.status === "stopped" || nibblet.status === "error" || outdated) {
+        // A recreated runner picks the queue up once it connects.
+        await this.start(nibbletId);
+      } else {
+        await this.dispatch(nibbletId);
+      }
+    })();
     void wake.catch((err: unknown) => console.error(`couldn't run ${nibbletId}'s turn`, err));
     return turnId;
   }
