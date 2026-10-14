@@ -4,9 +4,10 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
     />
     <title>Setting up Nibblets</title>
+    <link rel="stylesheet" href="xterm.css" />
     <style>
       :root {
         --bg: #f0f0f0;
@@ -16,19 +17,23 @@
         --faint: #9e9e9e;
         --edge: #d4d4d4;
         --accent: #3a6ea5;
+        --accent-text: #fff;
         --good: #3f8f5a;
+        --warn: #b7862b;
         --bad: #b5452f;
         --log: #e8e8e8;
       }
       @media (prefers-color-scheme: dark) {
         :root {
           --bg: #1e1e1e;
-          --panel: #242424;
+          --panel: #262626;
           --text: #d8d8d8;
           --dim: #9a9a9a;
           --faint: #666;
           --edge: #3a3a3a;
+          --accent: #4f86c0;
           --good: #5fb37a;
+          --warn: #d9a441;
           --bad: #e07a5f;
           --log: #141414;
         }
@@ -50,14 +55,40 @@
         -webkit-user-select: none;
         user-select: none;
       }
+      [hidden] {
+        display: none !important;
+      }
+      /* The list scrolls; the terminal, its sign-in link, and Continue stay in view. */
+      #page-tools {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 40px);
+      }
+      #page-tools .scroll {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      #page-tools .terminal,
+      #page-tools footer {
+        flex: none;
+      }
       h1 {
         margin: 0 0 2px;
         font-size: 18px;
         font-weight: 600;
       }
+      h2 {
+        margin: 14px 0 6px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--faint);
+      }
       .sub {
         color: var(--dim);
-        margin-bottom: 16px;
+        margin-bottom: 4px;
       }
       ol {
         list-style: none;
@@ -83,8 +114,12 @@
         background: var(--accent);
         animation: pulse 1s ease-in-out infinite;
       }
-      .done .dot {
+      .done .dot,
+      .ready .dot {
         background: var(--good);
+      }
+      .installed .dot {
+        background: var(--warn);
       }
       .error .dot {
         background: var(--bad);
@@ -102,6 +137,110 @@
       .error .detail {
         color: var(--bad);
       }
+      .tools {
+        display: grid;
+        gap: 6px;
+      }
+      .tool {
+        display: grid;
+        grid-template-columns: 18px 1fr auto;
+        gap: 10px;
+        align-items: center;
+        padding: 9px 10px;
+        border: 1px solid var(--edge);
+        border-radius: 8px;
+        background: var(--panel);
+      }
+      .tool .dot {
+        margin-top: 0;
+      }
+      .tool .state {
+        font-size: 11.5px;
+        color: var(--dim);
+      }
+      .tool.ready .state {
+        color: var(--good);
+      }
+      .tool .actions {
+        display: flex;
+        gap: 6px;
+      }
+      button {
+        padding: 4px 12px;
+        font: inherit;
+        border: 1px solid var(--edge);
+        border-radius: 5px;
+        background: var(--panel);
+        color: var(--text);
+        white-space: nowrap;
+      }
+      button:hover:not(:disabled) {
+        border-color: var(--faint);
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: transparent;
+        color: var(--accent-text);
+      }
+      button:disabled {
+        opacity: 0.45;
+      }
+      .terminal {
+        margin-top: 14px;
+        border: 1px solid var(--edge);
+        border-radius: 8px;
+        background: var(--log);
+        overflow: hidden;
+      }
+      .terminal header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 8px 5px 10px;
+        border-bottom: 1px solid var(--edge);
+        color: var(--dim);
+        font-size: 11px;
+      }
+      .terminal header span {
+        flex: 1;
+      }
+      .terminal header button {
+        padding: 1px 8px;
+        font-size: 11px;
+      }
+      #term {
+        height: 168px;
+        padding: 6px 4px 6px 8px;
+      }
+      .link {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        border-top: 1px solid var(--edge);
+        background: var(--panel);
+      }
+      .link .url {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--dim);
+        font-size: 11px;
+      }
+      footer {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 14px;
+      }
+      footer .hint {
+        flex: 1;
+        color: var(--faint);
+        font-size: 11.5px;
+      }
       pre {
         margin: 16px 0 0;
         height: 150px;
@@ -118,17 +257,8 @@
         -webkit-user-select: text;
         user-select: text;
       }
-      button {
+      #retry {
         margin-top: 12px;
-        padding: 4px 12px;
-        font: inherit;
-        border: 1px solid var(--edge);
-        border-radius: 5px;
-        background: var(--panel);
-        color: var(--text);
-      }
-      button[hidden] {
-        display: none;
       }
       @keyframes pulse {
         50% {
@@ -138,60 +268,75 @@
     </style>
   </head>
   <body>
-    <h1>Setting up Nibblets</h1>
-    <div class="sub">
-      Starting your hamsters' home in Docker. This takes a few minutes the first time.
-    </div>
-    <ol>
-      <li id="docker">
-        <span class="dot"></span>
-        <div>
-          <div class="name">Docker</div>
-          <div class="detail">Waiting</div>
+    <section id="page-tools" hidden>
+      <div class="scroll">
+        <h1>Let's get this computer ready</h1>
+        <div class="sub">
+          Your nibblets need Docker, and at least one agent you're signed in to. Do as many as you
+          like; you can add more later from the menu bar.
         </div>
-      </li>
-      <li id="credentials">
-        <span class="dot"></span>
-        <div>
-          <div class="name">Subscriptions</div>
-          <div class="detail">Waiting</div>
+        <h2>1. Docker</h2>
+        <div class="tools" id="engines"></div>
+        <h2>2. At least one agent</h2>
+        <div class="tools" id="agents"></div>
+      </div>
+      <div class="terminal" id="terminal" hidden>
+        <header>
+          <span id="term-title">Terminal</span>
+          <button id="term-stop" hidden>Stop</button>
+          <button id="term-hide">Hide</button>
+        </header>
+        <div id="term"></div>
+        <div class="link" id="link" hidden>
+          <span class="url" id="link-url"></span>
+          <button id="link-copy">Copy link</button>
+          <button class="primary" id="link-open">Open sign-in page</button>
         </div>
-      </li>
-      <li id="stack">
-        <span class="dot"></span>
-        <div>
-          <div class="name">Containers</div>
-          <div class="detail">Waiting</div>
-        </div>
-      </li>
-      <li id="signin">
-        <span class="dot"></span>
-        <div>
-          <div class="name">Sign in</div>
-          <div class="detail">Waiting</div>
-        </div>
-      </li>
-    </ol>
-    <pre id="log"></pre>
-    <button id="retry" hidden>Try again</button>
-    <script>
-      const log = document.getElementById("log");
-      const retry = document.getElementById("retry");
-      window.nibbletSetup.onStep((step) => {
-        const li = document.getElementById(step.id);
-        li.className = step.state;
-        li.querySelector(".detail").textContent = step.detail;
-        if (step.state === "error") retry.hidden = false;
-        if (step.state === "running") retry.hidden = true;
-      });
-      window.nibbletSetup.onLog((line) => {
-        log.textContent += line + "\n";
-        log.scrollTop = log.scrollHeight;
-      });
-      retry.addEventListener("click", () => {
-        log.textContent = "";
-        window.nibbletSetup.retry();
-      });
-    </script>
+      </div>
+      <footer>
+        <span class="hint" id="hint">Checking…</span>
+        <button class="primary" id="continue" disabled>Continue</button>
+      </footer>
+    </section>
+
+    <section id="page-progress" hidden>
+      <h1>Setting up Nibblets</h1>
+      <div class="sub">
+        Starting your hamsters' home in Docker. This takes a few minutes the first time.
+      </div>
+      <ol style="margin-top: 16px">
+        <li id="docker">
+          <span class="dot"></span>
+          <div>
+            <div class="name">Docker</div>
+            <div class="detail">Waiting</div>
+          </div>
+        </li>
+        <li id="credentials">
+          <span class="dot"></span>
+          <div>
+            <div class="name">Subscriptions</div>
+            <div class="detail">Waiting</div>
+          </div>
+        </li>
+        <li id="stack">
+          <span class="dot"></span>
+          <div>
+            <div class="name">Containers</div>
+            <div class="detail">Waiting</div>
+          </div>
+        </li>
+        <li id="signin">
+          <span class="dot"></span>
+          <div>
+            <div class="name">Sign in</div>
+            <div class="detail">Waiting</div>
+          </div>
+        </li>
+      </ol>
+      <pre id="log"></pre>
+      <button id="retry" hidden>Try again</button>
+    </section>
+    <script src="setup-ui.js"></script>
   </body>
 </html>

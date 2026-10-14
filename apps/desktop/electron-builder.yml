@@ -6,6 +6,9 @@ directories:
 files:
   - out/**
   - package.json
+# node-pty's binaries can't load from inside the asar archive.
+asarUnpack:
+  - out/node_modules/node-pty/**
 extraResources:
   - from: ../../docker/compose.yaml
     to: docker/compose.yaml

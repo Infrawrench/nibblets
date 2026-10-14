@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   Menu,
   nativeImage,
@@ -20,8 +21,11 @@ import { startHostMcpBridge, type HostMcpBridge } from "@nibblet/host-mcp";
 import { startKeychainBridge } from "./bridge.ts";
 import { detectCredentials } from "./credentials.ts";
 import { checkDocker } from "./docker.ts";
-import type { SetupStep } from "./preload.ts";
+import type { SetupPage, SetupStep } from "./preload.ts";
 import { HOST_MCP_PORT, Stack } from "./stack.ts";
+import { SetupTerminal } from "./terminal.ts";
+import { checkTools, findAction, forgetShellPath } from "./tools.ts";
+import { opencodePaths } from "@nibblet/host-mcp";
 
 const SERVER_URL = "http://127.0.0.1:8420/";
 const DEFAULT_CENTRAL_URL = "https://app.nibblets.dev/";
@@ -34,6 +38,8 @@ interface Settings {
   centralUrl: string;
   /** The "connect this server to your account?" prompt has been shown. */
   offeredConnect: boolean;
+  /** The "get this computer ready" page has been through once. */
+  setupDone: boolean;
 }
 
 const settingsPath = () => join(app.getPath("userData"), "settings.json");
@@ -45,12 +51,15 @@ async function loadSettings(): Promise<Settings> {
     runServer: null,
     centralUrl: DEFAULT_CENTRAL_URL,
     offeredConnect: false,
+    setupDone: false,
   };
   try {
     const parsed: Partial<Settings> = JSON.parse(await readFile(settingsPath(), "utf8"));
     // Installs from before the question was asked were already running a server.
     const runServer = parsed.runServer ?? (parsed.paired ? true : null);
-    return { ...defaults, ...parsed, runServer };
+    // Nor do they need walking through getting ready.
+    const setupDone = parsed.setupDone ?? parsed.paired ?? false;
+    return { ...defaults, ...parsed, runServer, setupDone };
   } catch {
     return defaults;
   }
@@ -87,7 +96,9 @@ let settings: Settings = {
   runServer: null,
   centralUrl: DEFAULT_CENTRAL_URL,
   offeredConnect: false,
+  setupDone: false,
 };
+const terminal = new SetupTerminal();
 
 /** The UI the main window shows: this computer's server, or Nibblets Connect. */
 const uiUrl = (): string => (settings.runServer ? SERVER_URL : settings.centralUrl);
@@ -98,16 +109,22 @@ function step(s: SetupStep) {
 function log(line: string) {
   setupWindow?.webContents.send("setup:log", line);
 }
+function page(p: SetupPage) {
+  setupWindow?.webContents.send("setup:page", p);
+}
 
 function openSetupWindow(): BrowserWindow {
   if (setupWindow && !setupWindow.isDestroyed()) return setupWindow;
   setupWindow = new BrowserWindow({
-    width: 520,
-    height: 470,
-    resizable: false,
+    width: 620,
+    height: 760,
+    minWidth: 520,
+    minHeight: 560,
     title: "Nibblets",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1e1e1e" : "#f0f0f0",
     webPreferences: { preload: join(__dirname, "preload.cjs"), sandbox: true },
   });
+  setupWindow.on("closed", () => terminal.stop());
   void setupWindow.loadFile(join(__dirname, "setup.html"));
   return setupWindow;
 }
@@ -160,12 +177,106 @@ function openMainWindow(url = uiUrl()) {
   void mainWindow.webContents.session.clearCache().finally(() => void mainWindow?.loadURL(url));
 }
 
+/**
+ * Walks the person through getting Docker and an agent going, checking
+ * every few seconds so each one ticks off as it's done. Resolves true when
+ * they press Continue, false if they close the window.
+ */
+function getReady(win: BrowserWindow): Promise<boolean> {
+  page("tools");
+  return new Promise<boolean>((resolve) => {
+    let done = false;
+    let ready = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      ipcMain.removeListener("setup:continue", onContinue);
+      ipcMain.removeListener("setup:refresh", onRefresh);
+      win.removeListener("closed", onClosed);
+      resolve(ok);
+    };
+    const onContinue = () => {
+      if (ready) finish(true);
+    };
+    const onClosed = () => finish(false);
+    let checking = false;
+    const check = async () => {
+      if (done || checking) return;
+      checking = true;
+      const update = await checkTools().finally(() => (checking = false));
+      ready = update.ready;
+      if (!done && !win.isDestroyed()) win.webContents.send("setup:tools", update);
+    };
+    const onRefresh = () => void check();
+    ipcMain.on("setup:continue", onContinue);
+    ipcMain.on("setup:refresh", onRefresh);
+    win.on("closed", onClosed);
+    const loop = async () => {
+      while (!done) {
+        await check();
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    };
+    void loop();
+  });
+}
+
+/** What the setup window may ask for while getting ready. */
+function setupIpc(): void {
+  const send = (channel: string, value: unknown) => {
+    if (setupWindow && !setupWindow.isDestroyed()) setupWindow.webContents.send(channel, value);
+  };
+  ipcMain.on("setup:action", (_e, tool: unknown, action: unknown) => {
+    if (typeof tool !== "string" || typeof action !== "string") return;
+    void findAction(tool, action).then(async (found) => {
+      if (!found) return;
+      if ("open" in found) {
+        await shell.openExternal(found.open);
+        return;
+      }
+      await terminal
+        .run(found.run, {
+          data: (chunk) => send("setup:term-data", chunk),
+          url: (url) => send("setup:url", url),
+          exit: (code) => {
+            forgetShellPath();
+            send("setup:term-exit", code);
+          },
+        })
+        .catch((err: unknown) =>
+          send("setup:term-data", `\r\n${err instanceof Error ? err.message : String(err)}\r\n`),
+        );
+    });
+  });
+  ipcMain.on("setup:term-input", (_e, data: unknown) => {
+    if (typeof data === "string") terminal.write(data);
+  });
+  ipcMain.on("setup:term-resize", (_e, cols: unknown, rows: unknown) => {
+    if (typeof cols === "number" && typeof rows === "number") terminal.resize(cols, rows);
+  });
+  ipcMain.on("setup:stop", () => terminal.stop());
+  // Only web pages: these come from whatever a command printed.
+  const web = (url: unknown): url is string => typeof url === "string" && /^https?:\/\//.test(url);
+  ipcMain.on("setup:open-url", (_e, url: unknown) => {
+    if (web(url)) void shell.openExternal(url);
+  });
+  ipcMain.on("setup:copy-url", (_e, url: unknown) => {
+    if (web(url)) clipboard.writeText(url);
+  });
+}
+
 /** Docker, credentials, containers, sign-in: each step reported to the setup window. */
-async function bringUp(): Promise<void> {
+async function bringUp(options: { getReady?: boolean } = {}): Promise<void> {
   const win = openSetupWindow();
   await new Promise<void>((r) =>
     win.webContents.isLoading() ? win.webContents.once("did-finish-load", () => r()) : r(),
   );
+  if (options.getReady || !settings.setupDone || !(await checkTools()).ready) {
+    if (!(await getReady(win))) return;
+    settings.setupDone = true;
+    await saveSettings(settings);
+  }
+  page("progress");
 
   step({ id: "docker", state: "running", detail: "Looking for Docker" });
   const docker = await checkDocker();
@@ -191,19 +302,20 @@ async function bringUp(): Promise<void> {
   step({
     id: "credentials",
     state: "running",
-    detail: "Looking for your Claude and ChatGPT logins",
+    detail: "Looking for your agent logins",
   });
   const creds = await detectCredentials();
   const found = [
     creds.claude === "keychain" ? "Claude (keychain)" : creds.claude === "file" ? "Claude" : null,
     creds.codex === "file" ? "ChatGPT" : null,
+    existsSync(opencodePaths().auth) ? "OpenCode" : null,
   ].filter((c) => c !== null);
   if (!found.length) {
     step({
       id: "credentials",
       state: "error",
       detail:
-        "No logins found. Sign in with `claude` (Claude Code) or `codex login`, then try again.",
+        "No logins found. Sign in to Claude Code, Codex, or OpenCode (Set up agents… in the menu bar), then try again.",
     });
     return;
   }
@@ -346,6 +458,7 @@ function buildTray() {
   const menu = () => {
     const serverItems: MenuItemConstructorOptions[] = [
       { label: "Restart containers", click: () => void bringUp() },
+      { label: "Set up agents…", click: () => void bringUp({ getReady: true }) },
       { label: "Connect to your account…", click: () => void startConnect() },
     ];
     const serverOptions: MenuItemConstructorOptions[] = [
@@ -362,7 +475,7 @@ function buildTray() {
         label: "Sign in again",
         click: () => {
           settings.paired = false;
-          void saveSettings(settings).then(bringUp);
+          void saveSettings(settings).then(() => bringUp());
         },
       },
     ];
@@ -386,17 +499,24 @@ function buildTray() {
 const singleInstance = app.requestSingleInstanceLock();
 if (!singleInstance) app.quit();
 
-app.on("second-instance", () => openMainWindow());
+// `--set-up` opens the getting-ready walkthrough, even on a computer that's done it.
+const SET_UP = "--set-up";
+
+app.on("second-instance", (_e, argv) => {
+  if (argv.includes(SET_UP) && settings.runServer) void bringUp({ getReady: true });
+  else openMainWindow();
+});
 
 app.whenReady().then(async () => {
   settings = await loadSettings();
   ipcMain.on("setup:retry", () => void bringUp());
+  setupIpc();
   if (settings.runServer === null) {
     settings.runServer = await askRunServer();
     await saveSettings(settings);
   }
   buildTray();
-  if (settings.runServer) await bringUp();
+  if (settings.runServer) await bringUp({ getReady: process.argv.includes(SET_UP) });
   else openMainWindow();
 });
 
