@@ -92,7 +92,14 @@ export class TokenManager {
       };
     }
     try {
-      const tokens = this.cached ?? (await this.load());
+      // Read the source every time, so signing in again on the host (or a
+      // fixed login) shows up straight away instead of a stale cached error.
+      const loaded = await this.load();
+      if (loaded && (!this.cached || loaded.accessToken !== this.cached.accessToken)) {
+        this.cached = loaded;
+        this.lastError = null;
+      }
+      const tokens = loaded ?? null;
       if (!tokens) {
         return {
           ...base,

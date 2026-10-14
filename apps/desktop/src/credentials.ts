@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -27,7 +27,7 @@ export async function readClaudeKeychain(): Promise<string | null> {
   try {
     const { stdout } = await run(
       "security",
-      ["find-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE, "-w"],
+      ["find-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE, "-a", claudeKeychainAccount(), "-w"],
       {
         timeout: 10000,
       },
@@ -39,22 +39,13 @@ export async function readClaudeKeychain(): Promise<string | null> {
   }
 }
 
-/** The item's account, which Claude Code looks the item up by. */
-async function claudeKeychainAccount(): Promise<string> {
-  try {
-    const { stdout } = await run(
-      "security",
-      ["find-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE],
-      {
-        timeout: 10000,
-      },
-    );
-    const acct = /"acct"<blob>="([^"]*)"/.exec(stdout)?.[1];
-    if (acct) return acct;
-  } catch {
-    // No item yet; Claude Code uses the login name.
-  }
-  return process.env.USER ?? "nibblet";
+/**
+ * The account Claude Code files its login under: the macOS login name.
+ * Other items with the same service (an old one under "root", say) are
+ * ignored, so a stale copy can never shadow the real login.
+ */
+function claudeKeychainAccount(): string {
+  return userInfo().username;
 }
 
 /**
@@ -90,7 +81,7 @@ function runSecurity(args: string[], stdin: string | null): Promise<void> {
  * `security` runs, because the alternative is a corrupted login.
  */
 export async function writeClaudeKeychain(text: string): Promise<void> {
-  const account = await claudeKeychainAccount();
+  const account = claudeKeychainAccount();
   const hex = Buffer.from(text, "utf8").toString("hex");
   const quote = (s: string) => `"${s.replace(/(["\\])/g, "\\$1")}"`;
   const line = `add-generic-password -U -a ${quote(account)} -s ${quote(CLAUDE_KEYCHAIN_SERVICE)} -X ${hex}`;

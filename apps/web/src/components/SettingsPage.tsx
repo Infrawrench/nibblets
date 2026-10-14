@@ -5,8 +5,9 @@ import type { CredentialStatus } from "@nibblet/protocol";
 import type { ServerConnection } from "../lib/connection.ts";
 import { AccountSection, RemoteAccessSection } from "./RemoteAccess.tsx";
 import { keys, useServers } from "../lib/servers.tsx";
-import { relativeTime } from "../lib/time.ts";
+import { clockTime, relativeTime } from "../lib/time.ts";
 import { Button } from "./ui/Button.tsx";
+import { OnePasswordSettings } from "./onepassword/OnePasswordSection.tsx";
 import { FieldRow, Input, SectionHeading } from "./ui/Field.tsx";
 import { Segmented } from "./ui/Segmented.tsx";
 import { hostToolSummary } from "./tools/NibbletTools.tsx";
@@ -38,6 +39,7 @@ export function SettingsPage() {
             <ServerSection connection={connection} />
             <CredentialsSection connection={connection} />
             <HostToolsSection connection={connection} />
+            <OnePasswordSettings connection={connection} />
             <RemoteAccessSection connection={connection} />
             <PairingSection connection={connection} />
           </>
@@ -90,9 +92,12 @@ const providerNames: Record<CredentialStatus["provider"], string> = {
 };
 
 function CredentialsSection({ connection }: { connection: ServerConnection }) {
+  // Kept live, so signing in again on the host shows up without a reload.
   const info = useQuery({
     queryKey: keys.info(connection.id),
     queryFn: () => connection.client.system.info({}),
+    refetchInterval: 5000,
+    refetchOnWindowFocus: "always",
   });
   return (
     <>
@@ -118,7 +123,13 @@ function CredentialsSection({ connection }: { connection: ServerConnection }) {
                 <span className="ml-1.5 font-normal text-dim">{planLabel(c.plan)}</span>
               ) : null}
             </span>
-            <span className="text-xs text-dim">{c.ok ? "Connected" : signInHelp[c.provider]}</span>
+            <span className="text-xs text-dim">
+              {!c.ok
+                ? signInHelp[c.provider]
+                : c.limitedUntil
+                  ? `Connected · usage limit reached, resets at ${clockTime(c.limitedUntil)}`
+                  : "Connected"}
+            </span>
             <details className="text-2xs text-faint">
               <summary className="cursor-pointer select-none hover:text-dim">Details</summary>
               <div className="mt-1 break-all">
