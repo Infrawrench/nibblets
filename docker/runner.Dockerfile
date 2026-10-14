@@ -13,6 +13,14 @@ RUN apt-get update \
       xkb-data libxkbcommon0 libxkbcommon-x11-0 libpixman-1-0 xvfb libxtst6 libxext6 libx11-6 \
  && rm -rf /var/lib/apt/lists/*
 
+# Python, because agents reach for it, and uv for projects that want their
+# own environments. Plain `pip install` goes to ~/.local (pip falls back to a user install),
+# which is the nibblet's persistent home, so packages survive restarts.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 python3-pip python3-venv python-is-python3 \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=ghcr.io/astral-sh/uv:0.12.15 /uv /uvx /usr/local/bin/
+
 # The GitHub CLI, from GitHub's own apt repository. Always installed; a
 # nibblet only gets a login for it when the user ticks "GitHub CLI".
 RUN curl -fsSL -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -94,7 +102,9 @@ WORKDIR /home/nibblet/work
 ENV NODE_ENV=production \
     NIBBLET_WORKDIR=/home/nibblet/work \
     CHROME_PATH=/usr/local/bin/chromium \
-    OCU_LINUX_DISPLAY=wayland
+    OCU_LINUX_DISPLAY=wayland \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PATH=/home/nibblet/.local/bin:$PATH
 # The browser view, served by OpenComputerUse and proxied by the server.
 EXPOSE 7900
 ENTRYPOINT ["/usr/bin/tini", "--"]
