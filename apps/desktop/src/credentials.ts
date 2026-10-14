@@ -58,25 +58,54 @@ async function claudeKeychainAccount(): Promise<string> {
 }
 
 /**
- * Replaces the keychain item, keeping its account. The secret goes to
- * `security -i` on stdin, hex-encoded, so it never appears in a process
- * listing the way an argument would.
+ * `security -i` reads one command per line and silently cuts lines longer
+ * than about 4 KB, which corrupts the item (a refreshed Claude login is
+ * just over that once hex-encoded). Lines that fit go through it on stdin.
  */
-export async function writeClaudeKeychain(text: string): Promise<void> {
-  const account = await claudeKeychainAccount();
-  const hex = Buffer.from(text, "utf8").toString("hex");
-  const quote = (s: string) => `"${s.replace(/(["\\])/g, "\\$1")}"`;
-  const command = `add-generic-password -U -a ${quote(account)} -s ${quote(CLAUDE_KEYCHAIN_SERVICE)} -X ${hex}\n`;
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn("security", ["-i"], { stdio: ["pipe", "ignore", "pipe"] });
+const SECURITY_LINE_LIMIT = 4000;
+
+function runSecurity(args: string[], stdin: string | null): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn("security", args, {
+      stdio: [stdin === null ? "ignore" : "pipe", "ignore", "pipe"],
+    });
     let stderr = "";
-    child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+    child.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
     child.on("error", reject);
     child.on("close", (code) =>
       code === 0 && !stderr.trim()
         ? resolve()
         : reject(new Error(stderr || `security exited ${code}`)),
     );
-    child.stdin.end(command);
+    if (stdin !== null) child.stdin?.end(stdin);
   });
+}
+
+/**
+ * Replaces the keychain item, keeping its account, then reads it back and
+ * fails loudly if what's stored isn't exactly what was written. The secret
+ * goes hex-encoded to `security -i` on stdin when the command fits on one
+ * line, so it never appears in a process listing; a longer one is passed as
+ * an argument instead, visible only to this user's processes for the moment
+ * `security` runs, because the alternative is a corrupted login.
+ */
+export async function writeClaudeKeychain(text: string): Promise<void> {
+  const account = await claudeKeychainAccount();
+  const hex = Buffer.from(text, "utf8").toString("hex");
+  const quote = (s: string) => `"${s.replace(/(["\\])/g, "\\$1")}"`;
+  const line = `add-generic-password -U -a ${quote(account)} -s ${quote(CLAUDE_KEYCHAIN_SERVICE)} -X ${hex}`;
+  if (line.length < SECURITY_LINE_LIMIT) {
+    await runSecurity(["-i"], `${line}\n`);
+  } else {
+    await runSecurity(
+      ["add-generic-password", "-U", "-a", account, "-s", CLAUDE_KEYCHAIN_SERVICE, "-X", hex],
+      null,
+    );
+  }
+  const stored = await readClaudeKeychain();
+  if (stored !== text.trim()) {
+    throw new Error(
+      "The keychain item didn't read back as written; the Claude login may need signing in again",
+    );
+  }
 }
