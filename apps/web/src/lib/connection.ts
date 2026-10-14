@@ -126,7 +126,17 @@ export function createConnection(
 const FileLink = z.object({ url: z.string() });
 const UploadError = z.object({ error: z.string() });
 
-/** A self-reconnecting feed of `LiveMessage`s over a WebSocket. */
+/** The server says something at least this often, if only a keepalive. */
+const SILENT_FOR_MS = 75_000;
+/** A drop is only reported as "closed" once reconnecting has failed this many times. */
+const QUIET_RETRIES = 3;
+
+/**
+ * A self-reconnecting feed of `LiveMessage`s over a WebSocket. Drops are
+ * normal (proxies close idle sockets, laptops sleep), so it reconnects
+ * straight away and only reports "closed" when that keeps failing. A socket
+ * that goes silent past the server's keepalive is treated as dead.
+ */
 function socketFeed(url: () => Promise<string>): LiveFeed {
   const listeners = new Set<(m: LiveMessage) => void>();
   const stateListeners = new Set<(s: LiveState) => void>();
@@ -135,31 +145,50 @@ function socketFeed(url: () => Promise<string>): LiveFeed {
   let closed = false;
   let attempt = 0;
   let everOpened = false;
+  let watchdog: ReturnType<typeof setTimeout> | null = null;
+  let state: LiveState = "connecting";
 
-  const setState = (s: LiveState) => stateListeners.forEach((l) => l(s));
+  const setState = (s: LiveState) => {
+    state = s;
+    stateListeners.forEach((l) => l(s));
+  };
+
+  const heardFrom = (ws: WebSocket) => {
+    if (watchdog) clearTimeout(watchdog);
+    watchdog = setTimeout(() => ws.close(), SILENT_FOR_MS);
+  };
 
   const connect = async () => {
     if (closed) return;
-    setState("connecting");
+    if (attempt === 0) setState("connecting");
+    else if (attempt > QUIET_RETRIES) setState("closed");
+    let ws: WebSocket;
     try {
-      socket = new WebSocket(await url());
+      ws = new WebSocket(await url());
     } catch {
       retry();
       return;
     }
-    socket.onopen = () => {
+    socket = ws;
+    ws.onopen = () => {
       attempt = 0;
+      heardFrom(ws);
       setState("open");
       if (everOpened) reconnectListeners.forEach((l) => l());
       everOpened = true;
     };
-    socket.onmessage = (event) => {
+    ws.onmessage = (event) => {
+      heardFrom(ws);
       if (typeof event.data !== "string") return;
       const parsed = LiveMessage.safeParse(safeJson(event.data));
       if (parsed.success) listeners.forEach((l) => l(parsed.data));
     };
-    socket.onclose = () => {
-      setState("closed");
+    ws.onclose = () => {
+      if (watchdog) clearTimeout(watchdog);
+      if (socket !== ws) return;
+      socket = null;
+      // Stay "open" through the first few quick retries; the UI needn't flicker.
+      if (state !== "open" || attempt >= QUIET_RETRIES) setState("closed");
       retry();
     };
   };
@@ -167,7 +196,8 @@ function socketFeed(url: () => Promise<string>): LiveFeed {
   const retry = () => {
     if (closed) return;
     attempt++;
-    setTimeout(() => void connect(), Math.min(15_000, 500 * 2 ** attempt));
+    // The first retry is immediate: most drops are an idle socket being tidied away.
+    setTimeout(() => void connect(), attempt === 1 ? 0 : Math.min(15_000, 500 * 2 ** attempt));
   };
 
   void connect();
@@ -187,6 +217,7 @@ function socketFeed(url: () => Promise<string>): LiveFeed {
     },
     close() {
       closed = true;
+      if (watchdog) clearTimeout(watchdog);
       socket?.close();
     },
   };

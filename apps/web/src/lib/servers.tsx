@@ -146,10 +146,17 @@ export function CentralServers({ api, children }: { api: CentralApi; children: R
 
   // One connection per server for as long as it's listed; its base follows the route.
   const bases = useRef(new Map<string, string>());
+  // The last route that answered. A re-probe that fails once (a slow reply, a
+  // blip) keeps it rather than dropping the server; its live socket says
+  // whether it's really reachable.
+  const lastRoutes = useRef(new Map<string, ChosenRoute>());
   const connections = useRef(new Map<string, ServerConnection>());
   servers.forEach((s, i) => {
     const route = routes[i]?.data;
-    if (route) bases.current.set(s.id, route.url);
+    if (route) {
+      bases.current.set(s.id, route.url);
+      lastRoutes.current.set(s.id, route);
+    }
   });
 
   const systems = useMemo<System[]>(() => {
@@ -158,10 +165,11 @@ export function CentralServers({ api, children }: { api: CentralApi; children: R
       if (!listed.has(id)) {
         c.live.close();
         connections.current.delete(id);
+        lastRoutes.current.delete(id);
       }
     }
     return servers.map((s, i) => {
-      const route = s.online ? (routes[i]?.data ?? null) : null;
+      const route = s.online ? (routes[i]?.data ?? lastRoutes.current.get(s.id) ?? null) : null;
       let connection = connections.current.get(s.id) ?? null;
       if (route && !connection) {
         connection = createConnection(

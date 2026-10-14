@@ -26,6 +26,9 @@ function safeEqual(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
+/** Well inside Cloudflare's 100-second idle limit, and the browser's 75-second watchdog. */
+const LIVE_KEEPALIVE_MS = 25_000;
+
 export function createApp(services: Services, bus: Bus) {
   const { config, store, conductor } = services;
   const dispatch = createDispatcher(contract, createHandlers(services));
@@ -112,12 +115,17 @@ export function createApp(services: Services, bus: Bus) {
     requireTicket,
     upgradeWebSocket(() => {
       let unsubscribe: (() => void) | null = null;
+      let keepalive: ReturnType<typeof setInterval> | null = null;
       return {
         onOpen(_event, ws) {
           unsubscribe = bus.subscribe((message: LiveMessage) => ws.send(JSON.stringify(message)));
+          // Tunnels and proxies close sockets that go quiet (Cloudflare's after
+          // 100 seconds), and the browser uses this to spot a dead one.
+          keepalive = setInterval(() => ws.send("ping"), LIVE_KEEPALIVE_MS);
         },
         onClose() {
           unsubscribe?.();
+          if (keepalive) clearInterval(keepalive);
         },
       };
     }),
