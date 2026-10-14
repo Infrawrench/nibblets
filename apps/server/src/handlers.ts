@@ -22,6 +22,7 @@ import {
 } from "./hostmcp.ts";
 import type { Config } from "./config.ts";
 import type { Scheduler } from "./scheduler.ts";
+import type { Snapshots } from "./snapshots.ts";
 import type { Files } from "./files.ts";
 import type { Store } from "./store.ts";
 import type { Connect } from "./connect.ts";
@@ -38,6 +39,7 @@ export interface Services {
   serverId: string;
   version: string;
   files: Files;
+  snapshots: Snapshots;
 }
 
 const ok = { ok: true } as const;
@@ -213,6 +215,20 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       create: ({ nibbletId, content, tags }) => store.saveMemory({ nibbletId, content, tags }),
       delete: async ({ id }) => {
         await store.deleteMemory(id);
+        return ok;
+      },
+    },
+
+    snapshots: {
+      list: ({ nibbletId }) => s.snapshots.list(nibbletId),
+      create: ({ nibbletId, label }) => s.snapshots.create(nibbletId, label ?? null),
+      restore: async ({ id }) => {
+        await s.snapshots.restore(id);
+        return ok;
+      },
+      rename: ({ id, label }) => s.snapshots.rename(id, label),
+      delete: async ({ id }) => {
+        await s.snapshots.delete(id);
         return ok;
       },
     },

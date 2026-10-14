@@ -12,6 +12,7 @@ import { createEmbedder } from "./embeddings.ts";
 import { serverName } from "./handlers.ts";
 import { HarnessModelLists } from "./opencode.ts";
 import { Scheduler } from "./scheduler.ts";
+import { Snapshots } from "./snapshots.ts";
 import { Store } from "./store.ts";
 import { Files } from "./files.ts";
 import { Tunnel } from "./tunnel.ts";
@@ -42,6 +43,14 @@ async function main(): Promise<void> {
   const conductor = new Conductor(store, docker, config);
   conductor.serverName = await serverName(store);
   const scheduler = new Scheduler(store, conductor);
+  const snapshots = new Snapshots({
+    store,
+    bus,
+    docker,
+    conductor,
+    scheduler,
+    dataDir: config.NIBBLET_DATA_DIR,
+  });
   const tunnel = new Tunnel(docker, store, config);
   const central = new Connect({
     store,
@@ -65,6 +74,7 @@ async function main(): Promise<void> {
       serverId: id,
       version: VERSION,
       files: new Files(store, config, bus),
+      snapshots,
     },
     bus,
   );
@@ -83,11 +93,13 @@ async function main(): Promise<void> {
 
   await conductor.reconcile();
   await scheduler.start();
+  snapshots.start();
   // The tunnel follows the Connect link: on with it, off without.
   await central.restore();
 
   const shutdown = () => {
     scheduler.stop();
+    snapshots.stop();
     central.stop();
     process.exit(0);
   };

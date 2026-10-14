@@ -1,4 +1,4 @@
-import { Writable } from "node:stream";
+import { Readable, Writable } from "node:stream";
 import Docker from "dockerode";
 import {
   CONTAINER_SSH_AUTH_SOCK,
@@ -24,6 +24,16 @@ export function limits(r: Resources): { Memory: number; MemorySwap: number; Nano
     NanoCpus: r.cpus === null ? 0 : Math.round(r.cpus * 1e9),
   };
 }
+
+/** Caches inside a home folder that rebuild themselves, so aren't worth snapshotting. */
+const HOME_ARCHIVE_EXCLUDES = [
+  "nibblet/.cache",
+  "nibblet/.npm/_cacache",
+  "nibblet/.config/chromium/*/Cache",
+  "nibblet/.config/chromium/*/Code Cache",
+  "nibblet/.config/chromium/*/GPUCache",
+  "nibblet/.config/chromium/*/Service Worker/CacheStorage",
+];
 
 /** The runner image's user home, which holds its working folder. */
 const RUNNER_HOME = "/home/nibblet";
@@ -254,6 +264,106 @@ export class Orchestrator {
       await helper.putArchive(archive, { path: "/home" });
     } finally {
       await helper.remove({ force: true }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Writes a nibblet's home folder, as a gzipped tar, to `out`. A running
+   * runner is paused for the copy so files aren't caught half-written;
+   * caches that rebuild themselves are left out.
+   */
+  async archiveHome(nibbletId: string, out: Writable): Promise<void> {
+    const volume = await this.ensureHome(nibbletId);
+    const runner = this.docker.getContainer(runnerName(nibbletId));
+    const paused = await runner
+      .pause()
+      .then(() => true)
+      .catch(() => false);
+    try {
+      await this.inHome(
+        volume,
+        [
+          "tar",
+          "-C",
+          "/home",
+          "-czf",
+          "-",
+          ...HOME_ARCHIVE_EXCLUDES.map((e) => `--exclude=${e}`),
+          "nibblet",
+        ],
+        { readOnly: true, stdout: out },
+      );
+    } finally {
+      if (paused) await runner.unpause().catch(() => undefined);
+    }
+  }
+
+  /**
+   * Replaces a nibblet's home folder with an archive from `archiveHome`. The
+   * runner must be stopped first: this empties the folder before unpacking.
+   */
+  async restoreHome(nibbletId: string, archive: Readable): Promise<void> {
+    const volume = await this.ensureHome(nibbletId);
+    await this.inHome(
+      volume,
+      ["sh", "-c", `find ${RUNNER_HOME} -mindepth 1 -delete && tar -C /home -xzpf -`],
+      { readOnly: false, stdin: archive },
+    );
+  }
+
+  /** Runs a command as root in a throwaway container with the home volume mounted, offline. */
+  private async inHome(
+    volume: string,
+    cmd: string[],
+    io: { readOnly: boolean; stdin?: Readable; stdout?: Writable },
+  ): Promise<void> {
+    const container = await this.docker.createContainer({
+      Image: this.config.NIBBLET_RUNNER_IMAGE,
+      User: "0",
+      Cmd: cmd,
+      Labels: { [MANAGED]: "true", [ROLE]: "home-snapshot" },
+      AttachStdin: io.stdin !== undefined,
+      AttachStdout: true,
+      AttachStderr: true,
+      OpenStdin: io.stdin !== undefined,
+      StdinOnce: io.stdin !== undefined,
+      Tty: false,
+      HostConfig: {
+        NetworkMode: "none",
+        Mounts: [{ Type: "volume", Source: volume, Target: RUNNER_HOME, ReadOnly: io.readOnly }],
+      },
+    });
+    try {
+      const stream = await container.attach({
+        stream: true,
+        stdin: io.stdin !== undefined,
+        stdout: true,
+        stderr: true,
+        hijack: true,
+      });
+      const stderr: Buffer[] = [];
+      const sink = (into: Buffer[] | null) =>
+        new Writable({
+          write(chunk: Buffer, _enc, done) {
+            into?.push(chunk);
+            done();
+          },
+        });
+      const out = io.stdout ?? sink(null);
+      this.docker.modem.demuxStream(stream, out, sink(stderr));
+      const ended = new Promise<void>((resolve) => stream.once("end", () => resolve()));
+      await container.start();
+      // Ending the attach stream closes the container's stdin, so tar sees the end.
+      io.stdin?.pipe(stream);
+      const result: { StatusCode: number } = await container.wait();
+      await Promise.race([ended, new Promise((r) => setTimeout(r, 2000))]);
+      if (result.StatusCode !== 0) {
+        throw new Error(
+          `${cmd[0]} exited ${result.StatusCode}: ${Buffer.concat(stderr).toString("utf8").trim().slice(0, 500)}`,
+        );
+      }
+    } finally {
+      await container.remove({ force: true }).catch(() => undefined);
     }
   }
 
