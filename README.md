@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/Infrawrench/nibblets/actions/workflows/ci.yml/badge.svg)](https://github.com/Infrawrench/nibblets/actions/workflows/ci.yml)
 
-Self-hosted, always-on agents, each one a hamster you dress up yourself. They're like Grok Bot or ChatGPT dots, but they run on your own machines and use the Claude and ChatGPT subscriptions you already have.
+Self-hosted, always-on agents, each one a hamster that chews through tasks for you. They're like Grok Bot or ChatGPT dots, but they run on your own machines and use the Claude and ChatGPT subscriptions you already have.
 
 A nibblet is a thread that never really ends. It runs in its own Docker container on the Claude Agent SDK, Codex, or OpenCode. It wakes on a heartbeat and on schedules it sets for itself, and it remembers things in Postgres with pgvector rather than on its own disk. It can spawn sub-agents, which are child nibblets, and it has a Chromium browser you can watch and take over.
 
