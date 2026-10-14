@@ -20,7 +20,7 @@ export function SettingsPage() {
   const connection = all.find((c) => c.id === selected) ?? all[0] ?? null;
   return (
     <div className="safe-top min-h-0 flex-1 overflow-y-auto">
-      <div className="safe-bottom mx-auto flex max-w-[40rem] flex-col gap-2 px-5 py-6 max-sm:px-4">
+      <div className="mx-auto flex max-w-[40rem] flex-col gap-2 px-5 pt-6 safe-bottom-10 max-sm:px-4">
         <h1 className="flex items-center gap-1 text-lg font-semibold">
           <MobileBack />
           Settings

@@ -309,6 +309,10 @@ html[data-shell="mac"] .shell-titlebar :is(button, a, input, [role="button"]) {
 @utility safe-bottom {
   padding-bottom: env(safe-area-inset-bottom);
 }
+/* At least this much (in spacing units), or the home bar's room if that's more. */
+@utility safe-bottom-* {
+  padding-bottom: max(calc(var(--spacing) * --value(integer)), env(safe-area-inset-bottom));
+}
 @media (max-width: 767px) {
   input,
   textarea,

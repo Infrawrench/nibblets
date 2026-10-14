@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Moon, Pencil, Power, Trash2 } from "lucide-react";
 import type { Heartbeat, Nibblet } from "@nibblet/protocol";
@@ -29,16 +29,43 @@ export function NibbletSettings({
   const [instructions, setInstructions] = useState(nibblet.instructions);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   // Take server-side changes when this is a different nibblet.
   useEffect(() => {
     setName(nibblet.name);
     setInstructions(nibblet.instructions);
+    setSaveError(null);
   }, [nibblet.id]);
 
   const dirty = name !== nibblet.name || instructions !== nibblet.instructions;
   const update = connection.client.nibblets.update;
+
+  const save = async () => {
+    if (!dirty || saving || !name.trim()) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await update({ id: nibblet.id, name: name.trim(), instructions });
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const undo = () => {
+    setName(nibblet.name);
+    setInstructions(nibblet.instructions);
+    setSaveError(null);
+  };
+  // ⌘↩ (or Ctrl+Enter) saves from either field.
+  const saveOnShortcut = (e: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      void save();
+    }
+  };
 
   return (
     <div className="flex flex-col gap-2 p-3">
@@ -65,7 +92,12 @@ export function NibbletSettings({
 
       <SectionHeading>Identity</SectionHeading>
       <FieldRow label="Name">
-        <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} />
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={saveOnShortcut}
+          maxLength={80}
+        />
       </FieldRow>
       <FieldRow
         label="Instructions"
@@ -75,9 +107,30 @@ export function NibbletSettings({
         <Textarea
           value={instructions}
           onChange={(e) => setInstructions(e.target.value)}
+          onKeyDown={saveOnShortcut}
           className="min-h-24"
         />
       </FieldRow>
+      {dirty || saveError ? (
+        <div className="flex flex-wrap items-center justify-end gap-1.5 sm:pl-[7.75rem]">
+          {saveError ? (
+            <span className="mr-auto text-xs text-danger">Couldn't save: {saveError}</span>
+          ) : (
+            <span className="mr-auto text-xs text-faint">Unsaved changes</span>
+          )}
+          <Button size="sm" variant="ghost" onClick={undo} disabled={saving}>
+            Undo
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={!dirty || saving || !name.trim()}
+            onClick={() => void save()}
+          >
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      ) : null}
 
       <SectionHeading>Model</SectionHeading>
       <FieldRow label="Model">
@@ -133,24 +186,6 @@ export function NibbletSettings({
         nibblet={nibblet}
         onWake={() => void connection.client.nibblets.wake({ id: nibblet.id })}
       />
-
-      <div className="flex justify-end gap-1.5 pt-1">
-        <Button
-          variant="primary"
-          size="sm"
-          disabled={!dirty || saving || !name.trim()}
-          onClick={async () => {
-            setSaving(true);
-            try {
-              await update({ id: nibblet.id, name: name.trim(), instructions });
-            } finally {
-              setSaving(false);
-            }
-          }}
-        >
-          Save changes
-        </Button>
-      </div>
 
       <SectionHeading>Lifecycle</SectionHeading>
       <div className="flex flex-wrap gap-1.5">

@@ -101,7 +101,7 @@ export function Sidebar({ className }: { className?: string }) {
           ) : null,
         )}
       </nav>
-      <div className="safe-bottom border-t border-line p-1.5">
+      <div className="border-t border-line px-1.5 pt-1.5 safe-bottom-3">
         <button
           type="button"
           onClick={() => void navigate({ to: "/settings" })}
