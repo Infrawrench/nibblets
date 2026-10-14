@@ -343,13 +343,14 @@ export const cities: Record<CityBackground, CityScene> = {
           <ellipse cx="41" cy="10.5" rx="6" ry="3" />
           <ellipse cx="88" cy="30" rx="9" ry="3" />
         </g>
+        {/* Its hill, running down behind the head so it's on solid ground. */}
+        <path d="M44 52 Q56 27 70 26 Q84 27 96 52Z" fill="#7F8F86" />
         {/* The Angel of the North, far off on its hill, wings out. */}
         <g fill="#9C5A3A">
           <path d="M58.6 11.6 L70 13.4 L81.4 11.6 L81.4 13.6 L70 15.8 L58.6 13.6Z" />
-          <path d="M69 12.2 H71 L72.8 27 H67.2Z" />
+          <path d="M69 12.2 H71 L72.8 28 H67.2Z" />
           <circle cx="70" cy="11" r="1.4" />
         </g>
-        <path d="M54 30 Q70 24 86 30 Z" fill="#7F8F86" />
         {/* Rooftops on the quayside. */}
         <path d="M0 100 V72 H12 V68 H22 V100Z M78 100 V70 H90 V74 H100 V100Z" fill="#8A929B" />
         {/* The Tyne Bridge: its green arch, the deck running through it, a granite tower. */}
