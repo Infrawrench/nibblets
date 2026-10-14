@@ -1,5 +1,5 @@
 import { defineHarness, type HarnessPlugin } from "@nibblet/harness";
-import type { RunnerConfig, RunnerToServer } from "@nibblet/protocol";
+import type { RunnerConfig, RunnerToServer, ServerToRunner } from "@nibblet/protocol";
 import { describe, expect, it } from "vitest";
 import { CliLogins } from "./cli.ts";
 import { mcpServersFor, Runner } from "./runner.ts";
@@ -61,8 +61,14 @@ function setup() {
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 20));
-const turn = (turnId: string, input: string) =>
-  ({ type: "turn", turnId, source: "user", input, system: "" }) as const;
+const turn = (turnId: string, input: string): ServerToRunner => ({
+  type: "turn",
+  turnId,
+  source: "user",
+  input,
+  system: "",
+  attachments: [],
+});
 
 describe("Runner", () => {
   it("runs turns in order once configured, and reopens on a model change", async () => {

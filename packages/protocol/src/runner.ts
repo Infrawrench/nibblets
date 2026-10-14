@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Effort, HarnessId } from "./models.ts";
 import { CliLogin, McpServerDef } from "./mcp.ts";
-import { ThreadItem, TurnSource, Usage } from "./schema.ts";
+import { FileRef, ThreadItem, TurnSource, Usage } from "./schema.ts";
 
 /**
  * The WebSocket between the server and the runner inside each nibblet's
@@ -52,6 +52,8 @@ export const ServerToRunner = z.discriminatedUnion("type", [
      * thread so far. Built by the server because the data lives there.
      */
     system: z.string(),
+    /** Files the user attached, for the runner to fetch from `/runner/files/:fileId`. */
+    attachments: z.array(FileRef).default([]),
   }),
   z.object({ type: z.literal("interrupt"), turnId: z.string() }),
 ]);

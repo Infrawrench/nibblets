@@ -48,12 +48,37 @@ export interface HarnessContext {
   log(level: "debug" | "info" | "warn" | "error", message: string): void;
 }
 
+/** A file the user attached, already saved in the workdir. */
+export interface TurnAttachment {
+  path: string;
+  name: string;
+  mime: string;
+  size: number;
+}
+
 export interface TurnRequest {
   turnId: string;
   source: TurnSource;
   input: string;
   system: string;
   signal: AbortSignal;
+  /** Files the user attached; images go to the model as images where the harness can. */
+  attachments?: TurnAttachment[];
+}
+
+/** Images a model can look at directly. */
+export function isModelImage(mime: string): boolean {
+  return /^image\/(png|jpeg|gif|webp)$/.test(mime);
+}
+
+/** The input text plus a line naming every attached file and where it is. */
+export function inputWithAttachments(
+  input: string,
+  attachments: readonly TurnAttachment[] = [],
+): string {
+  if (attachments.length === 0) return input;
+  const lines = attachments.map((a) => `- ${a.name} (${a.mime}, ${a.size} bytes): ${a.path}`);
+  return `${input}\n\nThe user attached ${attachments.length === 1 ? "a file" : "files"}, saved at:\n${lines.join("\n")}`;
 }
 
 export interface TurnResult {

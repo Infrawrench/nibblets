@@ -4,6 +4,8 @@ import path from "node:path";
 import { Codex, type ModelReasoningEffort, type ThreadOptions } from "@openai/codex-sdk";
 import {
   defineHarness,
+  inputWithAttachments,
+  isModelImage,
   packageVersion,
   type HarnessContext,
   type McpServerSpec,
@@ -113,7 +115,17 @@ export const codexHarness = defineHarness({
         const mapper = new CodexMapper(out);
 
         try {
-          const { events } = await thread.runStreamed(turn.input, { signal: turn.signal });
+          // Images go in as local images Codex can see; every file is named in the text.
+          const text = inputWithAttachments(turn.input, turn.attachments);
+          const images = (turn.attachments ?? []).filter((a) => isModelImage(a.mime));
+          const input =
+            images.length === 0
+              ? text
+              : [
+                  { type: "text" as const, text },
+                  ...images.map((a) => ({ type: "local_image" as const, path: a.path })),
+                ];
+          const { events } = await thread.runStreamed(input, { signal: turn.signal });
           for await (const event of events) mapper.handle(event);
         } catch (err) {
           if (!turn.signal.aborted) {

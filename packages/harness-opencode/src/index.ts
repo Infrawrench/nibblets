@@ -3,6 +3,7 @@ import { mkdir, rm, symlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   createOpencodeClient,
   createOpencodeServer,
@@ -10,7 +11,13 @@ import {
   type McpLocalConfig,
   type McpRemoteConfig,
 } from "@opencode-ai/sdk";
-import { defineHarness, type HarnessContext, type McpServerSpec } from "@nibblet/harness";
+import {
+  defineHarness,
+  inputWithAttachments,
+  isModelImage,
+  type HarnessContext,
+  type McpServerSpec,
+} from "@nibblet/harness";
 import type { Usage } from "@nibblet/protocol";
 import { installLogin, type OpencodeDirs } from "./login.ts";
 import { OpencodeMapper } from "./mapper.ts";
@@ -162,7 +169,18 @@ export const opencodeHarness = defineHarness({
             body: {
               model: splitModel(ctx.config.model),
               system: turn.system,
-              parts: [{ type: "text", text: turn.input }],
+              parts: [
+                { type: "text", text: inputWithAttachments(turn.input, turn.attachments) },
+                // Images as file parts the model can see; other files by path in the text.
+                ...(turn.attachments ?? [])
+                  .filter((a) => isModelImage(a.mime))
+                  .map((a) => ({
+                    type: "file" as const,
+                    mime: a.mime,
+                    filename: a.name,
+                    url: pathToFileURL(a.path).href,
+                  })),
+              ],
             },
           });
           if (res.data) {

@@ -1,11 +1,19 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { query, type McpServerConfig, type Options } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type McpServerConfig,
+  type Options,
+  type SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import {
   defineHarness,
+  inputWithAttachments,
+  isModelImage,
   packageVersion,
   type HarnessContext,
   type McpServerSpec,
+  type TurnAttachment,
 } from "@nibblet/harness";
 import type { Effort } from "@nibblet/protocol";
 import { ClaudeMapper } from "./mapper.ts";
@@ -79,7 +87,10 @@ export const claudeHarness = defineHarness({
         };
 
         try {
-          for await (const msg of query({ prompt: turn.input, options })) {
+          const text = inputWithAttachments(turn.input, turn.attachments);
+          const images = (turn.attachments ?? []).filter((a) => isModelImage(a.mime));
+          const prompt = images.length === 0 ? text : withImages(text, images);
+          for await (const msg of query({ prompt, options })) {
             mapper.handle(msg);
           }
         } catch (err) {
@@ -111,3 +122,25 @@ export const claudeHarness = defineHarness({
 });
 
 export default claudeHarness;
+
+type ImageType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+const imageTypes: readonly ImageType[] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+/** One user message with the text and the attached images as image blocks. */
+async function* withImages(
+  text: string,
+  images: readonly TurnAttachment[],
+): AsyncGenerator<SDKUserMessage> {
+  const blocks = await Promise.all(
+    images.map(async (img) => {
+      const media_type = imageTypes.find((t) => t === img.mime) ?? "image/png";
+      const data = (await readFile(img.path)).toString("base64");
+      return { type: "image" as const, source: { type: "base64" as const, media_type, data } };
+    }),
+  );
+  yield {
+    type: "user",
+    message: { role: "user", content: [{ type: "text", text }, ...blocks] },
+    parent_tool_use_id: null,
+  };
+}

@@ -220,6 +220,15 @@ const ItemBase = z.object({
   createdAt: Timestamp,
 });
 
+/** A file kept on the server: something the user attached, or something a nibblet shared. */
+export const FileRef = z.object({
+  fileId: z.string(),
+  name: z.string(),
+  mime: z.string(),
+  size: z.int(),
+});
+export type FileRef = z.infer<typeof FileRef>;
+
 /**
  * One entry in a nibblet's thread. Items are upserted whole by `id`, never
  * patched, so a client that misses an update only has to take the next one.
@@ -229,6 +238,17 @@ export const ThreadItem = z.discriminatedUnion("type", [
     type: z.literal("user_message"),
     text: z.string(),
     source: TurnSource,
+    attachments: z.array(FileRef).optional(),
+  }),
+  /** A file the nibblet shared with the user, uploading or ready to download. */
+  ItemBase.extend({
+    type: z.literal("file"),
+    ...FileRef.shape,
+    caption: z.string().nullable(),
+    status: z.enum(["uploading", "ready", "failed"]),
+    /** Bytes received so far, while uploading. */
+    received: z.int(),
+    error: z.string().nullable(),
   }),
   ItemBase.extend({
     type: z.literal("assistant_message"),

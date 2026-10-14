@@ -32,7 +32,19 @@ export const contract = {
     start: procedure(Id, Nibblet),
     stop: procedure(Id, Nibblet),
     /** Sends a message. Queued if the nibblet is mid-turn. */
-    send: procedure(z.object({ id: z.string(), text: z.string().min(1) }), Ok),
+    /** `attachments` are file ids from `POST /api/nibblets/:id/files`. */
+    send: procedure(
+      z
+        .object({
+          id: z.string(),
+          text: z.string(),
+          attachments: z.array(z.string()).max(20).default([]),
+        })
+        .refine((m) => m.text.trim().length > 0 || m.attachments.length > 0, {
+          message: "Send some text or a file",
+        }),
+      Ok,
+    ),
     interrupt: procedure(Id, Ok),
     /** Runs the heartbeat now rather than waiting for the next one. */
     wake: procedure(Id, Ok),
