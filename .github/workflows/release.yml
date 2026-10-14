@@ -150,6 +150,13 @@ jobs:
       - name: Build (Linux)
         if: matrix.os == 'linux'
         run: pnpm --filter @nibblet/desktop dist:linux
+      - name: Name the x64 files like the rest (Linux)
+        # electron-builder names them amd64 (deb) and x86_64 (AppImage).
+        if: matrix.os == 'linux' && matrix.arch == 'x64'
+        working-directory: apps/desktop/dist
+        run: |
+          mv Nibblets-amd64.deb Nibblets-x64.deb
+          mv Nibblets-x86_64.AppImage Nibblets-x64.AppImage
       - name: Build (Windows)
         if: matrix.os == 'win'
         run: pnpm --filter @nibblet/desktop dist:win
