@@ -134,7 +134,15 @@ jobs:
       - run: pnpm install --frozen-lockfile --filter "@nibblet/desktop..."
       - name: Build, sign and notarise (Mac)
         if: matrix.os == 'mac'
-        run: pnpm --filter @nibblet/desktop dist:mac
+        # Stapling asks Apple's CloudKit for the ticket, which sometimes drops
+        # the connection ("Error 68"); a second go usually gets it.
+        run: |
+          for attempt in 1 2 3; do
+            pnpm --filter @nibblet/desktop dist:mac && exit 0
+            echo "::warning::Mac build attempt $attempt failed"
+            sleep 30
+          done
+          exit 1
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
