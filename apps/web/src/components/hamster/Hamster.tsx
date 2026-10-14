@@ -29,8 +29,15 @@ export function Hamster({
   className,
   title,
   decorative,
+  cropped,
 }: {
   look: HamsterLook;
+  /**
+   * Fit the drawing to the hamster itself rather than its round backdrop,
+   * so it lines up with text beside it (a logo). Only for looks without a
+   * background or hat.
+   */
+  cropped?: boolean;
   /** Hidden from assistive tech, for tiles that are already labelled. */
   decorative?: boolean;
   size?: number;
@@ -47,7 +54,7 @@ export function Hamster({
 
   return (
     <svg
-      viewBox="0 0 100 100"
+      viewBox={cropped ? "8 22 84 72" : "0 0 100 100"}
       width={size}
       height={size}
       className={`hamster ${statusClass} ${className ?? ""}`}

@@ -16,6 +16,7 @@ const statusText: Record<NibbletStatus, string> = {
   starting: "Waking",
   idle: "",
   working: "Working",
+  waiting: "Out of usage",
   error: "Needs help",
 };
 
@@ -24,6 +25,7 @@ const statusDot: Record<NibbletStatus, string> = {
   starting: "bg-warning",
   idle: "bg-dim/50",
   working: "bg-working",
+  waiting: "bg-warning",
   error: "bg-danger",
 };
 
@@ -46,7 +48,7 @@ export function Sidebar() {
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-line bg-panel">
       <div className="shell-titlebar shell-inset flex h-11 items-center gap-2 border-b border-line px-3">
-        <Hamster look={{ ...defaultHamsterLook, background: "none" }} size={22} />
+        <Hamster look={{ ...defaultHamsterLook, background: "none" }} size={20} cropped />
         <span className="flex-1 text-sm font-semibold tracking-tight">Nibblets</span>
         <Button size="icon" variant="ghost" title="New nibblet" onClick={() => setCreating(true)}>
           <Plus />
@@ -156,7 +158,8 @@ function NibbletRow({
       params={{ server, id: nibblet.id }}
       style={{ paddingLeft: `${8 + depth * 16}px` }}
       className={cn(
-        "group flex h-8 items-center gap-2 rounded-md pr-2 text-sm hover:bg-hover",
+        "group flex min-h-8 items-center gap-2 rounded-md pr-2 text-sm hover:bg-hover",
+        nibblet.statusText && "py-1",
         active && "bg-active hover:bg-active",
       )}
     >
@@ -169,16 +172,26 @@ function NibbletRow({
           )}
         />
       </span>
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate",
-          active ? "font-medium" : "",
-          nibblet.status === "stopped" && "text-dim",
-        )}
-      >
-        {nibblet.name}
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span
+          className={cn(
+            "truncate",
+            active ? "font-medium" : "",
+            nibblet.status === "stopped" && "text-dim",
+          )}
+        >
+          {nibblet.name}
+        </span>
+        {nibblet.statusText ? (
+          <span className="truncate text-2xs leading-tight text-faint" title={nibblet.statusText}>
+            {nibblet.statusEmoji ? `${nibblet.statusEmoji} ` : ""}
+            {nibblet.statusText}
+          </span>
+        ) : null}
       </span>
-      {statusText[nibblet.status] ? (
+      {nibblet.awaitingApproval ? (
+        <span className="shrink-0 text-2xs text-warning">Needs approval</span>
+      ) : statusText[nibblet.status] ? (
         <span
           className={cn(
             "shrink-0 text-2xs",
