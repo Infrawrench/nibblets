@@ -104,17 +104,36 @@ export function splitToolName(raw: string): { server: string | null; name: strin
   return { server: null, name: raw };
 }
 
+interface TextEntry {
+  kind: "assistant_message" | "reasoning";
+  text: string;
+  createdAt: string;
+  /** How much of `text` has been shown, and when it last grew. */
+  shown: number;
+  shownAt: number;
+}
+
+/**
+ * Where the last whole sentence (or line) in `text` ends: after a `.`, `!`,
+ * `?` or `…` (and any closing quotes or brackets) followed by a space, or at
+ * a line break. 0 when there isn't one yet.
+ */
+export function sentenceEnd(text: string): number {
+  let end = 0;
+  for (const m of text.matchAll(/[.!?…]["'”’)\]]*\s|\n/g)) end = m.index + m[0].length;
+  return end;
+}
+
 /**
  * Turns a harness's stream of deltas and tool events into whole thread
- * items. Text is accumulated per item and flushed at most every
- * `flushMs`, so a fast stream costs a handful of upserts rather than one per
- * token. Harness plugins use this rather than building items themselves.
+ * items. Text is accumulated per item and shown a sentence (or line) at a
+ * time rather than token by token, checked every `flushMs`; a stretch with
+ * no sentence end (code, say) shows anyway after `holdMs`. That also keeps a
+ * fast stream to a handful of upserts. Harness plugins use this rather than
+ * building items themselves.
  */
 export class TurnWriter {
-  private readonly texts = new Map<
-    string,
-    { kind: "assistant_message" | "reasoning"; text: string; createdAt: string }
-  >();
+  private readonly texts = new Map<string, TextEntry>();
   private readonly tools = new Map<string, Extract<ThreadItem, { type: "tool_call" }>>();
   private readonly dirty = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -122,16 +141,18 @@ export class TurnWriter {
   readonly turnId: string;
   private readonly emit: (item: ThreadItem) => void;
   private readonly flushMs: number;
+  private readonly holdMs: number;
 
-  constructor(turnId: string, emit: (item: ThreadItem) => void, flushMs = 80) {
+  constructor(turnId: string, emit: (item: ThreadItem) => void, flushMs = 80, holdMs = 2000) {
     this.turnId = turnId;
     this.emit = emit;
     this.flushMs = flushMs;
+    this.holdMs = holdMs;
   }
 
   /** Appends to an assistant message or reasoning block, creating it on first use. */
   delta(itemId: string, kind: "assistant_message" | "reasoning", text: string): void {
-    const entry = this.texts.get(itemId) ?? { kind, text: "", createdAt: now() };
+    const entry = this.entry(itemId, kind);
     entry.text += text;
     this.texts.set(itemId, entry);
     this.dirty.add(itemId);
@@ -140,8 +161,9 @@ export class TurnWriter {
 
   /** Replaces a text item outright, for harnesses that send whole snapshots. */
   set(itemId: string, kind: "assistant_message" | "reasoning", text: string): void {
-    const entry = this.texts.get(itemId) ?? { kind, text: "", createdAt: now() };
+    const entry = this.entry(itemId, kind);
     entry.text = text;
+    entry.shown = Math.min(entry.shown, text.length);
     this.texts.set(itemId, entry);
     this.dirty.add(itemId);
     this.schedule();
@@ -203,21 +225,46 @@ export class TurnWriter {
     this.tools.clear();
   }
 
+  private entry(itemId: string, kind: TextEntry["kind"]): TextEntry {
+    return (
+      this.texts.get(itemId) ?? {
+        kind,
+        text: "",
+        createdAt: now(),
+        shown: 0,
+        shownAt: Date.now(),
+      }
+    );
+  }
+
   private schedule(): void {
     if (this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       for (const id of this.dirty) {
         const entry = this.texts.get(id);
-        if (entry?.text.trim()) this.emit(this.textItem(id, entry, true));
+        if (!entry) {
+          this.dirty.delete(id);
+          continue;
+        }
+        // Up to the last whole sentence; everything, once it's been held long enough.
+        const held = Date.now() - entry.shownAt >= this.holdMs;
+        const upTo = held ? entry.text.length : sentenceEnd(entry.text);
+        if (upTo > entry.shown && entry.text.slice(0, upTo).trim()) {
+          entry.shown = upTo;
+          entry.shownAt = Date.now();
+          this.emit(this.textItem(id, { ...entry, text: entry.text.slice(0, upTo) }, true));
+        }
+        if (entry.shown >= entry.text.length) this.dirty.delete(id);
       }
-      this.dirty.clear();
+      // Text still held back gets another look.
+      if (this.dirty.size > 0) this.schedule();
     }, this.flushMs);
   }
 
   private textItem(
     id: string,
-    entry: { kind: "assistant_message" | "reasoning"; text: string; createdAt: string },
+    entry: Pick<TextEntry, "kind" | "text" | "createdAt">,
     streaming: boolean,
   ): ThreadItem {
     return {
