@@ -1,8 +1,9 @@
-// Cuts a release: `pnpm release 0.2.0`. Sets every package's version, commits,
-// tags v0.2.0, pushes, and publishes a GitHub release with generated notes.
-// Servers and the desktop app offer it as an update from then on.
+// Cuts a release: `pnpm release 0.2.0`. Sets every package's version,
+// commits, and pushes to main. The Release workflow sees a version without a
+// tag, builds and publishes the images and the signed Mac app, then tags
+// v0.2.0 and makes the GitHub release. Servers and the app offer it from then on.
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const version = process.argv[2];
@@ -19,6 +20,10 @@ if (sh("git", ["branch", "--show-current"]) !== "main") {
   console.error("Releases are cut from main.");
   process.exit(1);
 }
+if (sh("git", ["tag", "-l", `v${version}`])) {
+  console.error(`v${version} is already released.`);
+  process.exit(1);
+}
 
 const files = ["package.json"];
 for (const group of ["apps", "packages"]) {
@@ -32,11 +37,8 @@ for (const file of files) {
   writeFileSync(file, text.replace(/("version":\s*")[^"]+(")/, `$1${version}$2`));
 }
 
-const tag = `v${version}`;
 sh("git", ["add", ...files]);
 sh("git", ["commit", "-m", `Release ${version}`]);
-sh("git", ["tag", tag]);
-sh("git", ["push", "origin", "main", tag]);
-console.log(
-  sh("gh", ["release", "create", tag, "--title", `Nibblets ${version}`, "--generate-notes"]),
-);
+sh("git", ["push", "origin", "main"]);
+console.log(`Pushed ${version}. The Release workflow builds and publishes it:`);
+console.log(sh("gh", ["run", "list", "--workflow", "release.yml", "--limit", "1"]));

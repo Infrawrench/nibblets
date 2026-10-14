@@ -15,8 +15,13 @@ extraResources:
 mac:
   category: public.app-category.developer-tools
   target: dmg
-  # Unsigned locally; CI signs and notarises.
-  identity: null
+  # One per architecture, built natively: Nibblets-arm64.dmg and Nibblets-x64.dmg.
+  artifactName: ${productName}-${arch}.${ext}
+  # Signed with the Developer ID in CSC_LINK, and notarised when APPLE_ID,
+  # APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID are set (in CI).
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     LSUIElement: false
 win:

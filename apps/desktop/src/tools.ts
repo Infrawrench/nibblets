@@ -1,13 +1,11 @@
-import { execFile } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
-import { promisify } from "node:util";
 import { opencodePaths } from "@nibblet/host-mcp";
 import { codexFile, detectCredentials } from "./credentials.ts";
 import { checkDocker } from "./docker.ts";
+import { installDirs, loginShell, mergePaths, shellPath } from "./shell-path.ts";
 
-const run = promisify(execFile);
+export { loginShell };
 
 /**
  * What a person needs before a server can run here, as plugins: Docker, and
@@ -44,50 +42,29 @@ export interface ToolEnv {
 }
 
 /**
- * Apps opened from the Dock get a bare PATH, so commands run in the
- * person's login shell, and lookups use its PATH plus the places
+ * What the tools see: the shell's PATH (see shell-path.ts), asked again at
+ * most once a minute because an install can change it, plus the places
  * installers put things before a new shell would pick them up.
  */
-let shellPath: { path: string; at: number } | null = null;
+let cachedPath: { path: string; at: number } | null = null;
 /** Installs change what's on PATH; the next look asks the shell again. */
 export function forgetShellPath(): void {
-  shellPath = null;
+  cachedPath = null;
 }
 
 export async function toolEnv(): Promise<ToolEnv & { path: string; shell: string }> {
   const shell = loginShell();
-  let path = process.env.PATH ?? "";
-  if (shellPath && Date.now() - shellPath.at < 60_000) {
-    path = shellPath.path;
-  } else if (process.platform !== "win32") {
-    try {
-      const { stdout } = await run(shell, ["-l", "-c", 'printf "%s" "$PATH"'], { timeout: 8000 });
-      if (stdout.trim()) path = stdout.trim();
-      shellPath = { path, at: Date.now() };
-    } catch {
-      // A broken shell profile; the extra places below still apply.
-    }
+  if (!cachedPath || Date.now() - cachedPath.at > 60_000) {
+    cachedPath = { path: (await shellPath(shell)) ?? process.env.PATH ?? "", at: Date.now() };
   }
-  const home = homedir();
-  const extra =
-    process.platform === "win32"
-      ? []
-      : [
-          join(home, ".local/bin"),
-          join(home, ".opencode/bin"),
-          join(home, ".claude/local"),
-          join(home, ".npm-global/bin"),
-          "/opt/homebrew/bin",
-          "/usr/local/bin",
-          "/Applications/Docker.app/Contents/Resources/bin",
-          join(home, "Applications/Docker.app/Contents/Resources/bin"),
-        ];
-  const dirs = [...new Set([...path.split(delimiter), ...extra].filter(Boolean))];
-  const full = dirs.join(delimiter);
+  const extra = process.platform === "win32" ? [] : installDirs();
+  const dirs = mergePaths(cachedPath.path, process.env.PATH ?? "", extra.join(delimiter))
+    .split(delimiter)
+    .filter(Boolean);
   return {
     platform: process.platform,
     shell,
-    path: full,
+    path: dirs.join(delimiter),
     which(name) {
       const exe = process.platform === "win32" ? `${name}.exe` : name;
       for (const dir of dirs) {
@@ -102,11 +79,6 @@ export async function toolEnv(): Promise<ToolEnv & { path: string; shell: string
       return null;
     },
   };
-}
-
-export function loginShell(): string {
-  if (process.platform === "win32") return process.env.COMSPEC ?? "cmd.exe";
-  return process.env.SHELL || (process.platform === "darwin" ? "/bin/zsh" : "/bin/bash");
 }
 
 const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;

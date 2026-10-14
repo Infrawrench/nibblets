@@ -22,10 +22,11 @@ import { startKeychainBridge } from "./bridge.ts";
 import { detectCredentials } from "./credentials.ts";
 import { checkDocker } from "./docker.ts";
 import type { SetupPage, SetupStep } from "./preload.ts";
-import { HOST_MCP_PORT, Stack } from "./stack.ts";
+import { HOST_MCP_PORT, IMAGE_PREFIX, Stack } from "./stack.ts";
 import { SetupTerminal } from "./terminal.ts";
 import { checkTools, findAction, forgetShellPath } from "./tools.ts";
 import { AppUpdates } from "./updates.ts";
+import { adoptShellPath } from "./shell-path.ts";
 import { opencodePaths } from "@nibblet/host-mcp";
 
 const SERVER_URL = "http://127.0.0.1:8420/";
@@ -71,6 +72,11 @@ async function loadSettings(): Promise<Settings> {
 
 const saveSettings = (s: Settings) => writeFile(settingsPath(), JSON.stringify(s, null, 2));
 
+/** A packaged app that's still sitting in a checkout's build folder, for development. */
+function localBuild(): boolean {
+  return /[/\\]apps[/\\]desktop[/\\]dist[/\\]/.test(process.execPath);
+}
+
 /** In a checkout the repo is two levels above this app; packaged, the compose file is a resource. */
 function stackPaths() {
   if (app.isPackaged) {
@@ -78,6 +84,9 @@ function stackPaths() {
       dir: join(app.getPath("userData"), "stack"),
       composeSource: join(process.resourcesPath, "docker/compose.yaml"),
       sourceDir: null,
+      // The images published with this release, so the app and its stack always match.
+      // A build run from a checkout's apps/desktop/dist uses the images built there instead.
+      images: localBuild() ? null : { prefix: IMAGE_PREFIX, tag: app.getVersion() },
     };
   }
   const repo = resolve(app.getAppPath(), "../..");
@@ -85,6 +94,7 @@ function stackPaths() {
     dir: join(app.getPath("userData"), "stack"),
     composeSource: join(repo, "docker/compose.yaml"),
     sourceDir: repo,
+    images: null,
   };
 }
 
@@ -523,6 +533,9 @@ app.on("second-instance", (_e, argv) => {
 });
 
 app.whenReady().then(async () => {
+  // Opened from the Dock, the app's PATH is bare; take the person's own, so
+  // the CLIs, MCP servers and Docker it starts are the ones their terminal finds.
+  await adoptShellPath();
   settings = await loadSettings();
   ipcMain.on("setup:retry", () => void bringUp());
   setupIpc();

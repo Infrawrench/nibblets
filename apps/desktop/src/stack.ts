@@ -17,7 +17,12 @@ export interface StackPaths {
   composeSource: string;
   /** The repo root when running from a checkout; images are built from it. */
   sourceDir: string | null;
+  /** Otherwise, the published images to pull: this release's, from the registry. */
+  images: { prefix: string; tag: string } | null;
 }
+
+/** Where releases publish their images: `${prefix}server:${version}` and so on. */
+export const IMAGE_PREFIX = "ghcr.io/infrawrench/nibblets-";
 
 type EnvFile = Record<string, string>;
 
@@ -80,6 +85,9 @@ export class Stack {
       KEYCHAIN_BRIDGE_URL:
         creds.claude === "keychain" ? `http://host.docker.internal:${BRIDGE_PORT}` : "",
       ...(this.paths.sourceDir ? { NIBBLET_SOURCE_DIR: this.paths.sourceDir } : {}),
+      ...(this.paths.images
+        ? { NIBBLET_IMAGE_PREFIX: this.paths.images.prefix, NIBBLET_TAG: this.paths.images.tag }
+        : {}),
     };
     const envText = Object.entries(this.env)
       .map(([k, v]) => `${k}=${v}`)
