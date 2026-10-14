@@ -76,6 +76,14 @@ export function CreateNibbletDialog({
 
   const target = servers.byId(server);
   const catalogue = useModels(target);
+  // Starts on Claude, but not on a server that has no Claude subscription.
+  const fallback = catalogue.offered.includes(choice.harness) ? null : catalogue.defaultChoice();
+  useEffect(() => {
+    if (!fallback) return;
+    setChoice(fallback);
+    const option = catalogue.find(fallback.harness, fallback.model);
+    if (option) setEffort(option.defaultEffort);
+  }, [fallback?.harness, fallback?.model]);
 
   const create = async () => {
     const connection = servers.byId(server);

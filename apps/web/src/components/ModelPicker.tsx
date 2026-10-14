@@ -33,11 +33,15 @@ export function ModelPicker({
   const [query, setQuery] = useState("");
   const current = catalogue.find(value.harness, value.model);
   const railState = catalogue.forHarness(rail);
+  // The current pick stays listed even if its subscription has since gone.
+  const shown = HarnessId.options.filter(
+    (h) => catalogue.offered.includes(h) || h === value.harness,
+  );
 
   const rows = useMemo((): Row[] => {
     const q = query.trim().toLowerCase();
     if (!q) return withHeadings(rail, railState.models);
-    return HarnessId.options.flatMap((h) =>
+    return shown.flatMap((h) =>
       catalogue
         .forHarness(h)
         .models.filter((m) =>
@@ -45,7 +49,7 @@ export function ModelPicker({
         )
         .map((model): Row => ({ kind: "model", harness: h, model })),
     );
-  }, [rail, railState.models, query, catalogue]);
+  }, [rail, railState.models, query, catalogue, shown]);
 
   return (
     <Popover.Root
@@ -72,7 +76,7 @@ export function ModelPicker({
         <Popover.Positioner sideOffset={6} align="start" className="z-50">
           <Popover.Popup className="flex max-h-86 w-[min(92vw,360px)] overflow-hidden rounded-xl border border-edge bg-panel shadow-float transition-[opacity,transform] data-[ending-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:scale-95 data-[starting-style]:opacity-0">
             <div className="flex w-11 shrink-0 flex-col items-center gap-1 bg-deep/60 py-2">
-              {HarnessId.options.map((h) => (
+              {shown.map((h) => (
                 <button
                   key={h}
                   type="button"
