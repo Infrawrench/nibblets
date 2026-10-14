@@ -123,12 +123,8 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
             </span>
           </div>
           <Segmented<PanelTab>
-            value={panel ?? "browser"}
+            value={panel}
             onChange={(p) => setPanel(p === panel ? null : p)}
-            className={cn(
-              !panel &&
-                "[&_[aria-selected=true]]:bg-transparent [&_[aria-selected=true]]:shadow-none",
-            )}
             options={[
               { value: "browser", label: <Globe />, title: "Browser" },
               { value: "schedules", label: <CalendarClock />, title: "Schedules" },

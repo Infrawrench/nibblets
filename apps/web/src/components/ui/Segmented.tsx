@@ -8,7 +8,8 @@ export function Segmented<T extends string>({
   options,
   className,
 }: {
-  value: T;
+  /** Null when none is selected, like a collapsed panel's tabs. */
+  value: T | null;
   onChange: (value: T) => void;
   options: readonly { value: T; label: ReactNode; title?: string }[];
   className?: string;
