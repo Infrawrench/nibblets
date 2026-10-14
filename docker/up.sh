@@ -57,6 +57,30 @@ grep -q '^NIBBLET_HOST_PLATFORM=' .env || case "$(uname)" in
   *) echo "NIBBLET_HOST_PLATFORM=other" >> .env ;;
 esac
 
+# Sets KEY=value in .env, replacing any line for it (sed -i differs between macOS and Linux).
+env_set() {
+  { grep -v "^$1=" .env || true; } > .env.tmp
+  echo "$1=$2" >> .env.tmp
+  mv .env.tmp .env
+  chmod 600 .env
+}
+
+# A release checkout runs that release's published images; anything else
+# (main, a branch, local changes) is built here. NIBBLET_BUILD=1 always builds.
+release=""
+tag=$(git describe --tags --exact-match 2>/dev/null || true)
+changed=$(git status --porcelain --untracked-files=no 2>/dev/null || true)
+case "$tag" in
+  v[0-9]*) [ "${NIBBLET_BUILD:-0}" = 1 ] || [ -n "$changed" ] || release="${tag#v}" ;;
+esac
+if [ -n "$release" ]; then
+  env_set NIBBLET_IMAGE_PREFIX ghcr.io/infrawrench/nibblets-
+  env_set NIBBLET_TAG "$release"
+else
+  env_set NIBBLET_IMAGE_PREFIX nibblet/
+  env_set NIBBLET_TAG dev
+fi
+
 # Docker's compose plugin, or the standalone binary (which also drives Podman's socket).
 if docker compose version >/dev/null 2>&1; then
   compose() { docker compose -f compose.yaml -f compose.creds.yaml "$@"; }
@@ -64,8 +88,14 @@ else
   compose() { docker-compose -f compose.yaml -f compose.creds.yaml "$@"; }
 fi
 
-compose --profile build build runner
-compose up -d --build
+if [ -n "$release" ]; then
+  echo "Downloading Nibblets $release..."
+  compose --profile build pull
+  compose up -d
+else
+  compose --profile build build runner
+  compose up -d --build
+fi
 echo "Waiting for the server..."
 i=0
 until compose exec -T server node -e "fetch('http://127.0.0.1:8420/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))" 2>/dev/null; do

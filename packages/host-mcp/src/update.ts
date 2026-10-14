@@ -29,7 +29,7 @@ export const downloadUpdater: AppUpdaterHost = {
 
 /**
  * For a checkout set up by install.sh: checks out the release's tag and
- * reruns docker/up.sh, which rebuilds and restarts the stack. Under systemd
+ * reruns docker/up.sh, which pulls the release's images and restarts the stack. Under systemd
  * the bridge then exits, to be restarted on the new code.
  */
 export function gitUpdater(repo: string, run: Run, logFile = defaultLog()): AppUpdaterHost {

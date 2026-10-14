@@ -578,10 +578,18 @@ UNIT
 PAIR_LINK=""
 start_stack() {
   step "🏗️  Building your hamsters' home"
-  say "The first build takes a few minutes. Good time for a cup of tea ☕"
+  # docker/up.sh downloads a release's images, and builds anything else.
+  local doing="Building and starting the stack"
+  case "$REF" in
+    v[0-9]*)
+      doing="Downloading and starting Nibblets ${REF#v}"
+      say "The first download takes a minute or two."
+      ;;
+    *) say "The first build takes a few minutes. Good time for a cup of tea ☕" ;;
+  esac
   prepare_bridge
   local start_log=$((0 + $(wc -l <"$LOG")))
-  spin "Building and starting the stack" with_docker "cd '$DIR' && sh docker/up.sh"
+  spin "$doing" with_docker "cd '$DIR' && sh docker/up.sh"
   PAIR_LINK=$(tail -n +"$start_log" "$LOG" | grep -o 'http[^ ]*#pair=[A-Za-z0-9_-]*' | tail -n1 || true)
   start_bridge
   ok "Nibblets is running on this machine"
