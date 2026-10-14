@@ -25,6 +25,8 @@ export function findDockerCli(): string | null {
           "/usr/local/bin/docker",
           "/opt/homebrew/bin/docker",
           "/Applications/Docker.app/Contents/Resources/bin/docker",
+          // Where the setup window puts it when /Applications isn't writable.
+          join(homedir(), "Applications/Docker.app/Contents/Resources/bin/docker"),
           join(homedir(), ".orbstack/bin/docker"),
           join(homedir(), ".rd/bin/docker"),
           "/usr/bin/docker",

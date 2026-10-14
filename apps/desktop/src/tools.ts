@@ -80,6 +80,7 @@ export async function toolEnv(): Promise<ToolEnv & { path: string; shell: string
           "/opt/homebrew/bin",
           "/usr/local/bin",
           "/Applications/Docker.app/Contents/Resources/bin",
+          join(home, "Applications/Docker.app/Contents/Resources/bin"),
         ];
   const dirs = [...new Set([...path.split(delimiter), ...extra].filter(Boolean))];
   const full = dirs.join(delimiter);
@@ -109,6 +110,43 @@ export function loginShell(): string {
 }
 
 const quote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/**
+ * Docker Desktop straight from Docker: the DMG for this Mac's chip, copied
+ * into Applications (the person's own if the shared one isn't writable),
+ * then opened to finish setting itself up. No Homebrew needed.
+ */
+export const installDockerDesktop = `set -e
+case "$(uname -m)" in arm64) arch=arm64 ;; *) arch=amd64 ;; esac
+tmp=$(mktemp -d)
+trap 'hdiutil detach -quiet "$tmp/mnt" 2>/dev/null; rm -rf "$tmp"' EXIT
+echo "Downloading Docker Desktop (about 600 MB)..."
+curl -fL --progress-bar -o "$tmp/Docker.dmg" "https://desktop.docker.com/mac/main/$arch/Docker.dmg"
+dest=/Applications
+if [ ! -w "$dest" ]; then dest="$HOME/Applications"; mkdir -p "$dest"; fi
+echo "Copying Docker to $dest..."
+hdiutil attach -nobrowse -readonly -quiet -mountpoint "$tmp/mnt" "$tmp/Docker.dmg"
+ditto "$tmp/mnt/Docker.app" "$dest/Docker.app"
+echo "Opening Docker. Accept its terms, and it finishes setting itself up."
+open "$dest/Docker.app"`;
+
+/**
+ * Codex's own build from its latest GitHub release, into ~/.local/bin, like
+ * the Claude Code and OpenCode installers. No Homebrew or npm needed.
+ */
+export const installCodex = `set -e
+case "$(uname -m)" in arm64|aarch64) arch=aarch64 ;; x86_64|amd64) arch=x86_64 ;; *) echo "Codex has no build for $(uname -m)"; exit 1 ;; esac
+case "$(uname -s)" in Darwin) target="$arch-apple-darwin" ;; *) target="$arch-unknown-linux-musl" ;; esac
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+echo "Downloading Codex..."
+curl -fL --progress-bar -o "$tmp/codex.tar.gz" "https://github.com/openai/codex/releases/latest/download/codex-$target.tar.gz"
+tar -xzf "$tmp/codex.tar.gz" -C "$tmp"
+mkdir -p "$HOME/.local/bin"
+mv "$tmp/codex-$target" "$HOME/.local/bin/codex"
+chmod +x "$HOME/.local/bin/codex"
+"$HOME/.local/bin/codex" --version`;
+
 const unix = (env: ToolEnv) => env.platform !== "win32";
 
 const docker: SetupTool = {
@@ -132,13 +170,13 @@ const docker: SetupTool = {
         ? [{ id: "start", label: "Open Docker", primary: true, run: "open -a Docker" }]
         : [{ id: "help", label: "How to start it", open: "https://docs.docker.com/desktop/" }];
     }
-    return env.platform === "darwin" && env.which("brew")
+    return env.platform === "darwin"
       ? [
           {
             id: "install",
             label: "Install Docker Desktop",
             primary: true,
-            run: "brew install --cask docker-desktop && open -a Docker",
+            run: installDockerDesktop,
           },
           { id: "download", label: "Download instead", open: page },
         ]
@@ -203,13 +241,8 @@ const codex: SetupTool = {
     if (state.ready) return [];
     const bin = env.which("codex");
     if (bin) return [{ id: "login", label: "Sign in", primary: true, run: `${quote(bin)} login` }];
-    const install = env.which("brew")
-      ? "brew install --cask codex"
-      : env.which("npm")
-        ? "npm install -g @openai/codex"
-        : null;
-    return install
-      ? [{ id: "install", label: "Install", primary: true, run: install }]
+    return unix(env)
+      ? [{ id: "install", label: "Install", primary: true, run: installCodex }]
       : [{ id: "install", label: "How to install", open: "https://github.com/openai/codex" }];
   },
 };
