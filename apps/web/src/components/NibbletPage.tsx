@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Brain, CalendarClock, Globe, HeartPulse, PanelRight, Settings2 } from "lucide-react";
 import { harnesses } from "@nibblet/protocol";
@@ -6,6 +6,7 @@ import { modelLabel, useModels } from "../lib/models.ts";
 import { useNibblets, useServer, useServers, useThread } from "../lib/servers.tsx";
 import { runningTurn } from "../lib/thread.ts";
 import { storage } from "../lib/storage.ts";
+import { isPanelTab, onPanelRequest, PANEL_KEY, type PanelTab } from "../lib/panels.ts";
 import { relativeTime } from "../lib/time.ts";
 import type { ServerConnection } from "../lib/connection.ts";
 import { Hamster } from "./hamster/Hamster.tsx";
@@ -20,14 +21,9 @@ import { Segmented } from "./ui/Segmented.tsx";
 import { Button } from "./ui/Button.tsx";
 import { cn } from "../lib/cn.ts";
 
-type PanelTab = "browser" | "schedules" | "memory" | "settings";
-const PANEL_KEY = "nibblet.panel";
-
 function initialPanel(): PanelTab | null {
   const saved = storage.get(PANEL_KEY);
-  return saved === "browser" || saved === "schedules" || saved === "memory" || saved === "settings"
-    ? saved
-    : null;
+  return isPanelTab(saved) ? saved : null;
 }
 
 export function NibbletPage({ server, id }: { server: string; id: string }) {
@@ -50,6 +46,8 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
     if (p) storage.set(PANEL_KEY, p);
     else storage.remove(PANEL_KEY);
   };
+  // The sidebar's menu can ask for a panel (its "Settings" item, say).
+  useEffect(() => onPanelRequest(setPanelState), []);
 
   const nibblet = nibblets.data?.find((n) => n.id === id);
   if (nibblets.isPending) return <div className="flex-1" />;

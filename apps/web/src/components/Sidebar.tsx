@@ -1,12 +1,13 @@
 import { useState } from "react";
-import { Link, useParams } from "@tanstack/react-router";
+import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { useQueries } from "@tanstack/react-query";
 import { Plus, Settings } from "lucide-react";
 import { defaultHamsterLook, type Nibblet, type NibbletStatus } from "@nibblet/protocol";
 import { Hamster } from "./hamster/Hamster.tsx";
 import { CreateNibbletDialog } from "./CreateNibbletDialog.tsx";
 import { Button } from "./ui/Button.tsx";
-import { keys, useLiveState, useServers } from "../lib/servers.tsx";
+import { keys, useLiveState, useServer, useServers } from "../lib/servers.tsx";
+import { NibbletMenu } from "./NibbletMenu.tsx";
 import type { ServerConnection } from "../lib/connection.ts";
 import { cn } from "../lib/cn.ts";
 import { orderNibblets } from "../lib/nibblets.ts";
@@ -31,6 +32,8 @@ const statusDot: Record<NibbletStatus, string> = {
 
 export function Sidebar() {
   const servers = useServers();
+  const navigate = useNavigate();
+  const onSettings = useRouterState({ select: (r) => r.location.pathname === "/settings" });
   const [creating, setCreating] = useState(false);
   const lists = useQueries({
     queries: servers.systems.map((s) => ({
@@ -89,13 +92,17 @@ export function Sidebar() {
         })}
       </nav>
       <div className="border-t border-line p-1.5">
-        <Link
-          to="/settings"
-          className="flex h-7 items-center gap-2 rounded-md px-2 text-sm text-dim hover:bg-hover hover:text-text [&.active]:bg-active [&.active]:text-text"
+        <button
+          type="button"
+          onClick={() => void navigate({ to: "/settings" })}
+          className={cn(
+            "flex h-7 w-full items-center gap-2 rounded-md px-2 text-sm text-dim hover:bg-hover hover:text-text",
+            onSettings && "bg-active text-text",
+          )}
         >
           <Settings className="size-3.5" />
           Settings
-        </Link>
+        </button>
       </div>
       <CreateNibbletDialog open={creating} onOpenChange={setCreating} />
     </aside>
@@ -151,14 +158,17 @@ function NibbletRow({
   depth: number;
 }) {
   const params = useParams({ strict: false });
+  const navigate = useNavigate();
+  const connection = useServer(server);
   const active = params.server === server && params.id === nibblet.id;
-  return (
-    <Link
-      to="/n/$server/$id"
-      params={{ server, id: nibblet.id }}
+  // A button, not a link: links make the browser show their address on hover.
+  const row = (
+    <button
+      type="button"
+      onClick={() => void navigate({ to: "/n/$server/$id", params: { server, id: nibblet.id } })}
       style={{ paddingLeft: `${8 + depth * 16}px` }}
       className={cn(
-        "group flex min-h-8 items-center gap-2 rounded-md pr-2 text-sm hover:bg-hover",
+        "group flex min-h-8 w-full items-center gap-2 rounded-md pr-2 text-left text-sm hover:bg-hover",
         nibblet.statusText && "py-1",
         active && "bg-active hover:bg-active",
       )}
@@ -205,7 +215,14 @@ function NibbletRow({
           {statusText[nibblet.status]}
         </span>
       ) : null}
-    </Link>
+    </button>
+  );
+  return connection ? (
+    <NibbletMenu connection={connection} nibblet={nibblet}>
+      {row}
+    </NibbletMenu>
+  ) : (
+    row
   );
 }
 

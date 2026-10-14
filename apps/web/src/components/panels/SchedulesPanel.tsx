@@ -9,6 +9,8 @@ import { Button } from "../ui/Button.tsx";
 import { FieldRow, Input, SectionHeading, Textarea } from "../ui/Field.tsx";
 import { Segmented } from "../ui/Segmented.tsx";
 import { Switch } from "../ui/Switch.tsx";
+import { describeCron, toCron, type Repeat as RepeatRule } from "../../lib/cron.ts";
+import { RepeatPicker } from "./RepeatPicker.tsx";
 
 export function SchedulesPanel({
   connection,
@@ -61,7 +63,7 @@ export function SchedulesPanel({
           <div className="flex min-w-0 flex-1 flex-col">
             <span className="truncate text-sm font-medium">{s.name}</span>
             <span className="truncate text-2xs text-faint">
-              {s.cron ? <code className="font-mono">{s.cron}</code> : "Once"} · next{" "}
+              {s.cron ? <span title={s.cron}>{describeCron(s.cron)}</span> : "Once"} · next{" "}
               {relativeTime(s.nextRunAt)}
               {s.lastRunAt ? ` · last ${relativeTime(s.lastRunAt)}` : ""}
             </span>
@@ -103,7 +105,7 @@ function NewSchedule({
 }) {
   const [kind, setKind] = useState<"repeat" | "once">("repeat");
   const [name, setName] = useState("");
-  const [cron, setCron] = useState("0 9 * * *");
+  const [repeat, setRepeat] = useState<RepeatRule>({ kind: "daily", time: "09:00" });
   const [at, setAt] = useState("");
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +123,7 @@ function NewSchedule({
             name,
             prompt,
             timezone,
-            cron: kind === "repeat" ? cron : null,
+            cron: kind === "repeat" ? toCron(repeat) : null,
             runAt: kind === "once" && at ? new Date(at).toISOString() : null,
           });
           onDone();
@@ -147,13 +149,8 @@ function NewSchedule({
         />
       </FieldRow>
       {kind === "repeat" ? (
-        <FieldRow label="Cron" hint={`Minute hour day month weekday, in ${timezone}`}>
-          <Input
-            value={cron}
-            onChange={(e) => setCron(e.target.value)}
-            className="font-mono"
-            required
-          />
+        <FieldRow label="Repeats" top>
+          <RepeatPicker value={repeat} onChange={setRepeat} timezone={timezone} />
         </FieldRow>
       ) : (
         <FieldRow label="When">
@@ -178,7 +175,12 @@ function NewSchedule({
         <Button size="sm" variant="ghost" onClick={onDone}>
           Cancel
         </Button>
-        <Button size="sm" variant="primary" type="submit">
+        <Button
+          size="sm"
+          variant="primary"
+          type="submit"
+          disabled={kind === "repeat" && repeat.kind === "weekdays" && repeat.days.length === 0}
+        >
           Add schedule
         </Button>
       </div>
