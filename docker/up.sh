@@ -57,12 +57,16 @@ grep -q '^NIBBLET_HOST_PLATFORM=' .env || case "$(uname)" in
   *) echo "NIBBLET_HOST_PLATFORM=other" >> .env ;;
 esac
 
-# Sets KEY=value in .env, replacing any line for it (sed -i differs between macOS and Linux).
+# Sets KEY=value in .env, replacing any line for it (sed -i differs between macOS and Linux),
+# and in the environment: compose prefers that to .env, and the host bridge's
+# service loads .env into its own, so an update it runs would still see the old
+# value (and pull the old images).
 env_set() {
   { grep -v "^$1=" .env || true; } > .env.tmp
   echo "$1=$2" >> .env.tmp
   mv .env.tmp .env
   chmod 600 .env
+  export "$1=$2"
 }
 
 # A release checkout runs that release's published images; anything else
