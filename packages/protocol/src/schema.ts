@@ -83,6 +83,7 @@ export const CityBackground = z.enum([
   "tokyo",
   "sydney",
   "dubai",
+  "newcastle",
 ]);
 export type ColourBackground = z.infer<typeof ColourBackground>;
 export type CityBackground = z.infer<typeof CityBackground>;

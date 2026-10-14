@@ -331,4 +331,53 @@ export const cities: Record<CityBackground, CityScene> = {
       </>
     ),
   },
+
+  newcastle: {
+    label: "Newcastle",
+    sky: ["#8DA5BA", "#DFE5E8"],
+    draw: (detailed) => (
+      <>
+        {/* Soft northern clouds. */}
+        <g fill="#FFFFFF" opacity="0.7">
+          <ellipse cx="34" cy="13" rx="11" ry="3.6" />
+          <ellipse cx="41" cy="10.5" rx="6" ry="3" />
+          <ellipse cx="88" cy="30" rx="9" ry="3" />
+        </g>
+        {/* The Angel of the North, far off on its hill, wings out. */}
+        <g fill="#9C5A3A">
+          <path d="M58.6 11.6 L70 13.4 L81.4 11.6 L81.4 13.6 L70 15.8 L58.6 13.6Z" />
+          <path d="M69 12.2 H71 L72.8 27 H67.2Z" />
+          <circle cx="70" cy="11" r="1.4" />
+        </g>
+        <path d="M54 30 Q70 24 86 30 Z" fill="#7F8F86" />
+        {/* Rooftops on the quayside. */}
+        <path d="M0 100 V72 H12 V68 H22 V100Z M78 100 V70 H90 V74 H100 V100Z" fill="#8A929B" />
+        {/* The Tyne Bridge: its green arch, the deck running through it, a granite tower. */}
+        <g fill="none" stroke="#3F7D5B">
+          <path d="M-16 80 Q4 -8 24 80" strokeWidth="2" />
+          {detailed ? <path d="M-13 80 Q4 4 21 80" strokeWidth="0.7" /> : null}
+          {detailed
+            ? [-6, -1, 4, 9, 14].map((x) => (
+                <line
+                  key={x}
+                  x1={x}
+                  y1="60"
+                  x2={x}
+                  y2={80 - 88 * ((x + 16) / 40) * (1 - (x + 16) / 40) + 1}
+                  strokeWidth="0.3"
+                />
+              ))
+            : null}
+        </g>
+        <rect x="-2" y="58.6" width="30" height="2.4" fill="#3F7D5B" />
+        <rect x="20" y="52" width="6" height="28" fill="#C7BBA6" />
+        <rect x="19.4" y="51" width="7.2" height="1.6" fill="#B1A48D" />
+        {/* The Tyne. */}
+        <rect x="0" y="80" width="100" height="20" fill="#4F7083" />
+        {detailed ? (
+          <path d="M6 86 H16 M62 90 H74 M82 84 H92" stroke="#8FB0C0" strokeWidth="0.6" />
+        ) : null}
+      </>
+    ),
+  },
 };
