@@ -23,6 +23,8 @@ export class TokenManager {
   private cached: OAuthTokens | null = null;
   private inflight: Promise<OAuthTokens> | null = null;
   private lastError: string | null = null;
+  /** When the subscription's usage limit resets, in epoch milliseconds. */
+  private limitedUntil: number | null = null;
 
   constructor(opts: {
     provider: ProviderPlugin;
@@ -51,6 +53,22 @@ export class TokenManager {
     return this.refresh(rejected);
   }
 
+  /** Records that upstream refused a request until `until` (epoch ms). */
+  noteLimit(until: number): void {
+    this.limitedUntil = Math.max(until, this.limitedUntil ?? 0);
+  }
+
+  /** Upstream served a request, so whatever limit there was has lifted. */
+  clearLimit(): void {
+    this.limitedUntil = null;
+  }
+
+  /** The reset time while a limit is in force, else null. */
+  limit(): number | null {
+    if (this.limitedUntil !== null && this.limitedUntil <= this.now()) this.limitedUntil = null;
+    return this.limitedUntil;
+  }
+
   /** Drops the cache, e.g. after the desktop app pushed a new login. */
   reset(): void {
     this.cached = null;
@@ -58,9 +76,11 @@ export class TokenManager {
   }
 
   async status(): Promise<CredentialStatus> {
-    const base: Pick<CredentialStatus, "provider" | "source"> = {
+    const until = this.limit();
+    const base: Pick<CredentialStatus, "provider" | "source" | "limitedUntil"> = {
       provider: this.provider.id,
       source: this.source?.kind ?? "none",
+      limitedUntil: until === null ? null : new Date(until).toISOString(),
     };
     if (!this.source) {
       return {

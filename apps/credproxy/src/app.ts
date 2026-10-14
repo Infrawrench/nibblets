@@ -2,6 +2,7 @@ import { placeholderCodexAuth, placeholderCodexRefresh, placeholderJwt } from "@
 import { timingSafeEqual } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { jwtClaims } from "./providers/provider.ts";
+import { anthropicLimit, openaiLimit } from "./limits.ts";
 import { NoCredentialError, type TokenManager } from "./tokens.ts";
 
 export interface AppOptions {
@@ -152,7 +153,24 @@ export function createApp(opts: AppOptions) {
     }
     const headers = new Headers(res.headers);
     for (const h of [...HOP_BY_HOP, "content-encoding"]) headers.delete(h);
-    return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+    // Note usage limits on the way past, so the server can wait them out.
+    // Only a 429's small JSON body is read; everything else streams through.
+    const now = Date.now();
+    let out: ReadableStream<Uint8Array> | string | null = res.body;
+    let until: number | null;
+    if (manager.provider.id === "openai" && res.status === 429) {
+      const text = await res.text();
+      out = text;
+      until = openaiLimit(res.status, res.headers, text, now);
+    } else {
+      until =
+        manager.provider.id === "anthropic"
+          ? anthropicLimit(res.status, res.headers, now)
+          : openaiLimit(res.status, res.headers, null, now);
+    }
+    if (until !== null) manager.noteLimit(until);
+    else if (res.ok) manager.clearLimit();
+    return new Response(out, { status: res.status, statusText: res.statusText, headers });
   };
 
   app.all("/anthropic/*", forward("/anthropic", opts.anthropic));
