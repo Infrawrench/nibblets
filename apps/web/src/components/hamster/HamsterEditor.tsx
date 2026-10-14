@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Crown, Dices, Ear, Gem, Heart, Image, Palette, Shapes, Smile } from "lucide-react";
 import {
   EarPiercing,
+  Earrings,
   HamsterLook,
   NosePiercing,
   PiercingMetal,
@@ -40,6 +41,7 @@ const options: { [K in EnumField]: readonly HamsterLook[K][] } = {
   background: s.background.options,
   nosePiercing: NosePiercing.options,
   piercingMetal: PiercingMetal.options,
+  earrings: Earrings.options,
 };
 
 /** Swatch colours for the fields chosen by colour rather than by picture. */
@@ -200,6 +202,7 @@ function CategoryBody({
       return (
         <>
           <EarPiercings look={look} onChange={onChange} />
+          {grid("earrings", "Earrings")}
           {grid("nosePiercing", "Nose")}
           <label className="flex items-center gap-2 text-sm text-dim">
             <Switch
@@ -209,7 +212,10 @@ function CategoryBody({
             />
             Septum ring
           </label>
-          {look.earPiercings.length > 0 || look.nosePiercing !== "none" || look.septum
+          {look.earPiercings.length > 0 ||
+          look.nosePiercing !== "none" ||
+          look.septum ||
+          look.earrings !== "none"
             ? grid("piercingMetal", "Metal")
             : null}
         </>

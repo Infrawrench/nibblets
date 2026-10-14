@@ -54,6 +54,7 @@ export type EarPiercing = z.infer<typeof EarPiercing>;
 
 export const NosePiercing = z.enum(["none", "left-stud", "right-stud", "left-hoop", "right-hoop"]);
 export const PiercingMetal = z.enum(["silver", "gold", "rose", "black"]);
+export const Earrings = z.enum(["none", "drop", "star", "heart", "pearl", "charm"]);
 
 /**
  * What a nibblet's hamster looks like. Each field is a choice among a small
@@ -88,6 +89,8 @@ export const HamsterLook = z.object({
   nosePiercing: NosePiercing.default("none"),
   septum: z.boolean().default(false),
   piercingMetal: PiercingMetal.default("silver"),
+  /** Dangly earrings on both lobes, in the piercing metal; gems take the accessory colour. */
+  earrings: Earrings.default("none"),
 });
 export type HamsterLook = z.infer<typeof HamsterLook>;
 
@@ -108,6 +111,7 @@ export const defaultHamsterLook: HamsterLook = {
   nosePiercing: "none",
   septum: false,
   piercingMetal: "silver",
+  earrings: "none",
 };
 
 /** A random but always valid look, for new nibblets and the editor's dice button. */
@@ -136,6 +140,7 @@ export function randomHamsterLook(random: () => number = Math.random): HamsterLo
     nosePiercing: random() > 0.85 ? pick(NosePiercing.options.slice(1)) : "none",
     septum: random() > 0.88,
     piercingMetal: pick(PiercingMetal.options),
+    earrings: random() > 0.9 ? pick(Earrings.options.slice(1)) : "none",
   };
 }
 

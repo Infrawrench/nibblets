@@ -93,6 +93,7 @@ export function Hamster({
             />
           ) : null}
           <Cheeks look={look} />
+          <Earrings look={look} detailed={detailed} />
           {detailed && look.whiskers ? (
             <Whiskers colour={look.fur === "black" ? "#9A918C" : fur.shade} />
           ) : null}
@@ -218,6 +219,129 @@ function Ears({ look, detailed }: { look: HamsterLook; detailed: boolean }) {
     <g>
       {ear(30, -1)}
       {ear(70, 1)}
+    </g>
+  );
+}
+
+/** How each ear style is tilted, matching the transforms in `Ears`. */
+function earTilt(style: HamsterLook["ears"], cx: number, side: 1 | -1) {
+  switch (style) {
+    case "tall":
+      return { deg: side * 14, pivot: { x: cx, y: 34 } };
+    case "floppy":
+      return { deg: side * 58, pivot: { x: cx, y: 40 } };
+    default:
+      return { deg: 0, pivot: { x: cx, y: 0 } };
+  }
+}
+
+/** Where a lobe ends up once its ear is tilted, so an earring can hang from it. */
+function lobeAt(style: HamsterLook["ears"], cx: number, side: 1 | -1): Point {
+  const { lobe } = earSpots(style, cx, side);
+  const { deg, pivot } = earTilt(style, cx, side);
+  const r = (deg * Math.PI) / 180;
+  const dx = lobe.x - pivot.x;
+  const dy = lobe.y - pivot.y;
+  return {
+    x: pivot.x + dx * Math.cos(r) - dy * Math.sin(r),
+    y: pivot.y + dx * Math.sin(r) + dy * Math.cos(r),
+  };
+}
+
+/** One earring, hanging straight down from (0, 0). */
+function Charm({ kind, metal, gem }: { kind: HamsterLook["earrings"]; metal: Metal; gem: string }) {
+  const hook = (
+    <path d="M0 0v5" stroke={metal.edge} strokeWidth="0.6" strokeLinecap="round" fill="none" />
+  );
+  switch (kind) {
+    case "none":
+      return null;
+    case "drop":
+      return (
+        <g>
+          {hook}
+          <g transform="translate(0 2)">
+            <path
+              d="M0 3c1.9 2.4 2.6 3.9 2.6 5.1a2.6 2.6 0 0 1-5.2 0c0-1.2.7-2.7 2.6-5.1z"
+              fill={gem}
+              stroke={metal.edge}
+              strokeWidth="0.6"
+            />
+            <circle cx="-0.8" cy="7.4" r="0.6" fill="#FFFFFF" opacity="0.7" />
+          </g>
+        </g>
+      );
+    case "star":
+      return (
+        <g>
+          {hook}
+          <g transform="translate(0 2)">
+            <path
+              d="M0 3.6l1 2.1 2.3.3-1.7 1.6.4 2.3L0 8.8l-2 1.1.4-2.3L-3.3 6l2.3-.3z"
+              fill={metal.base}
+              stroke={metal.edge}
+              strokeWidth="0.5"
+              strokeLinejoin="round"
+            />
+          </g>
+        </g>
+      );
+    case "heart":
+      return (
+        <g>
+          {hook}
+          <g transform="translate(0 2)">
+            <path
+              d="M0 9.4c-2.8-1.9-3.4-3.3-3.4-4.3 0-1.1.8-1.9 1.8-1.9.7 0 1.3.4 1.6 1 .3-.6.9-1 1.6-1 1 0 1.8.8 1.8 1.9 0 1-.6 2.4-3.4 4.3z"
+              fill={gem}
+              stroke={metal.edge}
+              strokeWidth="0.5"
+            />
+          </g>
+        </g>
+      );
+    case "pearl":
+      return (
+        <g>
+          {hook}
+          <g transform="translate(0 2)">
+            <circle cx="0" cy="5.6" r="2.4" fill="#F7F3EC" stroke="#CFC6B8" strokeWidth="0.5" />
+            <circle cx="-0.8" cy="4.8" r="0.7" fill="#FFFFFF" />
+          </g>
+        </g>
+      );
+    case "charm":
+      return (
+        <g>
+          <circle cx="0" cy="2.6" r="2.6" fill="none" stroke={metal.edge} strokeWidth="1.3" />
+          <circle cx="0" cy="2.6" r="2.6" fill="none" stroke={metal.base} strokeWidth="0.7" />
+          <path d="M0 5.2v1.6" stroke={metal.edge} strokeWidth="0.6" />
+          <circle cx="0" cy="8.2" r="1.5" fill={gem} stroke={metal.edge} strokeWidth="0.5" />
+        </g>
+      );
+  }
+}
+
+const earSides: { cx: number; side: 1 | -1 }[] = [
+  { cx: 30, side: -1 },
+  { cx: 70, side: 1 },
+];
+
+/** Dangly earrings on both lobes, drawn over the head so cheeks never hide them. */
+function Earrings({ look, detailed }: { look: HamsterLook; detailed: boolean }) {
+  if (look.earrings === "none" || look.accessory === "beanie" || !detailed) return null;
+  const metal = metalColours[look.piercingMetal];
+  const gem = accessoryColours[look.accessoryColour];
+  return (
+    <g>
+      {earSides.map(({ cx, side }) => {
+        const at = lobeAt(look.ears, cx, side);
+        return (
+          <g key={side} transform={`translate(${at.x} ${at.y}) scale(1.3)`}>
+            <Charm kind={look.earrings} metal={metal} gem={gem} />
+          </g>
+        );
+      })}
     </g>
   );
 }
