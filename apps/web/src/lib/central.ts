@@ -175,12 +175,16 @@ export function desktopSignInLink(state: string, handle: string): string {
 
 /**
  * A sign-in handed over from the browser: the desktop app opens Nibblets
- * Connect with `#sign-in-ticket=…`. Read once, then wiped from the address.
+ * Connect with `?signin=<now>#sign-in-ticket=…` (the query makes it a fresh
+ * load). Read once, then wiped from the address.
  */
 export function takeSignInTicket(): string | null {
   const match = /^#sign-in-ticket=([\w.-]+)$/.exec(window.location.hash);
   if (!match?.[1]) return null;
-  history.replaceState(null, "", window.location.pathname + window.location.search);
+  const search = new URLSearchParams(window.location.search);
+  search.delete("signin");
+  const query = search.toString();
+  history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : ""));
   return match[1];
 }
 

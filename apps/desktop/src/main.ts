@@ -239,6 +239,9 @@ async function openAppLink(link: string): Promise<void> {
     void saveSettings(settings);
   }
   const url = new URL(settings.centralUrl);
+  // A query that changes every time, so this loads the page afresh: a change
+  // to the hash alone wouldn't, and the page only reads it when it loads.
+  url.searchParams.set("signin", String(Date.now()));
   url.hash = `sign-in-ticket=${result.ticket}`;
   openMainWindow(url.href);
 }
