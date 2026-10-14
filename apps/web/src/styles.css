@@ -301,3 +301,18 @@ html[data-shell="mac"] .shell-titlebar {
 html[data-shell="mac"] .shell-titlebar :is(button, a, input, [role="button"]) {
   -webkit-app-region: no-drag;
 }
+
+/* Phones: the notch and home bar, and inputs big enough that iOS doesn't zoom on focus. */
+@utility safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+@utility safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@media (max-width: 767px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}

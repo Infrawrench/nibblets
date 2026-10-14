@@ -8,6 +8,7 @@ import {
   History,
   PanelRight,
   Settings2,
+  X,
 } from "lucide-react";
 import { harnesses } from "@nibblet/protocol";
 import { modelLabel, useModels } from "../lib/models.ts";
@@ -28,6 +29,7 @@ import { SnapshotsPanel } from "./panels/SnapshotsPanel.tsx";
 import { NibbletSettings } from "./panels/NibbletSettings.tsx";
 import { Segmented } from "./ui/Segmented.tsx";
 import { Button } from "./ui/Button.tsx";
+import { MobileBack } from "./MobileBack.tsx";
 
 function initialPanel(): PanelTab | null {
   const saved = storage.get(PANEL_KEY);
@@ -70,8 +72,9 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
 
   return (
     <div className="flex min-w-0 flex-1">
-      <div className="relative flex min-w-0 flex-1 flex-col">
-        <header className="shell-titlebar flex h-11 shrink-0 items-center gap-2.5 border-b border-line px-4">
+      <div className="safe-top relative flex min-w-0 flex-1 flex-col">
+        <header className="shell-titlebar flex h-11 shrink-0 items-center gap-2.5 border-b border-line px-4 max-sm:gap-2 max-sm:px-3">
+          <MobileBack />
           <Hamster look={nibblet.look} size={26} status={nibblet.status} />
           <div className="flex min-w-0 flex-1 flex-col leading-tight">
             <span className="flex items-center gap-1.5 truncate text-sm font-semibold">
@@ -90,7 +93,7 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
               {nibblet.name}
               {nibblet.statusText ? (
                 <span
-                  className="min-w-0 truncate text-xs font-normal text-dim"
+                  className="min-w-0 truncate text-xs font-normal text-dim max-sm:hidden"
                   title={nibblet.statusText}
                 >
                   · {nibblet.statusEmoji ? `${nibblet.statusEmoji} ` : ""}
@@ -135,6 +138,7 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
           <Button
             size="icon"
             variant="ghost"
+            className="max-lg:hidden"
             title={panel ? "Hide panel" : "Show panel"}
             onClick={() => setPanel(panel ? null : "browser")}
           >
@@ -160,8 +164,15 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
         <Composer connection={connection} nibblet={nibblet} running={running} />
       </div>
       {panel ? (
-        <aside className="flex w-[26rem] shrink-0 flex-col border-l border-line bg-panel max-lg:hidden">
-          <div className="min-h-0 flex-1 overflow-y-auto">
+        // Beside the conversation on a wide screen; over it, full size, on anything narrower.
+        <aside className="flex w-[26rem] shrink-0 flex-col border-l border-line bg-panel max-lg:safe-top max-lg:fixed max-lg:inset-0 max-lg:z-30 max-lg:w-full max-lg:border-l-0">
+          <div className="flex h-11 shrink-0 items-center gap-2 border-b border-line px-3 lg:hidden">
+            <span className="flex-1 text-sm font-semibold">{panelTitles[panel]}</span>
+            <Button size="icon" variant="ghost" title="Close" onClick={() => setPanel(null)}>
+              <X />
+            </Button>
+          </div>
+          <div className="safe-bottom min-h-0 flex-1 overflow-y-auto">
             {panel === "browser" ? (
               <BrowserPanel connection={connection} nibblet={nibblet} />
             ) : null}
@@ -181,6 +192,14 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
     </div>
   );
 }
+
+const panelTitles: Record<PanelTab, string> = {
+  browser: "Browser",
+  schedules: "Schedules",
+  memory: "Memory",
+  snapshots: "Snapshots",
+  settings: "Settings",
+};
 
 function Missing({ text }: { text: string }) {
   return <div className="flex flex-1 items-center justify-center text-sm text-faint">{text}</div>;

@@ -10,6 +10,8 @@ import { cn } from "../../lib/cn.ts";
 import type { ServerConnection } from "../../lib/connection.ts";
 
 /** The floating message card at the foot of a thread. */
+const touch = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+
 export function Composer({
   connection,
   nibblet,
@@ -57,7 +59,7 @@ export function Composer({
   };
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 px-4 pb-4">
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] max-sm:px-2">
       {dragging ? (
         <div className="pointer-events-none fixed inset-0 z-30 flex items-center justify-center bg-accent/10 backdrop-blur-[1px]">
           <div className="flex items-center gap-2 rounded-xl border border-accent/50 bg-surface px-4 py-3 text-sm font-medium shadow-float">
@@ -92,7 +94,8 @@ export function Composer({
             }
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            // On a touchscreen, Return is a new line; the send button sends.
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !touch) {
               e.preventDefault();
               void send();
             }

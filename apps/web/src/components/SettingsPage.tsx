@@ -10,6 +10,7 @@ import { Button } from "./ui/Button.tsx";
 import { OnePasswordSettings } from "./onepassword/OnePasswordSection.tsx";
 import { FieldRow, Input, SectionHeading } from "./ui/Field.tsx";
 import { Segmented } from "./ui/Segmented.tsx";
+import { MobileBack } from "./MobileBack.tsx";
 import { hostToolSummary } from "./tools/NibbletTools.tsx";
 
 export function SettingsPage() {
@@ -17,9 +18,12 @@ export function SettingsPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const connection = all.find((c) => c.id === selected) ?? all[0] ?? null;
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex max-w-[40rem] flex-col gap-2 px-5 py-6">
-        <h1 className="text-lg font-semibold">Settings</h1>
+    <div className="safe-top min-h-0 flex-1 overflow-y-auto">
+      <div className="safe-bottom mx-auto flex max-w-[40rem] flex-col gap-2 px-5 py-6 max-sm:px-4">
+        <h1 className="flex items-center gap-1 text-lg font-semibold">
+          <MobileBack />
+          Settings
+        </h1>
         {central ? <AccountSection /> : null}
         {all.length > 1 && connection ? (
           <FieldRow label="Server" hint="Settings below are for this one.">

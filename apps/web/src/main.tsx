@@ -16,6 +16,12 @@ import "./styles.css";
 const shell = /NibbletsDesktop\/(\w+)/.exec(navigator.userAgent)?.[1];
 if (shell === "darwin") document.documentElement.dataset.shell = "mac";
 
+// Installable, quick to reopen, and able to show notifications. Not in the
+// desktop app, which has its own window, nor in development.
+if (import.meta.env.PROD && !shell && "serviceWorker" in navigator) {
+  void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+}
+
 const router = createRouter({ routeTree, defaultPreload: "intent" });
 
 declare module "@tanstack/react-router" {

@@ -56,8 +56,17 @@ export function FieldRow({
   top?: boolean;
 }) {
   return (
-    <label className={cn("flex gap-3", top ? "items-start" : "min-h-7 items-center")}>
-      <span className={cn("w-28 shrink-0 text-sm text-dim", top && "pt-1.5")}>{label}</span>
+    <label
+      className={cn(
+        "flex gap-3 max-sm:flex-col max-sm:items-stretch max-sm:gap-1",
+        top ? "items-start" : "min-h-7 items-center",
+      )}
+    >
+      <span
+        className={cn("w-28 shrink-0 text-sm text-dim max-sm:w-auto max-sm:pt-0", top && "pt-1.5")}
+      >
+        {label}
+      </span>
       <span className="flex min-w-0 flex-1 flex-col gap-1">
         {children}
         {hint ? <span className="text-xs text-faint">{hint}</span> : null}

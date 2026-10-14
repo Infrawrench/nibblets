@@ -30,7 +30,7 @@ const statusDot: Record<NibbletStatus, string> = {
   error: "bg-danger",
 };
 
-export function Sidebar() {
+export function Sidebar({ className }: { className?: string }) {
   const servers = useServers();
   const navigate = useNavigate();
   const onSettings = useRouterState({ select: (r) => r.location.pathname === "/settings" });
@@ -51,7 +51,12 @@ export function Sidebar() {
   const total = lists.reduce((n, l) => n + (l.data?.length ?? 0), 0);
 
   return (
-    <aside className="flex w-64 shrink-0 flex-col border-r border-line bg-panel">
+    <aside
+      className={cn(
+        "safe-top flex w-64 shrink-0 flex-col border-r border-line bg-panel",
+        className,
+      )}
+    >
       <div className="shell-titlebar shell-inset flex h-11 items-center gap-2 border-b border-line px-3">
         <Hamster look={{ ...defaultHamsterLook, background: "none" }} size={20} cropped />
         <span className="flex-1 text-sm font-semibold tracking-tight">Nibblets</span>
@@ -96,7 +101,7 @@ export function Sidebar() {
           ) : null,
         )}
       </nav>
-      <div className="border-t border-line p-1.5">
+      <div className="safe-bottom border-t border-line p-1.5">
         <button
           type="button"
           onClick={() => void navigate({ to: "/settings" })}
