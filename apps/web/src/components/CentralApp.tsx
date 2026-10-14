@@ -12,6 +12,7 @@ import {
   type CentralApi,
 } from "../lib/central.ts";
 import { CentralServers } from "../lib/servers.tsx";
+import { forgetOtherClerkInstance } from "../lib/clerk-instance.ts";
 import { Hamster } from "./hamster/Hamster.tsx";
 import { Button } from "./ui/Button.tsx";
 
@@ -31,6 +32,7 @@ export function CentralApp({ children }: { children: ReactNode }) {
     );
   }
   if (config.data.devAuth) return <DevSignedIn>{children}</DevSignedIn>;
+  forgetOtherClerkInstance(config.data.clerkPublishableKey);
   return (
     <ClerkProvider publishableKey={config.data.clerkPublishableKey}>
       <ClerkSignedIn>{children}</ClerkSignedIn>
