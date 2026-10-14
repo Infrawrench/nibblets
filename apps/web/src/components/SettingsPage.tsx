@@ -98,37 +98,50 @@ function CredentialsSection({ connection }: { connection: ServerConnection }) {
     <>
       <SectionHeading>Subscriptions</SectionHeading>
       <p className="text-xs text-faint">
-        Nibblets use this computer's Claude and ChatGPT sign-ins through the credential proxy. Sign
-        in with <code className="font-mono">claude</code> or{" "}
-        <code className="font-mono">codex login</code> on the host.
+        Your nibblets run on the Claude and ChatGPT subscriptions you're signed in to on this
+        computer.
       </p>
       {info.data?.credentials.map((c) => (
         <div
           key={c.provider}
-          className="flex items-center gap-2.5 rounded-md border border-line bg-surface px-2.5 py-2"
+          className="flex items-start gap-2.5 rounded-md border border-line bg-surface px-2.5 py-2"
         >
           {c.ok ? (
-            <CheckCircle2 className="size-4 text-ok" />
+            <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-ok" />
           ) : (
-            <XCircle className="size-4 text-danger" />
+            <XCircle className="mt-0.5 size-4 shrink-0 text-danger" />
           )}
-          <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="text-sm font-medium">
               {providerNames[c.provider]}
               {c.plan ? (
-                <span className="ml-1.5 font-normal text-dim capitalize">{c.plan}</span>
+                <span className="ml-1.5 font-normal text-dim">{planLabel(c.plan)}</span>
               ) : null}
             </span>
-            <span className="truncate text-2xs text-faint">
-              {c.detail}
-              {c.source !== "none" ? ` · from the ${c.source}` : ""}
-              {c.expiresAt ? ` · token renews ${relativeTime(c.expiresAt)}` : ""}
-            </span>
+            <span className="text-xs text-dim">{c.ok ? "Connected" : signInHelp[c.provider]}</span>
+            <details className="text-2xs text-faint">
+              <summary className="cursor-pointer select-none hover:text-dim">Details</summary>
+              <div className="mt-1 break-all">
+                {c.detail}
+                {c.source !== "none" ? ` · from the ${c.source}` : ""}
+                {c.expiresAt ? ` · token renews ${relativeTime(c.expiresAt)}` : ""}
+              </div>
+            </details>
           </div>
         </div>
       ))}
     </>
   );
+}
+
+/** What to do when a subscription isn't connected, in words for anyone. */
+const signInHelp: Record<CredentialStatus["provider"], string> = {
+  anthropic: "Not connected. Sign in to Claude Code on this computer, then reopen Nibblets.",
+  openai: "Not connected. Sign in to Codex with your ChatGPT account, then reopen Nibblets.",
+};
+
+function planLabel(plan: string): string {
+  return `${plan.charAt(0).toUpperCase()}${plan.slice(1)} plan`;
 }
 
 function PairingSection({ connection }: { connection: ServerConnection }) {
@@ -237,7 +250,13 @@ function HostToolsSection({ connection }: { connection: ServerConnection }) {
             key={c.id}
             ok={c.signedIn}
             title={c.label}
-            detail={c.signedIn ? `Signed in as ${c.account ?? "you"}` : (c.detail ?? "Signed out")}
+            detail={
+              !c.signedIn
+                ? (c.detail ?? "Signed out")
+                : c.id === "ssh"
+                  ? `${c.account ?? "Keys"} available to share`
+                  : `Signed in as ${c.account ?? "you"}`
+            }
           />
         ))}
     </>
