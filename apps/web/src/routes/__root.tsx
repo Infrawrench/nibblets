@@ -1,5 +1,6 @@
 import { Outlet, createRootRoute, useRouterState } from "@tanstack/react-router";
 import { Sidebar } from "../components/Sidebar.tsx";
+import { UpdatePrompts } from "../components/UpdatePrompt.tsx";
 import { cn } from "../lib/cn.ts";
 
 export const Route = createRootRoute({
@@ -15,6 +16,7 @@ export const Route = createRootRoute({
         <main className={cn("flex min-w-0 flex-1 bg-bg", home && "max-md:hidden")}>
           <Outlet />
         </main>
+        <UpdatePrompts />
       </div>
     );
   },

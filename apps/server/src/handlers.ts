@@ -28,6 +28,7 @@ import type { Files } from "./files.ts";
 import type { Store } from "./store.ts";
 import type { Connect } from "./connect.ts";
 import type { Tunnel } from "./tunnel.ts";
+import type { AppUpdater, HarnessUpdater } from "./updates.ts";
 
 export interface Services {
   config: Config;
@@ -42,6 +43,8 @@ export interface Services {
   files: Files;
   snapshots: Snapshots;
   notifier: Notifier;
+  harnessUpdates: HarnessUpdater;
+  appUpdates: AppUpdater;
 }
 
 const ok = { ok: true } as const;
@@ -258,6 +261,22 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
 
     hostTools: {
       list: () => hostTools(s.config),
+    },
+
+    updates: {
+      harnesses: () => s.harnessUpdates.status(),
+      check: () => s.harnessUpdates.check(),
+      updateHarness: ({ id }) => s.harnessUpdates.update(id),
+      useBundled: ({ id }) => s.harnessUpdates.useBundled(id),
+      setAuto: ({ auto }) => s.harnessUpdates.setAuto(auto),
+      app: ({ refresh }) => s.appUpdates.status(refresh),
+      applyApp: async () => {
+        try {
+          return await s.appUpdates.apply();
+        } catch (err) {
+          throw new RpcError("unavailable", err instanceof Error ? err.message : String(err));
+        }
+      },
     },
 
     clis: {

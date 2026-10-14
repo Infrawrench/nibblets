@@ -17,6 +17,7 @@ import {
   isModelImage,
   type HarnessContext,
   type McpServerSpec,
+  installedCliDir,
 } from "@nibblet/harness";
 import type { Usage } from "@nibblet/protocol";
 import { installLogin, type OpencodeDirs } from "./login.ts";
@@ -121,50 +122,69 @@ async function warmModelsCache(warn: (message: string) => void): Promise<void> {
   );
 }
 
+/** PATH as the runner started, before any installed OpenCode was put ahead of it. */
+const BASE_PATH = process.env.PATH ?? "";
+
 export const opencodeHarness = defineHarness({
   id: "opencode",
   version: () => `opencode ${cliPackage().version}`,
+  bundledCli: () => cliPackage().version,
   async open(ctx) {
     // createOpencodeServer spawns `opencode` from PATH with the parent's env.
     const dirs = await prepareHome(path.join(ctx.workdir, ".opencode"));
     if (ctx.config.opencodeLogin) await installLogin(dirs, ctx.config.opencodeLogin);
     await warmModelsCache((m) => ctx.log("warn", m));
 
-    const server = await createOpencodeServer({
-      port: await freePort(),
-      timeout: 30_000,
-      config: opencodeConfig(ctx),
-    });
-    const client = createOpencodeClient({ baseUrl: server.url, directory: ctx.workdir });
+    // A newer OpenCode the server installed goes first on PATH. When another
+    // arrives, the next turn starts a fresh server on it; sessions live on disk.
+    const start = async () => {
+      const dir = installedCliDir("opencode");
+      process.env.PATH = dir ? `${dir}${path.delimiter}${BASE_PATH}` : BASE_PATH;
+      const server = await createOpencodeServer({
+        port: await freePort(),
+        timeout: 30_000,
+        config: opencodeConfig(ctx),
+      });
+      return {
+        dir,
+        server,
+        client: createOpencodeClient({ baseUrl: server.url, directory: ctx.workdir }),
+      };
+    };
+    let live = await start();
 
     let sessionId = ctx.config.resumeSessionId;
     if (sessionId) {
-      const existing = await client.session.get({ path: { id: sessionId } });
+      const existing = await live.client.session.get({ path: { id: sessionId } });
       if (!existing.data) sessionId = null;
     }
 
     return {
       async run(turn, out) {
+        if (installedCliDir("opencode") !== live.dir) {
+          live.server.close();
+          live = await start();
+        }
         if (!sessionId) {
-          const created = await client.session.create({ body: { title: ctx.config.name } });
+          const created = await live.client.session.create({ body: { title: ctx.config.name } });
           if (!created.data) throw new Error("OpenCode could not create a session");
           sessionId = created.data.id;
         }
         const id = sessionId;
         const mapper = new OpencodeMapper(out, id);
-        const events = await client.event.subscribe();
+        const events = await live.client.event.subscribe();
         const pump = (async () => {
           for await (const event of events.stream) {
             mapper.handle(event);
             if (mapper.idle) break;
           }
         })();
-        const onAbort = () => void client.session.abort({ path: { id } });
+        const onAbort = () => void live.client.session.abort({ path: { id } });
         turn.signal.addEventListener("abort", onAbort, { once: true });
 
         let usage: Usage | null = null;
         try {
-          const res = await client.session.prompt({
+          const res = await live.client.session.prompt({
             path: { id },
             body: {
               model: splitModel(ctx.config.model),
@@ -215,7 +235,7 @@ export const opencodeHarness = defineHarness({
         return { status, error: status === "failed" ? mapper.error : null, usage, sessionId: id };
       },
       async close() {
-        server.close();
+        live.server.close();
       },
     };
   },

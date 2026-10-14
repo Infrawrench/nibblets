@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { serve } from "@hono/node-server";
 import { connect, migrateDb } from "@nibblet/db";
 import { randomUUID } from "node:crypto";
@@ -17,10 +18,16 @@ import { Store } from "./store.ts";
 import { Files } from "./files.ts";
 import { Tunnel } from "./tunnel.ts";
 import { Connect } from "./connect.ts";
+import { AppUpdater, HarnessUpdater } from "./updates.ts";
 import { Notifier } from "./notifier.ts";
 import { tailscaleStatus } from "./hostmcp.ts";
 
-const VERSION = "0.1.0";
+// The repository's version, which releases are tagged with.
+const VERSION = z
+  .object({ version: z.string() })
+  .parse(
+    JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")),
+  ).version;
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -53,6 +60,8 @@ async function main(): Promise<void> {
     dataDir: config.NIBBLET_DATA_DIR,
   });
   const tunnel = new Tunnel(docker, store, config);
+  const harnessUpdates = new HarnessUpdater({ store, docker, log: (m) => console.log(m) });
+  const appUpdates = new AppUpdater({ config, version: VERSION });
   const central = new Connect({
     store,
     tunnel,
@@ -81,6 +90,8 @@ async function main(): Promise<void> {
       version: VERSION,
       files: new Files(store, config, bus),
       snapshots,
+      harnessUpdates,
+      appUpdates,
     },
     bus,
   );
@@ -100,12 +111,14 @@ async function main(): Promise<void> {
   await conductor.reconcile();
   await scheduler.start();
   snapshots.start();
+  harnessUpdates.start();
   // The tunnel follows the Connect link: on with it, off without.
   await central.restore();
 
   const shutdown = () => {
     scheduler.stop();
     snapshots.stop();
+    harnessUpdates.stop();
     central.stop();
     process.exit(0);
   };

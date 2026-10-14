@@ -21,6 +21,11 @@ export interface HarnessPlugin {
   readonly id: HarnessId;
   /** The harness's own version, for the UI and bug reports. */
   version(): string;
+  /**
+   * The version of the CLI it ships with (the npm package in
+   * `harnesses[id].cli`), so the server can tell when a newer one is out.
+   */
+  bundledCli(): string;
   open(ctx: HarnessContext): Promise<HarnessSession>;
 }
 
@@ -244,25 +249,25 @@ function now(): string {
  * `import.meta.resolve(name)` from the caller, so resolution starts there.
  */
 export function packageVersion(entryUrl: string, name: string): string {
+  const version = packageField(entryUrl, name, "version");
+  return typeof version === "string" ? version : "unknown";
+}
+
+/** One field of the package.json of the package `name` that `entryUrl` is in. */
+export function packageField(entryUrl: string, name: string, field: string): unknown {
   let dir = path.dirname(fileURLToPath(entryUrl));
   for (;;) {
     try {
       const pkg: unknown = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8"));
-      if (
-        typeof pkg === "object" &&
-        pkg !== null &&
-        "name" in pkg &&
-        pkg.name === name &&
-        "version" in pkg &&
-        typeof pkg.version === "string"
-      ) {
-        return pkg.version;
+      if (typeof pkg === "object" && pkg !== null && "name" in pkg && pkg.name === name) {
+        return field in pkg ? Object.entries(pkg).find(([k]) => k === field)?.[1] : undefined;
       }
     } catch {
       // No package.json here; keep walking.
     }
     const parent = path.dirname(dir);
-    if (parent === dir) return "unknown";
+    if (parent === dir) return undefined;
     dir = parent;
   }
 }
+export { installedCli, installedCliDir } from "./cli.ts";

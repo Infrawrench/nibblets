@@ -14,6 +14,8 @@ import {
   type HarnessContext,
   type McpServerSpec,
   type TurnAttachment,
+  installedCli,
+  packageField,
 } from "@nibblet/harness";
 import type { Effort } from "@nibblet/protocol";
 import { ClaudeMapper } from "./mapper.ts";
@@ -54,6 +56,14 @@ export const claudeHarness = defineHarness({
   id: "claude",
   version: () =>
     `claude-agent-sdk ${packageVersion(import.meta.resolve("@anthropic-ai/claude-agent-sdk"), "@anthropic-ai/claude-agent-sdk")}`,
+  bundledCli: () => {
+    const v = packageField(
+      import.meta.resolve("@anthropic-ai/claude-agent-sdk"),
+      "@anthropic-ai/claude-agent-sdk",
+      "claudeCodeVersion",
+    );
+    return typeof v === "string" ? v : "unknown";
+  },
   async open(ctx) {
     const configDir = path.join(ctx.workdir, ".claude");
     await mkdir(configDir, { recursive: true });
@@ -68,6 +78,7 @@ export const claudeHarness = defineHarness({
         const onAbort = () => abort.abort();
         turn.signal.addEventListener("abort", onAbort, { once: true });
         const mapper = new ClaudeMapper(out);
+        const cli = installedCli("claude");
 
         const options: Options = {
           abortController: abort,
@@ -84,6 +95,8 @@ export const claudeHarness = defineHarness({
           env: claudeEnv(ctx, configDir),
           stderr: (data) => ctx.log("debug", data.trimEnd()),
           ...(sessionId ? { resume: sessionId } : {}),
+          // A newer Claude Code the server installed, else the one bundled with the SDK.
+          ...(cli ? { pathToClaudeCodeExecutable: cli } : {}),
         };
 
         try {

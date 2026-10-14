@@ -4,6 +4,8 @@ import {
   CONTAINER_SSH_AUTH_SOCK,
   DEFAULT_MEMORY_MB,
   defaultResources,
+  HARNESS_CLI_DIR,
+  HARNESS_CLI_VOLUME,
   type Resources,
   type RunnerEnv,
 } from "@nibblet/protocol";
@@ -101,7 +103,11 @@ export class Orchestrator {
         // Its home folder (files, browser profile, git and CLI config, agent
         // sessions) lives on a volume of its own, so restarts and image
         // updates never wipe it. Only deleting the nibblet removes it.
-        Mounts: [{ Type: "volume", Source: home, Target: RUNNER_HOME }],
+        // Newer harness CLIs the server installed, read-only: see HarnessUpdater.
+        Mounts: [
+          { Type: "volume", Source: home, Target: RUNNER_HOME },
+          { Type: "volume", Source: HARNESS_CLI_VOLUME, Target: HARNESS_CLI_DIR, ReadOnly: true },
+        ],
         // The host's agent, never its keys: the container can sign, not copy.
         ...(opts.sshAgent && this.config.HOST_SSH_AUTH_SOCK
           ? {
@@ -128,10 +134,12 @@ export class Orchestrator {
     cmd: string[],
     stdin: string,
     timeoutMs = 90_000,
+    opts: { root?: boolean; mounts?: { Type: "volume"; Source: string; Target: string }[] } = {},
   ): Promise<{ code: number; stdout: string; stderr: string }> {
     const container = await this.docker.createContainer({
       Image: this.config.NIBBLET_RUNNER_IMAGE,
       Cmd: cmd,
+      ...(opts.root ? { User: "0" } : {}),
       Labels: { [MANAGED]: "true", [ROLE]: "oneshot" },
       AttachStdin: true,
       AttachStdout: true,
@@ -142,6 +150,7 @@ export class Orchestrator {
       HostConfig: {
         NetworkMode: this.config.NIBBLET_NETWORK,
         ExtraHosts: ["host.docker.internal:host-gateway"],
+        ...(opts.mounts ? { Mounts: opts.mounts } : {}),
       },
     });
     try {
@@ -178,6 +187,27 @@ export class Orchestrator {
     } finally {
       await container.remove({ force: true }).catch(() => undefined);
     }
+  }
+
+  /**
+   * Runs the runner image's harness CLI installer (apps/runner/src/harness-cli.ts)
+   * with the shared volume writable, and returns what it printed as JSON.
+   */
+  async harnessCli(args: string[], timeoutMs = 15 * 60_000): Promise<unknown> {
+    const { code, stdout, stderr } = await this.runOnce(
+      ["node", "/app/apps/runner/src/harness-cli.ts", ...args],
+      "",
+      timeoutMs,
+      {
+        root: true,
+        mounts: [{ Type: "volume", Source: HARNESS_CLI_VOLUME, Target: HARNESS_CLI_DIR }],
+      },
+    );
+    if (code !== 0) {
+      const reason = stderr.trim().split("\n").slice(-3).join(" ") || `exit code ${code}`;
+      throw new Error(reason);
+    }
+    return JSON.parse(stdout.trim().split("\n").at(-1) ?? "null");
   }
 
   /**

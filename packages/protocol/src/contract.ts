@@ -5,6 +5,7 @@ import { ConnectStatus, TailscaleStatus } from "./connect.ts";
 import { OnePasswordGrants, OnePasswordStatus, VaultGrant } from "./onepassword.ts";
 import { procedure } from "./rpc.ts";
 import { Snapshot, SnapshotActivity, SnapshotTimeline } from "./snapshots.ts";
+import { AppUpdate, HarnessUpdates } from "./updates.ts";
 import {
   CreateNibblet,
   CreateSchedule,
@@ -115,6 +116,21 @@ export const contract = {
   hostTools: {
     /** The MCP servers on the host bridge, for ticking per nibblet. */
     list: procedure(z.object({}), HostTools),
+  },
+  updates: {
+    /** The harnesses' CLIs: built in, installed since, and newest. */
+    harnesses: procedure(z.object({}), HarnessUpdates),
+    /** Looks for new releases now. */
+    check: procedure(z.object({}), HarnessUpdates),
+    /** Installs the newest release of one harness's CLI, or of all of them. */
+    updateHarness: procedure(z.object({ id: HarnessId.optional() }), HarnessUpdates),
+    /** Goes back to the CLI built into the runner image. */
+    useBundled: procedure(z.object({ id: HarnessId }), HarnessUpdates),
+    setAuto: procedure(z.object({ auto: z.boolean() }), HarnessUpdates),
+    /** Whether a newer Nibblets is out. */
+    app: procedure(z.object({ refresh: z.boolean().default(false) }), AppUpdate),
+    /** Installs the newest Nibblets, where the host bridge can. */
+    applyApp: procedure(z.object({}), AppUpdate),
   },
   clis: {
     /** Host CLIs and whether each is installed and signed in. */

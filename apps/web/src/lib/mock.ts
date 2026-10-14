@@ -24,6 +24,8 @@ import {
   type StoredItem,
   type ThreadItem,
   type TailscaleStatus,
+  type AppUpdate,
+  type HarnessUpdates,
 } from "@nibblet/protocol";
 import {
   createMockConnection,
@@ -528,6 +530,61 @@ export function createMockServer(): ServerConnection {
     action: null,
   };
   let serverName = "Astrid's Mac mini";
+  let harnessUpdates: HarnessUpdates = {
+    auto: true,
+    checkedAt: ago(42),
+    harnesses: [
+      {
+        id: "claude",
+        label: "Claude Code",
+        bundled: "2.1.296",
+        installed: null,
+        latest: "2.1.299",
+        updating: false,
+        error: null,
+      },
+      {
+        id: "codex",
+        label: "Codex",
+        bundled: "0.162.1",
+        installed: null,
+        latest: "0.162.1",
+        updating: false,
+        error: null,
+      },
+      {
+        id: "opencode",
+        label: "OpenCode",
+        bundled: "1.18.4",
+        installed: "1.19.0",
+        latest: "1.19.0",
+        updating: false,
+        error: null,
+      },
+    ],
+  };
+  let appUpdate: AppUpdate = {
+    current: "0.1.0",
+    latest: {
+      version: "0.2.0",
+      name: "Nibblets 0.2.0",
+      notes:
+        "- Agents keep themselves up to date\n- Podman works as well as Docker\n- Tidier dialogs",
+      url: "https://github.com/Infrawrench/nibblets/releases/tag/v0.2.0",
+      publishedAt: ago(60 * 5),
+    },
+    available: true,
+    method: "here",
+    updating: false,
+    error: null,
+    checkedAt: ago(10),
+  };
+  const setHarness = (id: string, patch: Partial<HarnessUpdates["harnesses"][number]>) => {
+    harnessUpdates = {
+      ...harnessUpdates,
+      harnesses: harnessUpdates.harnesses.map((h) => (h.id === id ? { ...h, ...patch } : h)),
+    };
+  };
 
   const get = (id: string) => {
     const n = nibblets.get(id);
@@ -928,6 +985,28 @@ export function createMockServer(): ServerConnection {
     hostTools: {
       list: async () => ({ connected: true, detail: null, servers: mockHostTools }),
     },
+    updates: {
+      harnesses: async () => harnessUpdates,
+      check: async () =>
+        (harnessUpdates = { ...harnessUpdates, checkedAt: new Date().toISOString() }),
+      updateHarness: async ({ id }) => {
+        for (const h of harnessUpdates.harnesses) {
+          if ((id && h.id !== id) || !h.latest || h.latest === (h.installed ?? h.bundled)) continue;
+          const latest = h.latest;
+          setHarness(h.id, { updating: true });
+          setTimeout(() => setHarness(h.id, { updating: false, installed: latest }), 2500);
+        }
+        return harnessUpdates;
+      },
+      useBundled: async ({ id }) => {
+        setHarness(id, { installed: null });
+        return harnessUpdates;
+      },
+      setAuto: async ({ auto }) => (harnessUpdates = { ...harnessUpdates, auto }),
+      app: async () => appUpdate,
+      applyApp: async () => (appUpdate = { ...appUpdate, updating: true }),
+    },
+
     clis: {
       list: async () => ({
         connected: true,

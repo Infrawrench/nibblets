@@ -23,6 +23,7 @@ function fakeHarness(opened: string[]): HarnessPlugin {
   return defineHarness({
     id: "claude",
     version: () => "fake",
+    bundledCli: () => "0.0.0",
     async open(ctx) {
       opened.push(`${ctx.config.model}:${ctx.config.resumeSessionId ?? "-"}`);
       let n = 0;

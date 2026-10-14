@@ -1,20 +1,16 @@
 import { mkdir } from "node:fs/promises";
-import { claudeHarness } from "@nibblet/harness-claude";
-import { codexHarness } from "@nibblet/harness-codex";
-import { opencodeHarness } from "@nibblet/harness-opencode";
 import type { McpServerSpec } from "@nibblet/harness";
 import { RunnerEnv } from "@nibblet/protocol";
 import { startComputer, type Computer } from "./computer.ts";
 import { Connection } from "./connection.ts";
 import { RunnerFiles } from "./files.ts";
 import { McpGate } from "./gate.ts";
+import { plugins } from "./plugins.ts";
 import { Runner } from "./runner.ts";
 
 const env = RunnerEnv.parse(process.env);
 const workdir = process.env.NIBBLET_WORKDIR ?? process.cwd();
 await mkdir(workdir, { recursive: true });
-
-const plugins = { claude: claudeHarness, codex: codexHarness, opencode: opencodeHarness };
 
 const mcpServers: Record<string, McpServerSpec> = {
   nibblet: {

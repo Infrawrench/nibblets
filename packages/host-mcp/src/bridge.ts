@@ -42,6 +42,7 @@ import {
   OnePasswordGrantsManager,
 } from "./onepassword.ts";
 import { cliPlugins, runOnHost, type CliPlugin, type Run } from "./clis/index.ts";
+import type { AppUpdaterHost } from "./update.ts";
 
 export interface ServerStatus {
   name: string;
@@ -225,6 +226,8 @@ export interface BridgeOptions {
   serveTarget?: string;
   /** Per-nibblet 1Password access; swapped in tests. */
   onePassword?: OnePasswordGrantsManager;
+  /** How this host installs a new Nibblets; without one, it can't. */
+  updater?: AppUpdaterHost;
 }
 
 export interface HostMcpBridge {
@@ -317,6 +320,26 @@ export async function startHostMcpBridge(opts: BridgeOptions): Promise<HostMcpBr
         const body = z.object({ serving: z.boolean() }).safeParse(await readJson(req));
         if (!body.success) return json(res, 400, { error: "Send { serving: boolean }" });
         return json(res, 200, await setTailscaleServe(run, serveTarget, body.data.serving));
+      }
+      if (url.pathname === "/update" && req.method === "GET") {
+        return json(
+          res,
+          200,
+          opts.updater
+            ? await opts.updater.describe()
+            : { method: "manual", updating: false, error: null },
+        );
+      }
+      if (url.pathname === "/update" && req.method === "POST") {
+        const body = z.object({ version: z.string() }).safeParse(await readJson(req));
+        if (!body.success) return json(res, 400, { error: "Send { version }" });
+        if (!opts.updater) return json(res, 409, { error: "This computer can't update itself" });
+        try {
+          await opts.updater.apply(body.data.version);
+          return json(res, 202, await opts.updater.describe());
+        } catch (err) {
+          return json(res, 409, { error: err instanceof Error ? err.message : "Couldn't update" });
+        }
       }
       if (req.method === "GET" && url.pathname === "/harness/opencode") {
         return json(res, 200, await detectOpencode(run));

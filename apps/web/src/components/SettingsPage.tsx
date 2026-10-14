@@ -12,6 +12,7 @@ import { FieldRow, Input, SectionHeading } from "./ui/Field.tsx";
 import { Segmented } from "./ui/Segmented.tsx";
 import { MobileBack } from "./MobileBack.tsx";
 import { NotificationsSection } from "./NotificationsSection.tsx";
+import { UpdatesSection } from "./UpdatesSection.tsx";
 import { hostToolSummary } from "./tools/NibbletTools.tsx";
 
 export function SettingsPage() {
@@ -47,6 +48,7 @@ export function SettingsPage() {
         {connection ? (
           <>
             <ServerSection connection={connection} />
+            <UpdatesSection connection={connection} />
             <CredentialsSection connection={connection} />
             <HostToolsSection connection={connection} />
             <OnePasswordSettings connection={connection} />

@@ -42,6 +42,11 @@ export interface HarnessInfo {
   models: readonly ModelOption[];
   /** The models come from the host's own setup, through `harnesses.models`. */
   dynamicModels: boolean;
+  /**
+   * The npm package with the harness's CLI, and its command. The server
+   * installs newer releases of it for runners, ahead of the one in the image.
+   */
+  cli: { name: string; package: string; bin: string };
 }
 
 const claudeEfforts = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -119,6 +124,7 @@ export const harnesses: Record<HarnessId, HarnessInfo> = {
     defaultModel: "claude-opus-5-5",
     models: claudeModels,
     dynamicModels: false,
+    cli: { name: "Claude Code", package: "@anthropic-ai/claude-code", bin: "claude" },
   },
   codex: {
     id: "codex",
@@ -127,6 +133,7 @@ export const harnesses: Record<HarnessId, HarnessInfo> = {
     defaultModel: "gpt-5.6-terra",
     models: codexModels,
     dynamicModels: false,
+    cli: { name: "Codex", package: "@openai/codex", bin: "codex" },
   },
   opencode: {
     id: "opencode",
@@ -135,6 +142,7 @@ export const harnesses: Record<HarnessId, HarnessInfo> = {
     defaultModel: "",
     models: [],
     dynamicModels: true,
+    cli: { name: "OpenCode", package: "opencode-ai", bin: "opencode" },
   },
 };
 

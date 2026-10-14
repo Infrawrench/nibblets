@@ -497,7 +497,8 @@ setup_agents() {
 setup_repo() {
   step "📥 Getting Nibblets"
   if [ -d "$DIR/.git" ]; then
-    spin "Updating $DIR" git -C "$DIR" pull --ff-only origin "$BRANCH"
+    # Fetched and checked out rather than pulled: an update from the app leaves it on a release tag.
+    spin "Updating $DIR" bash -c "git -C '$DIR' fetch --depth 1 origin '$BRANCH' && git -C '$DIR' checkout -q --detach FETCH_HEAD"
   else
     [ ! -e "$DIR" ] || fail "$DIR exists and isn't a Nibblets checkout. Set NIBBLETS_DIR to put it somewhere else."
     spin "Cloning into $DIR" git clone --depth 1 --branch "$BRANCH" "$REPO" "$DIR"
@@ -520,7 +521,8 @@ start_bridge() {
   local ip cmd
   ip=$(with_docker "$ENGINE exec nibblet-server-1 node -e \"require('dns').lookup('host.docker.internal',(e,a)=>console.log(a??''))\"" 2>/dev/null | tr -d '\r' || true)
   [ -n "$ip" ] || ip=172.17.0.1
-  cmd="$(command -v node) $DIR/packages/host-mcp/src/cli.ts --host $ip --port $BRIDGE_PORT"
+  # --repo lets the server ask it to install new releases here.
+  cmd="$(command -v node) $DIR/packages/host-mcp/src/cli.ts --host $ip --port $BRIDGE_PORT --repo $DIR"
   if command -v systemctl >/dev/null && [ -d /run/systemd/system ]; then
     need_root
     $SUDO tee /etc/systemd/system/nibblets-bridge.service >/dev/null <<UNIT

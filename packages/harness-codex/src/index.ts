@@ -9,6 +9,8 @@ import {
   packageVersion,
   type HarnessContext,
   type McpServerSpec,
+  installedCli,
+  packageField,
 } from "@nibblet/harness";
 import type { Effort } from "@nibblet/protocol";
 import { CodexMapper } from "./mapper.ts";
@@ -45,6 +47,19 @@ export const codexHarness = defineHarness({
   id: "codex",
   version: () =>
     `codex-sdk ${packageVersion(import.meta.resolve("@openai/codex-sdk"), "@openai/codex-sdk")}`,
+  bundledCli: () => {
+    // The SDK pins the exact Codex it drives.
+    const deps = packageField(
+      import.meta.resolve("@openai/codex-sdk"),
+      "@openai/codex-sdk",
+      "dependencies",
+    );
+    const v =
+      typeof deps === "object" && deps !== null
+        ? Object.entries(deps).find(([k]) => k === "@openai/codex")?.[1]
+        : undefined;
+    return typeof v === "string" ? v : "unknown";
+  },
   async open(ctx) {
     const codexHome = path.join(ctx.workdir, ".codex");
     await mkdir(codexHome, { recursive: true });
@@ -72,7 +87,10 @@ export const codexHarness = defineHarness({
       async run(turn, out) {
         // A Codex instance is only a wrapper around `codex exec`, so making one
         // per turn is cheap and lets each turn carry its own instructions.
+        const cli = installedCli("codex");
         const codex = new Codex({
+          // A newer Codex the server installed, else the one the SDK depends on.
+          ...(cli ? { codexPathOverride: cli } : {}),
           baseUrl: `${ctx.credproxyUrl}/openai`,
           env: codexEnv(ctx, codexHome),
           config: {
