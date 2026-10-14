@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { McpServerDef, McpServerList, ToolRules } from "./mcp.ts";
 import { Effort, HarnessId } from "./models.ts";
+import { SnapshotPolicy } from "./snapshots.ts";
 
 const Timestamp = z.iso.datetime();
 
@@ -154,7 +155,11 @@ export type NibbletStatus = z.infer<typeof NibbletStatus>;
  */
 export const Resources = z.object({
   cpus: z.number().min(0.25).max(256).nullable(),
-  memoryMb: z.int().min(512).max(1024 * 1024).nullable(),
+  memoryMb: z
+    .int()
+    .min(512)
+    .max(1024 * 1024)
+    .nullable(),
 });
 export type Resources = z.infer<typeof Resources>;
 export const DEFAULT_MEMORY_MB = 4096;
@@ -175,6 +180,7 @@ export const Nibblet = z.object({
   statusDetail: z.string().nullable(),
   heartbeats: z.array(Heartbeat),
   resources: Resources,
+  snapshotPolicy: SnapshotPolicy,
   /** Whether the container gets a browser it and the user can drive. */
   browser: z.boolean(),
   /** Host MCP servers this nibblet may use, by name. None unless ticked. */
@@ -215,7 +221,6 @@ export const CreateNibblet = z.object({
 });
 export type CreateNibblet = z.input<typeof CreateNibblet>;
 
-
 export const UpdateNibblet = z.object({
   id: z.string(),
   name: z.string().min(1).max(80).optional(),
@@ -232,6 +237,7 @@ export const UpdateNibblet = z.object({
   toolApprovals: ToolRules.optional(),
   // No heartbeats: the nibblet sets its own with the `heartbeat_*` tools.
   resources: Resources.optional(),
+  snapshotPolicy: SnapshotPolicy.optional(),
 });
 
 /** What started a turn. Anything but `user` is the nibblet acting on its own. */

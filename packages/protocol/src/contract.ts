@@ -4,6 +4,7 @@ import { HarnessId, HarnessModels } from "./models.ts";
 import { ConnectStatus, TailscaleStatus } from "./connect.ts";
 import { OnePasswordGrants, OnePasswordStatus, VaultGrant } from "./onepassword.ts";
 import { procedure } from "./rpc.ts";
+import { Snapshot, SnapshotActivity, SnapshotTimeline } from "./snapshots.ts";
 import {
   CreateNibblet,
   CreateSchedule,
@@ -130,6 +131,22 @@ export const contract = {
       OnePasswordGrants,
     ),
   },
+  snapshots: {
+    /** A nibblet's snapshots, newest first, and where it stands among them. */
+    list: procedure(z.object({ nibbletId: z.string() }), SnapshotTimeline),
+    /** Takes a snapshot now; waits for a turn in progress to finish first. */
+    create: procedure(
+      z.object({ nibbletId: z.string(), label: z.string().max(80).optional() }),
+      Snapshot,
+    ),
+    /**
+     * Puts the nibblet back (or forward) to a snapshot. Its current state is
+     * snapshotted first, so the restore can itself be undone.
+     */
+    restore: procedure(Id, Ok),
+    rename: procedure(z.object({ id: z.string(), label: z.string().max(80).nullable() }), Snapshot),
+    delete: procedure(Id, Ok),
+  },
   auth: {
     /** A one-time link another device opens to sign in to this server. */
     createPairingLink: procedure(
@@ -147,5 +164,12 @@ export const LiveMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("nibblet_deleted"), id: z.string() }),
   z.object({ type: z.literal("item"), item: StoredItem }),
   z.object({ type: z.literal("schedules_changed"), nibbletId: z.string() }),
+  /** The thread was replaced (a snapshot was restored): drop it and fetch again from the start. */
+  z.object({ type: z.literal("thread_reset"), nibbletId: z.string() }),
+  z.object({
+    type: z.literal("snapshots_changed"),
+    nibbletId: z.string(),
+    activity: SnapshotActivity,
+  }),
 ]);
 export type LiveMessage = z.infer<typeof LiveMessage>;

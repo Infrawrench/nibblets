@@ -4,6 +4,8 @@ import type {
   HarnessId,
   Heartbeat,
   Resources,
+  SnapshotPolicy,
+  SnapshotTrigger,
   McpServerDef,
   ToolRule,
   NibbletStatus,
@@ -13,6 +15,7 @@ import {
   bigint,
   boolean,
   index,
+  integer,
   jsonb,
   pgSequence,
   pgTable,
@@ -49,6 +52,10 @@ export const nibblets = pgTable("nibblets", {
     .$type<Resources>()
     .notNull()
     .default({ cpus: null, memoryMb: null }),
+  snapshotPolicy: jsonb("snapshot_policy")
+    .$type<SnapshotPolicy>()
+    .notNull()
+    .default({ everyMinutes: 24 * 60, keep: 7 }),
   browser: boolean("browser").notNull().default(true),
   hostTools: text("host_tools").array().notNull().default([]),
   cliCredentials: text("cli_credentials").array().notNull().default([]),
@@ -157,4 +164,26 @@ export const files = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("files_nibblet_idx").on(t.nibbletId)],
+);
+
+/**
+ * Snapshots of a nibblet: its home folder and state, stored as files under
+ * `snapshots/<nibbletId>/<id>.*` on the data volume.
+ */
+export const snapshots = pgTable(
+  "snapshots",
+  {
+    id: text("id").primaryKey(),
+    nibbletId: text("nibblet_id")
+      .notNull()
+      .references(() => nibblets.id, { onDelete: "cascade" }),
+    label: text("label"),
+    trigger: text("trigger").$type<SnapshotTrigger>().notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+    messageCount: integer("message_count").notNull(),
+    /** The newest thread item's seq when it was taken, to tell whether anything has changed since. */
+    maxSeq: bigint("max_seq", { mode: "number" }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("snapshots_nibblet_idx").on(t.nibbletId, t.createdAt)],
 );
