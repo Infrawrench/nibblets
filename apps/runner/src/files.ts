@@ -3,7 +3,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { McpServerSpec, TurnAttachment } from "@nibblet/harness";
 import type { FileRef } from "@nibblet/protocol";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, readdir, stat } from "node:fs/promises";
 import { createServer, type Server as HttpServer } from "node:http";
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { Readable } from "node:stream";
@@ -74,7 +74,9 @@ export class RunnerFiles {
     if (refs.length === 0) return [];
     const dir = join(this.opts.workdir, "uploads");
     await mkdir(dir, { recursive: true });
-    const taken = new Set<string>();
+    // Files from earlier messages are still there; a new file with the same
+    // name gets "name (2)" rather than replacing one the nibblet may be using.
+    const taken = new Set<string>(await readdir(dir));
     const out: TurnAttachment[] = [];
     for (const ref of refs) {
       const name = uniqueName(basename(ref.name), taken);

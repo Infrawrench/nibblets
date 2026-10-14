@@ -60,6 +60,15 @@ describe("RunnerFiles", () => {
     expect(received.auth).toBe(`Bearer ${TOKEN}`);
   });
 
+  it("never overwrites a file from an earlier message with the same name", async () => {
+    const later = await files().fetch([
+      { fileId: "file_c", name: "notes.txt", mime: "text/plain", size: 5 },
+    ]);
+    expect(later.map((g) => g.name)).toEqual(["notes (3).txt"]);
+    expect(readFileSync(join(work, "uploads", "notes.txt"), "utf8")).toBe("contents of file_a");
+    expect(readFileSync(join(work, "uploads", "notes (3).txt"), "utf8")).toBe("contents of file_c");
+  });
+
   it("shares a file: asks for a slot with its details, then uploads it", async () => {
     writeFileSync(join(work, "report.csv"), "a,b\n1,2\n");
     const message = await files().share("report.csv", undefined, "The numbers");
