@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { mcpTarget } from "@nibblet/protocol";
 import { detectOpencode, readOpencodeLogin } from "./opencode.ts";
-import { setTailscaleServe, tailscaleState } from "./tailscale.ts";
+import { setTailscaleServe, tailscaleLogin, tailscaleState } from "./tailscale.ts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -299,6 +299,9 @@ export async function startHostMcpBridge(opts: BridgeOptions): Promise<HostMcpBr
         return json(res, 200, await describeAll());
       if (req.method === "GET" && url.pathname === "/clis") {
         return json(res, 200, await Promise.all(clis.map((p) => p.detect(run))));
+      }
+      if (url.pathname === "/tailscale/login" && req.method === "POST") {
+        return json(res, 200, await tailscaleLogin(run, serveTarget));
       }
       if (url.pathname === "/tailscale" && (req.method === "GET" || req.method === "POST")) {
         if (req.method === "GET") return json(res, 200, await tailscaleState(run, serveTarget));

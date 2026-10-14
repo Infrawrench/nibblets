@@ -83,6 +83,8 @@ export const contract = {
     status: procedure(z.object({}), TailscaleStatus),
     /** Shares this server on the tailnet with `tailscale serve`, or stops. */
     set: procedure(z.object({ serving: z.boolean() }), TailscaleStatus),
+    /** Starts signing this computer in to Tailscale; the status carries the link to finish it. */
+    login: procedure(z.object({}), TailscaleStatus),
   },
   hostTools: {
     /** The MCP servers on the host bridge, for ticking per nibblet. */

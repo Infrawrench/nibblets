@@ -116,6 +116,7 @@ const noTailscale = (detail: string): TailscaleStatus => ({
   serving: false,
   url: null,
   detail,
+  action: null,
 });
 
 /** Tailscale on the host, through the bridge, which is what can run `tailscale serve`. */
@@ -144,6 +145,18 @@ export async function setTailscale(config: Config, serving: boolean): Promise<Ta
       authorization: `Bearer ${config.HOST_MCP_TOKEN}`,
     },
     body: JSON.stringify({ serving }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) throw new RpcError("unavailable", `The host bridge refused (${res.status})`);
+  return TailscaleStatus.parse(await res.json());
+}
+
+/** Starts signing the host in to Tailscale; the answer carries the link that finishes it. */
+export async function tailscaleLogin(config: Config): Promise<TailscaleStatus> {
+  if (!config.HOST_MCP_URL) return noTailscale("Needs the host bridge (the desktop app runs it)");
+  const res = await fetch(`${config.HOST_MCP_URL}/tailscale/login`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${config.HOST_MCP_TOKEN}` },
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) throw new RpcError("unavailable", `The host bridge refused (${res.status})`);

@@ -4,6 +4,7 @@ import {
   parseServeStatus,
   parseTailscaleStatus,
   setTailscaleServe,
+  tailscaleLogin,
   tailscaleState,
 } from "../src/tailscale.ts";
 
@@ -71,5 +72,46 @@ describe("tailscale", () => {
   it("says when Tailscale isn't installed", async () => {
     const none: Run = async () => ({ code: 127, stdout: "", stderr: "" });
     expect(await tailscaleState(none, TARGET)).toMatchObject({ installed: false, running: false });
+  });
+
+  it("passes on the link to turn Serve on when the tailnet hasn't", async () => {
+    const run: Run = async (command, args) => {
+      if (command === "tailscale" && args[0] === "version")
+        return { code: 0, stdout: "1.104.1", stderr: "" };
+      if (args.join(" ") === "status --json") return { code: 0, stdout: status, stderr: "" };
+      if (args.join(" ") === "serve status --json") return { code: 0, stdout: "{}", stderr: "" };
+      return {
+        code: 1,
+        stdout: "",
+        stderr:
+          "Serve is not enabled on your tailnet.\nTo enable, visit:\n\n  https://login.tailscale.com/f/serve?node=abc\n",
+      };
+    };
+    const state = await setTailscaleServe(run, TARGET, true);
+    expect(state.detail).toBe("Serve isn't turned on for your tailnet yet.");
+    expect(state.action).toEqual({
+      label: "Turn on Serve",
+      url: "https://login.tailscale.com/f/serve?node=abc",
+    });
+  });
+
+  it("hands back the sign-in link as an action", async () => {
+    const run: Run = async (command, args) => {
+      if (command !== "tailscale") return { code: 127, stdout: "", stderr: "" };
+      if (args[0] === "version") return { code: 0, stdout: "1.104.1", stderr: "" };
+      if (args.join(" ") === "status --json") {
+        return { code: 0, stdout: JSON.stringify({ BackendState: "NeedsLogin" }), stderr: "" };
+      }
+      return {
+        code: 1,
+        stdout: "",
+        stderr: "To authenticate, visit:\n\n\thttps://login.tailscale.com/a/1234abcd\n",
+      };
+    };
+    const state = await tailscaleLogin(run, TARGET);
+    expect(state.action).toEqual({
+      label: "Sign in to Tailscale",
+      url: "https://login.tailscale.com/a/1234abcd",
+    });
   });
 });

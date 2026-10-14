@@ -158,5 +158,7 @@ export const TailscaleStatus = z.object({
   serving: z.boolean(),
   url: z.string().nullable(),
   detail: z.string().nullable(),
+  /** Something the person has to do in their browser, shown as a button. */
+  action: z.object({ label: z.string(), url: z.url() }).nullable(),
 });
 export type TailscaleStatus = z.infer<typeof TailscaleStatus>;

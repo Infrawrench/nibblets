@@ -12,7 +12,13 @@ import { z } from "zod";
 import { cliStatuses } from "./clilogins.ts";
 import type { Conductor } from "./conductor.ts";
 import type { HarnessModelLists } from "./opencode.ts";
-import { dropOverlaps, hostTools, setTailscale, tailscaleStatus } from "./hostmcp.ts";
+import {
+  dropOverlaps,
+  hostTools,
+  setTailscale,
+  tailscaleLogin,
+  tailscaleStatus,
+} from "./hostmcp.ts";
 import type { Config } from "./config.ts";
 import type { Scheduler } from "./scheduler.ts";
 import type { Store } from "./store.ts";
@@ -211,6 +217,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
     tailscale: {
       status: () => tailscaleStatus(s.config),
       set: ({ serving }) => setTailscale(s.config, serving),
+      login: () => tailscaleLogin(s.config),
     },
 
     hostTools: {

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Globe, Loader2, Network, Unplug, Wifi } from "lucide-react";
-import type { ConnectStatus, RouteKind, ServerRoutes } from "@nibblet/protocol";
+import type { ConnectStatus, RouteKind, ServerRoutes, TailscaleStatus } from "@nibblet/protocol";
 import type { ServerConnection } from "../lib/connection.ts";
 import { keys, useServers } from "../lib/servers.tsx";
 import { relativeTime } from "../lib/time.ts";
@@ -121,11 +121,7 @@ function AccountCard({ connection }: { connection: ServerConnection }) {
             <Loader2 className="ml-1 inline size-3 animate-spin" />
           </span>
           <div className="flex gap-1.5">
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => window.open(s.approveUrl, "_blank", "noopener")}
-            >
+            <Button variant="primary" size="sm" onClick={() => openUrl(s.approveUrl)}>
               <ExternalLink />
               Open approval page
             </Button>
@@ -145,14 +141,16 @@ function AccountCard({ connection }: { connection: ServerConnection }) {
               <div key={`${r.kind}${r.url}`} className="flex items-center gap-2 text-xs">
                 <Icon className="size-3.5 text-faint" />
                 <span className="w-32 shrink-0 text-dim">{routeLabels[r.kind]}</span>
-                <a
-                  href={r.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="truncate font-mono text-2xs text-accent underline"
+                <span
+                  className="min-w-0 flex-1 truncate font-mono text-2xs text-faint"
+                  title={r.url}
                 >
-                  {r.url}
-                </a>
+                  {r.url.replace(/^https?:\/\//, "")}
+                </span>
+                <Button size="sm" variant="ghost" onClick={() => openUrl(r.url)}>
+                  <ExternalLink />
+                  Open
+                </Button>
               </div>
             );
           })}
@@ -173,12 +171,15 @@ function AccountCard({ connection }: { connection: ServerConnection }) {
       ) : null}
 
       {s ? (
-        <span className="text-2xs text-faint">
-          Nibblets Connect:{" "}
-          <a href={s.centralUrl} target="_blank" rel="noreferrer" className="underline">
-            {s.centralUrl.replace(/^https?:\/\//, "")}
-          </a>
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-2xs text-faint">
+            Nibblets Connect · {s.centralUrl.replace(/^https?:\/\//, "")}
+          </span>
+          <Button size="sm" variant="ghost" onClick={() => openUrl(s.centralUrl)}>
+            <ExternalLink />
+            Open Nibblets Connect
+          </Button>
+        </div>
       ) : null}
       {error ? <span className="text-xs text-danger">{error}</span> : null}
     </div>
@@ -191,39 +192,69 @@ function TailscaleRow({ connection }: { connection: ServerConnection }) {
   const status = useQuery({
     queryKey: key,
     queryFn: () => connection.client.tailscale.status({}),
+    // While someone's finishing a sign-in or turning Serve on in their browser.
+    refetchInterval: (q) => (q.state.data?.action ? 3000 : false),
   });
   const [busy, setBusy] = useState(false);
+  const run = async (fn: () => Promise<TailscaleStatus>) => {
+    setBusy(true);
+    try {
+      const next = await fn();
+      qc.setQueryData(key, next);
+      if (next.action) openUrl(next.action.url);
+      void qc.invalidateQueries({ queryKey: keys.connect(connection.id) });
+    } finally {
+      setBusy(false);
+    }
+  };
   const s = status.data;
   const hint = !s
     ? "Checking…"
     : !s.installed
       ? (s.detail ?? "Install Tailscale on this computer to reach it over your tailnet.")
-      : !s.running
-        ? (s.detail ?? "Tailscale isn't connected.")
-        : s.serving && s.url
-          ? s.url
-          : "Share this server on your tailnet over HTTPS.";
+      : s.serving && s.url
+        ? s.url
+        : (s.detail ?? "Share this server on your tailnet over HTTPS.");
   return (
     <FieldRow label="Tailscale" hint={hint}>
       <div className="flex items-center gap-2">
-        <Switch
-          checked={s?.serving ?? false}
-          disabled={busy || !s?.running}
-          label="Share on Tailscale"
-          onChange={async (serving) => {
-            setBusy(true);
-            try {
-              qc.setQueryData(key, await connection.client.tailscale.set({ serving }));
-              void qc.invalidateQueries({ queryKey: keys.connect(connection.id) });
-            } finally {
-              setBusy(false);
+        {s?.installed && !s.running ? (
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={busy}
+            onClick={() =>
+              void (s.action
+                ? openUrl(s.action.url)
+                : run(() => connection.client.tailscale.login({})))
             }
-          }}
-        />
+          >
+            {busy ? <Loader2 className="animate-spin" /> : <ExternalLink />}
+            {s.action?.label ?? "Sign in to Tailscale"}
+          </Button>
+        ) : (
+          <Switch
+            checked={s?.serving ?? false}
+            disabled={busy || !s?.running}
+            label="Share on Tailscale"
+            onChange={(serving) => void run(() => connection.client.tailscale.set({ serving }))}
+          />
+        )}
+        {s?.running && s.action ? (
+          <Button size="sm" variant="primary" onClick={() => openUrl(s.action?.url ?? "")}>
+            <ExternalLink />
+            {s.action.label}
+          </Button>
+        ) : null}
         {busy ? <Loader2 className="size-3.5 animate-spin text-faint" /> : null}
       </div>
     </FieldRow>
   );
+}
+
+/** Opens a link outside the app: a new tab, or the desktop app's own browser handling. */
+function openUrl(url: string): void {
+  window.open(url, "_blank", "noopener");
 }
 
 /** Central mode: who's signed in, and the servers on the account. */

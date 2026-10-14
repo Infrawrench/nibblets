@@ -14,6 +14,8 @@ export interface TailscaleState {
   serving: boolean;
   url: string | null;
   detail: string | null;
+  /** Something to do in a browser (sign in, turn Serve on), for the UI to show as a button. */
+  action: { label: string; url: string } | null;
 }
 
 /** Where the CLI lives: on PATH, or inside the macOS app. */
@@ -60,6 +62,15 @@ export function parseServeStatus(text: string, target: string): boolean {
   );
 }
 
+/**
+ * Runs the CLI against the right daemon. `TAILSCALE_SOCKET` points it at a
+ * userspace `tailscaled` (one started with `--socket`), which needs no root
+ * and no system extension; otherwise the CLI's default socket is used.
+ */
+function withSocket(run: Run, socket: string | undefined): Run {
+  return socket ? (cli, args) => run(cli, [`--socket=${socket}`, ...args]) : run;
+}
+
 async function findCli(run: Run): Promise<string | null> {
   for (const cli of CANDIDATES) {
     if ((await run(cli, ["version"])).code === 0) return cli;
@@ -67,10 +78,22 @@ async function findCli(run: Run): Promise<string | null> {
   return null;
 }
 
-export async function tailscaleState(run: Run, target: string): Promise<TailscaleState> {
-  const cli = await findCli(run);
+export async function tailscaleState(
+  plainRun: Run,
+  target: string,
+  socket = process.env.TAILSCALE_SOCKET,
+): Promise<TailscaleState> {
+  const run = withSocket(plainRun, socket);
+  const cli = await findCli(plainRun);
   if (!cli) {
-    return { installed: false, running: false, serving: false, url: null, detail: null };
+    return {
+      installed: false,
+      running: false,
+      serving: false,
+      url: null,
+      detail: null,
+      action: null,
+    };
   }
   const { running, dnsName } = parseTailscaleStatus((await run(cli, ["status", "--json"])).stdout);
   if (!running || !dnsName) {
@@ -79,7 +102,8 @@ export async function tailscaleState(run: Run, target: string): Promise<Tailscal
       running: false,
       serving: false,
       url: null,
-      detail: "Tailscale isn't connected. Sign in to it on this computer.",
+      detail: "Tailscale isn't signed in on this computer.",
+      action: null,
     };
   }
   const serving = parseServeStatus((await run(cli, ["serve", "status", "--json"])).stdout, target);
@@ -89,23 +113,58 @@ export async function tailscaleState(run: Run, target: string): Promise<Tailscal
     serving,
     url: serving ? `https://${dnsName}` : null,
     detail: null,
+    action: null,
   };
 }
 
 /** Starts or stops sharing `target` on the tailnet over HTTPS. */
 export async function setTailscaleServe(
-  run: Run,
+  plainRun: Run,
   target: string,
   serving: boolean,
+  socket = process.env.TAILSCALE_SOCKET,
 ): Promise<TailscaleState> {
-  const cli = await findCli(run);
-  if (!cli) return tailscaleState(run, target);
+  const run = withSocket(plainRun, socket);
+  const cli = await findCli(plainRun);
+  if (!cli) return tailscaleState(plainRun, target, socket);
   const args = serving ? ["serve", "--bg", "--https=443", target] : ["serve", "--https=443", "off"];
   const result = await run(cli, args);
-  const state = await tailscaleState(run, target);
+  const state = await tailscaleState(plainRun, target, socket);
   if (result.code !== 0 && state.serving !== serving) {
-    const why = (result.stderr || result.stdout).trim().split("\n")[0] ?? "";
+    const output = `${result.stderr}\n${result.stdout}`;
+    // A tailnet without Serve turned on says so, with a link to turn it on.
+    const enable = /https:\/\/login\.tailscale\.com\/f\/serve\S*/.exec(output)?.[0];
+    if (enable) {
+      return {
+        ...state,
+        detail: "Serve isn't turned on for your tailnet yet.",
+        action: { label: "Turn on Serve", url: enable },
+      };
+    }
+    const why = output.trim().split("\n")[0] ?? "";
     return { ...state, detail: why ? `tailscale serve failed: ${why}` : "tailscale serve failed" };
   }
   return state;
+}
+
+/**
+ * Starts `tailscale up` and hands back the link that finishes signing in,
+ * for the UI to open. The CLI waits for the sign-in, so it's given a short
+ * timeout: the link is printed straight away.
+ */
+export async function tailscaleLogin(
+  plainRun: Run,
+  target: string,
+  socket = process.env.TAILSCALE_SOCKET,
+): Promise<TailscaleState> {
+  const run = withSocket(plainRun, socket);
+  const cli = await findCli(plainRun);
+  if (!cli) return tailscaleState(plainRun, target, socket);
+  const result = await run(cli, ["up", "--timeout=8s"]);
+  const login = /https:\/\/login\.tailscale\.com\/a\/\S+/.exec(
+    `${result.stderr}\n${result.stdout}`,
+  )?.[0];
+  const state = await tailscaleState(plainRun, target, socket);
+  if (state.running || !login) return state;
+  return { ...state, action: { label: "Sign in to Tailscale", url: login } };
 }

@@ -29,12 +29,17 @@ export async function clerkUser(
   token: string,
   knownName: (id: string) => Promise<string | null>,
 ): Promise<SignedIn | null> {
-  if (!env.CLERK_SECRET_KEY || !token) return null;
+  if (!env.CLERK_SECRET_KEY || !token) {
+    if (!token) console.warn(JSON.stringify({ message: "no session token sent" }));
+    return null;
+  }
   let sub: string;
   try {
     const claims = await verifyToken(token, { secretKey: env.CLERK_SECRET_KEY });
     sub = claims.sub;
-  } catch {
+  } catch (err) {
+    // The reason only, never the token.
+    console.warn(JSON.stringify({ message: "clerk session rejected", reason: String(err) }));
     return null;
   }
   const cached = await knownName(sub);

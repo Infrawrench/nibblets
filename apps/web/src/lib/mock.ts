@@ -426,6 +426,7 @@ export function createMockServer(): ServerConnection {
     serving: false,
     url: null,
     detail: null,
+    action: null,
   };
   let serverName = "Astrid's Mac mini";
 
@@ -695,6 +696,7 @@ export function createMockServer(): ServerConnection {
         };
         return tailscale;
       },
+      login: async () => tailscale,
     },
     harnesses: {
       models: async ({ harness }) =>
