@@ -37,6 +37,7 @@ export type LiveState = "connecting" | "open" | "closed";
 
 export interface LiveFeed {
   subscribe(listener: (message: LiveMessage) => void): () => void;
+  /** Calls `listener` with the current state straight away, then on every change. */
   onState(listener: (state: LiveState) => void): () => void;
   /** Called after every reconnect, so caches can catch up on what they missed. */
   onReconnect(listener: () => void): () => void;
@@ -137,7 +138,7 @@ const QUIET_RETRIES = 3;
  * straight away and only reports "closed" when that keeps failing. A socket
  * that goes silent past the server's keepalive is treated as dead.
  */
-function socketFeed(url: () => Promise<string>): LiveFeed {
+export function socketFeed(url: () => Promise<string>): LiveFeed {
   const listeners = new Set<(m: LiveMessage) => void>();
   const stateListeners = new Set<(s: LiveState) => void>();
   const reconnectListeners = new Set<() => void>();
@@ -209,6 +210,9 @@ function socketFeed(url: () => Promise<string>): LiveFeed {
     },
     onState(l) {
       stateListeners.add(l);
+      // Told where things stand now: a socket to this computer can open
+      // before anything starts listening, and would never be heard of again.
+      l(state);
       return () => stateListeners.delete(l);
     },
     onReconnect(l) {
