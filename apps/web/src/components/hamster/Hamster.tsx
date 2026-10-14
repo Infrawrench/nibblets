@@ -1,5 +1,6 @@
 import { useId, type ReactNode, type SVGProps } from "react";
-import type { HamsterLook, NibbletStatus } from "@nibblet/protocol";
+import { isCityBackground, type HamsterLook, type NibbletStatus } from "@nibblet/protocol";
+import { cities } from "./cities.tsx";
 import {
   LINE,
   PINK,
@@ -71,7 +72,7 @@ export function Hamster({
           <circle cx="50" cy="50" r="50" />
         </clipPath>
       </defs>
-      <Background look={look} />
+      <Background look={look} uid={uid} detailed={detailed} />
       <g clipPath={look.background === "none" ? undefined : `url(#bg-${uid})`}>
         <g className="hamster-body">
           {look.accessory === "beanie" ? null : <Ears look={look} detailed={detailed} />}
@@ -111,8 +112,32 @@ export function Hamster({
   );
 }
 
-function Background({ look }: { look: HamsterLook }) {
-  const fill = backgroundColours[look.background];
+function Background({
+  look,
+  uid,
+  detailed,
+}: {
+  look: HamsterLook;
+  uid: string;
+  detailed: boolean;
+}) {
+  const bg = look.background;
+  if (isCityBackground(bg)) {
+    const city = cities[bg];
+    return (
+      <g clipPath={`url(#bg-${uid})`}>
+        <defs>
+          <linearGradient id={`sky-${uid}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={city.sky[0]} />
+            <stop offset="1" stopColor={city.sky[1]} />
+          </linearGradient>
+        </defs>
+        <rect width="100" height="100" fill={`url(#sky-${uid})`} />
+        {city.draw(detailed)}
+      </g>
+    );
+  }
+  const fill = backgroundColours[bg];
   return fill ? <circle cx="50" cy="50" r="50" fill={fill} /> : null;
 }
 

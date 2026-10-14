@@ -62,6 +62,35 @@ export const Earrings = z.enum(["none", "drop", "star", "heart", "pearl", "charm
  * set, the way a Mii is, so any combination draws well and a random one is
  * always valid.
  */
+/** Plain backdrops, drawn as a coloured circle. */
+export const ColourBackground = z.enum([
+  "sky",
+  "mint",
+  "peach",
+  "lavender",
+  "lemon",
+  "rose",
+  "slate",
+  "none",
+]);
+/** Skylines, drawn as a little scene behind the hamster. */
+export const CityBackground = z.enum([
+  "london",
+  "new_york",
+  "san_francisco",
+  "berlin",
+  "paris",
+  "tokyo",
+  "sydney",
+  "dubai",
+]);
+export type ColourBackground = z.infer<typeof ColourBackground>;
+export type CityBackground = z.infer<typeof CityBackground>;
+
+export function isCityBackground(value: string): value is CityBackground {
+  return CityBackground.options.some((city) => city === value);
+}
+
 export const HamsterLook = z.object({
   fur: z.enum(["golden", "cream", "cinnamon", "grey", "chocolate", "black", "white", "lilac"]),
   pattern: z.enum(["solid", "banded", "patches", "roan", "masked"]),
@@ -84,7 +113,7 @@ export const HamsterLook = z.object({
     "scarf",
   ]),
   accessoryColour: z.enum(["red", "orange", "yellow", "green", "teal", "blue", "purple", "pink"]),
-  background: z.enum(["sky", "mint", "peach", "lavender", "lemon", "rose", "slate", "none"]),
+  background: z.enum([...ColourBackground.options, ...CityBackground.options]),
   // Defaults, so looks saved before piercings existed still parse.
   earPiercings: z.array(EarPiercing).default([]),
   nosePiercing: NosePiercing.default("none"),

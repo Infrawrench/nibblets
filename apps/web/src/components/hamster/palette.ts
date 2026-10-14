@@ -1,4 +1,4 @@
-import type { HamsterLook } from "@nibblet/protocol";
+import type { ColourBackground, HamsterLook } from "@nibblet/protocol";
 
 export interface FurColours {
   base: string;
@@ -41,7 +41,7 @@ export const accessoryColours: Record<HamsterLook["accessoryColour"], string> = 
   pink: "#E85A9C",
 };
 
-export const backgroundColours: Record<HamsterLook["background"], string | null> = {
+export const backgroundColours: Record<ColourBackground, string | null> = {
   sky: "#CFE5F7",
   mint: "#CDEEDF",
   peach: "#FBDCC7",

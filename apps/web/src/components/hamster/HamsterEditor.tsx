@@ -7,8 +7,12 @@ import {
   NosePiercing,
   PiercingMetal,
   randomHamsterLook,
+  CityBackground,
+  ColourBackground,
+  isCityBackground,
 } from "@nibblet/protocol";
 import { Hamster } from "./Hamster.tsx";
+import { cities } from "./cities.tsx";
 import {
   accessoryColours,
   backgroundColours,
@@ -45,15 +49,17 @@ const options: { [K in EnumField]: readonly HamsterLook[K][] } = {
 };
 
 /** Swatch colours for the fields chosen by colour rather than by picture. */
-const swatches: { [K in EnumField]?: (value: HamsterLook[K], look: HamsterLook) => string | null } =
-  {
-    fur: (v) => furColours[v].base,
-    belly: (v, look) => (v === "same" ? furColours[look.fur].light : bellyColours[v]),
-    eyeColour: (v) => eyeColours[v],
-    accessoryColour: (v) => accessoryColours[v],
-    background: (v) => backgroundColours[v],
-    piercingMetal: (v) => metalColours[v].base,
-  };
+// Undefined means the option is a picture, not a colour.
+const swatches: {
+  [K in EnumField]?: (value: HamsterLook[K], look: HamsterLook) => string | null | undefined;
+} = {
+  fur: (v) => furColours[v].base,
+  belly: (v, look) => (v === "same" ? furColours[look.fur].light : bellyColours[v]),
+  eyeColour: (v) => eyeColours[v],
+  accessoryColour: (v) => accessoryColours[v],
+  background: (v) => (isCityBackground(v) ? undefined : backgroundColours[v]),
+  piercingMetal: (v) => metalColours[v].base,
+};
 
 export function withField<K extends keyof HamsterLook>(
   look: HamsterLook,
@@ -66,6 +72,7 @@ export function withField<K extends keyof HamsterLook>(
 }
 
 export function optionLabel(value: string): string {
+  if (isCityBackground(value)) return cities[value].label;
   const words = value.replace(/_/g, " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
@@ -228,7 +235,24 @@ function CategoryBody({
         </>
       );
     case "background":
-      return grid("background", "Background");
+      return (
+        <>
+          <OptionGroup
+            field="background"
+            label="Colour"
+            look={look}
+            onChange={onChange}
+            values={ColourBackground.options}
+          />
+          <OptionGroup
+            field="background"
+            label="City"
+            look={look}
+            onChange={onChange}
+            values={CityBackground.options}
+          />
+        </>
+      );
   }
 }
 
@@ -237,13 +261,19 @@ function OptionGroup<K extends EnumField>({
   label,
   look,
   onChange,
+  values = options[field],
 }: {
   field: K;
   label: string;
   look: HamsterLook;
   onChange: (look: HamsterLook) => void;
+  /** Some of the field's options, when they're split into groups. */
+  values?: readonly HamsterLook[K][];
 }) {
-  const swatch = swatches[field];
+  // Colours as swatches; anything without one (a city) as a picture.
+  const swatch = values.every((v) => swatches[field]?.(v, look) !== undefined)
+    ? swatches[field]
+    : undefined;
   return (
     <div className="flex flex-col gap-1.5">
       <div className="text-2xs font-semibold tracking-wider text-faint uppercase">{label}</div>
@@ -255,7 +285,7 @@ function OptionGroup<K extends EnumField>({
             : "grid-cols-[repeat(auto-fill,minmax(68px,1fr))]",
         )}
       >
-        {options[field].map((value) => {
+        {values.map((value) => {
           const selected = look[field] === value;
           const preview = previewFor(withField(look, field, value), field);
           const colour = swatch?.(value, look);
