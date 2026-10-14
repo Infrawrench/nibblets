@@ -10,7 +10,8 @@
 # Settings, as environment variables:
 #   NIBBLETS_DIR     where the repo goes (default ~/nibblets)
 #   NIBBLETS_REPO    what to clone (default the GitHub repo)
-#   NIBBLETS_BRANCH  which branch (default main)
+#   NIBBLETS_VERSION which release, like 0.2.0, or a branch, like main
+#                    (default the latest release, or main before there is one)
 #   NIBBLETS_YES=1   answer yes to every question
 #
 # Copyright (C) 2026 Infrawrench. Licensed under the GNU GPL, version 2.
@@ -18,7 +19,10 @@
 set -euo pipefail
 
 REPO="${NIBBLETS_REPO:-https://github.com/Infrawrench/nibblets.git}"
-BRANCH="${NIBBLETS_BRANCH:-main}"
+# NIBBLETS_BRANCH is the older name for NIBBLETS_VERSION.
+WANT="${NIBBLETS_VERSION:-${NIBBLETS_BRANCH:-}}"
+GITHUB_REPO="Infrawrench/nibblets"
+REF=""
 DIR="${NIBBLETS_DIR:-$HOME/nibblets}"
 YES="${NIBBLETS_YES:-0}"
 TOOLS="$HOME/.local/share/nibblets"
@@ -495,16 +499,35 @@ setup_agents() {
 
 # The code and the stack
 
+# What to check out: the release asked for (0.2.0 or v0.2.0), a branch asked
+# for, or else the latest release. Before there's a release, main.
+resolve_ref() {
+  case "$WANT" in
+    "") ;;
+    v[0-9]*) REF="$WANT" && return ;;
+    [0-9]*) REF="v$WANT" && return ;;
+    *) REF="$WANT" && return ;;
+  esac
+  local tag
+  tag=$(curl -fsSL -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/$GITHUB_REPO/releases/latest" 2>/dev/null |
+    sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)
+  REF="${tag:-main}"
+}
+
 setup_repo() {
   step "📥 Getting Nibblets"
+  resolve_ref
+  local what="Nibblets ${REF#v}"
+  [ "$REF" = main ] && what="the latest Nibblets (main; there's no release yet)"
   if [ -d "$DIR/.git" ]; then
-    # Fetched and checked out rather than pulled: an update from the app leaves it on a release tag.
-    spin "Updating $DIR" bash -c "git -C '$DIR' fetch --depth 1 origin '$BRANCH' && git -C '$DIR' checkout -q --detach FETCH_HEAD"
+    # Fetched and checked out rather than pulled, so it works for a tag or a branch.
+    spin "Updating to $what" bash -c "git -C '$DIR' fetch --depth 1 origin '$REF' && git -C '$DIR' checkout -q --detach FETCH_HEAD"
   else
     [ ! -e "$DIR" ] || fail "$DIR exists and isn't a Nibblets checkout. Set NIBBLETS_DIR to put it somewhere else."
-    spin "Cloning into $DIR" git clone --depth 1 --branch "$BRANCH" "$REPO" "$DIR"
+    spin "Getting $what" git clone --depth 1 --branch "$REF" "$REPO" "$DIR"
   fi
-  ok "At $(git -C "$DIR" log -1 --format='%h, %cr')"
+  ok "In $DIR, at $(git -C "$DIR" log -1 --format='%h, %cr')"
 }
 
 prepare_bridge() {
