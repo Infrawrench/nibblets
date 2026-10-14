@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A newer push to the same branch makes the older run moot.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The desktop app's Electron binary isn't needed to typecheck or test it.
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+jobs:
+  check:
+    name: Typecheck, lint and test
+    runs-on: ubuntu-latest
+    services:
+      # For the tests that need a real database (snapshots).
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg18
+        env:
+          POSTGRES_USER: nibblet
+          POSTGRES_PASSWORD: nibblet
+          POSTGRES_DB: nibblet
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nibblet -d nibblet"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the web app
+        # Also generates its route tree, which typechecking needs.
+        run: pnpm --filter @nibblet/web build
+      - run: pnpm typecheck
+      - run: pnpm format:check
+      - name: Shellcheck
+        run: shellcheck install.sh docker/up.sh docker/chromium.sh
+      - run: pnpm test
+        env:
+          NIBBLET_TEST_DATABASE_URL: postgres://nibblet:nibblet@localhost:5432/nibblet
+
+  images:
+    name: Docker images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build the runner, server and credential proxy
+        run: |
+          docker build -f docker/runner.Dockerfile -t nibblet/runner:dev .
+          docker build -f docker/server.Dockerfile -t nibblet/server:dev .
+          docker build -f docker/credproxy.Dockerfile -t nibblet/credproxy:dev .
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Test against the runner image
+        run: pnpm vitest run apps/server/src/docker-home.test.ts
+        env:
+          NIBBLET_TEST_DOCKER: "1"

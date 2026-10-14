@@ -1,4 +1,10 @@
+<p align="center">
+  <img src="apps/desktop/assets/icon.png" alt="" width="160">
+</p>
+
 # Nibblets
+
+[![CI](https://github.com/Infrawrench/nibblets/actions/workflows/ci.yml/badge.svg)](https://github.com/Infrawrench/nibblets/actions/workflows/ci.yml)
 
 Self-hosted, always-on agents, each one a hamster you dress up yourself. They're like Grok Bot or ChatGPT dots, but they run on your own machines and use the Claude and ChatGPT subscriptions you already have.
 
