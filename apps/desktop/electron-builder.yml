@@ -23,6 +23,7 @@ protocols:
   - name: Nibblets
     schemes:
       - nibblets
+afterSign: build/notarize.cjs
 mac:
   category: public.app-category.developer-tools
   # The dmg to install from, and the zip (with latest-mac.yml) that updates install.
@@ -31,8 +32,10 @@ mac:
     - zip
   # One per architecture, built natively: Nibblets-arm64.dmg and Nibblets-x64.dmg.
   artifactName: ${productName}-${arch}.${ext}
-  # Signed with the Developer ID in CSC_LINK, and notarised when APPLE_ID,
-  # APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID are set (in CI).
+  # Signed with the Developer ID in CSC_LINK, and notarised by
+  # build/notarize.cjs when APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and
+  # APPLE_TEAM_ID are set (in CI), which also staples the ticket when Apple lets it.
+  notarize: false
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
