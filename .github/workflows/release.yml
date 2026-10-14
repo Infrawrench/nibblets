@@ -193,6 +193,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+          # Only for a script; pnpm isn't set up in this job.
+          package-manager-cache: false
       - name: Merge the Mac update feeds
         run: |
           node apps/desktop/src/feed.ts dist/latest-mac-*.yml > dist/latest-mac.yml
