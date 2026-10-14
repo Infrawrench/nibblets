@@ -109,7 +109,12 @@ export const ServerToRunner = z.discriminatedUnion("type", [
 export type ServerToRunner = z.infer<typeof ServerToRunner>;
 
 export const RunnerToServer = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("ready"), harnessVersion: z.string() }),
+  z.object({
+    type: z.literal("ready"),
+    harnessVersion: z.string(),
+    /** The turn it's still working on, when it reconnects to a server that restarted. */
+    activeTurnId: z.string().nullable().default(null),
+  }),
   z.object({ type: z.literal("item"), item: ThreadItem }),
   z.object({
     type: z.literal("turn_end"),

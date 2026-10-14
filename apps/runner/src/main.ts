@@ -65,7 +65,11 @@ connection = new Connection({
   onMessage: (msg) => runner.handle(msg),
   onOpen: () => {
     const versions = Object.values(plugins).map((p) => p.version());
-    connection?.send({ type: "ready", harnessVersion: versions.join(", ") });
+    connection?.send({
+      type: "ready",
+      harnessVersion: versions.join(", "),
+      activeTurnId: runner.currentTurnId(),
+    });
   },
 });
 connection.connect();

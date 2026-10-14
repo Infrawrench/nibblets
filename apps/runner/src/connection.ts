@@ -40,10 +40,12 @@ export class Connection {
 
     ws.on("open", () => {
       this.attempt = 0;
-      this.onOpen();
+      // What was said while disconnected first (a turn's end, say), then onOpen's
+      // "ready", so the server hears how things stand before it decides anything.
       const pending = this.backlog;
       this.backlog = [];
       for (const raw of pending) ws.send(raw);
+      this.onOpen();
       ping = setInterval(() => {
         if (!alive) {
           ws.terminate();

@@ -71,6 +71,12 @@ export class Conductor {
   private readonly active = new Map<string, ActiveTurn>();
   /** Set while an update is on its way: nothing new starts until the server restarts. */
   private paused = false;
+  /**
+   * Turns the last server left running, while their runner reconnects: it
+   * either says it's still on one (and the turn is adopted) or isn't, and the
+   * nibblet is asked to carry on.
+   */
+  private readonly orphans = new Map<string, Extract<ThreadItem, { type: "turn" }>>();
   private readonly store: Store;
   private readonly docker: Orchestrator;
   private readonly config: Config;
@@ -103,17 +109,27 @@ export class Conductor {
   /** Brings the database in line with Docker after a server restart. */
   async reconcile(): Promise<void> {
     await this.approvals.resetStale();
-    // Running turns live in memory, so any the last server left running ended
-    // with it. They're picked up again below, with what an update held back.
-    const resume = await this.store.getSetting(RESUME_SETTING, (v) => Resume.parse(v), {});
-    await this.store.deleteSetting(RESUME_SETTING);
-    for (const { nibbletId, item } of await this.store.runningTurnItems()) {
-      await this.store.putItem(nibbletId, { ...item, status: "interrupted", endedAt: now() });
-      await this.notice(nibbletId, item.turnId, "info", "Paused while Nibblets restarted");
-      resume[nibbletId] = { turns: resume[nibbletId]?.turns ?? [], wasWorking: true };
-    }
     await this.limits.restore();
     const runners = await this.docker.runners();
+    // Running turns live in memory, so the last server lost track of any it
+    // left running. A runner that's still up may still be on one: wait for it
+    // to say. Otherwise the turn is over, and the nibblet carries on below.
+    const resume = await this.store.getSetting(RESUME_SETTING, (v) => Resume.parse(v), {});
+    await this.store.deleteSetting(RESUME_SETTING);
+    const lost: string[] = [];
+    for (const { nibbletId, item } of await this.store.runningTurnItems()) {
+      const runner = runners.get(nibbletId);
+      const waiting = runner?.running && !(await this.docker.runnerOutdated(nibbletId));
+      if (waiting) {
+        this.orphans.set(nibbletId, item);
+        setTimeout(() => void this.settleOrphan(nibbletId), 2 * 60_000).unref();
+      } else {
+        await this.closeLostTurn(nibbletId, item);
+        lost.push(nibbletId);
+      }
+      // Either way, that's what happens to it; nothing else asks it to carry on.
+      if (resume[nibbletId]) resume[nibbletId].wasWorking = false;
+    }
     for (const nibblet of await this.store.listNibblets()) {
       const runner = runners.get(nibblet.id);
       if (runner?.running && (await this.docker.runnerOutdated(nibblet.id))) {
@@ -134,7 +150,46 @@ export class Conductor {
       }
     }
     await this.docker.watchRunnerExits((id, code) => void this.onContainerExit(id, code));
+    for (const id of lost) {
+      resume[id] = { turns: resume[id]?.turns ?? [], wasWorking: true };
+    }
     await this.resume(resume);
+  }
+
+  /** Marks a turn the last server lost as paused, saying so. */
+  private async closeLostTurn(
+    nibbletId: string,
+    item: Extract<ThreadItem, { type: "turn" }>,
+  ): Promise<void> {
+    await this.store.putItem(nibbletId, { ...item, status: "interrupted", endedAt: now() });
+    await this.notice(nibbletId, item.turnId, "info", "Paused while Nibblets restarted");
+  }
+
+  /** A lost turn its runner isn't on: closed, and the nibblet asked to carry on. */
+  private async settleOrphan(nibbletId: string): Promise<void> {
+    const item = this.orphans.get(nibbletId);
+    if (!item) return;
+    this.orphans.delete(nibbletId);
+    await this.closeLostTurn(nibbletId, item);
+    await this.enqueue(nibbletId, "system", RESUME_INPUT, [], { first: true }).catch(
+      () => undefined,
+    );
+  }
+
+  /** A lost turn its runner is still on (or has just finished): this server takes it over. */
+  private adoptOrphan(nibbletId: string, turnId: string): boolean {
+    const item = this.orphans.get(nibbletId);
+    if (item?.turnId !== turnId) return false;
+    this.orphans.delete(nibbletId);
+    this.active.set(nibbletId, {
+      turnId,
+      source: item.source,
+      // Its message isn't to hand; if it has to wait out a limit, it carries on instead.
+      input: RESUME_INPUT,
+      startedAt: item.createdAt,
+      lastReply: "",
+    });
+    return true;
   }
 
   /**
@@ -458,6 +513,11 @@ export class Conductor {
   async onRunnerMessage(nibbletId: string, message: RunnerToServer): Promise<void> {
     switch (message.type) {
       case "ready": {
+        if (this.orphans.has(nibbletId)) {
+          const adopted =
+            message.activeTurnId !== null && this.adoptOrphan(nibbletId, message.activeTurnId);
+          if (!adopted) await this.settleOrphan(nibbletId);
+        }
         await this.store.setStatus(nibbletId, this.active.has(nibbletId) ? "working" : "idle");
         await this.dispatch(nibbletId);
         return;
@@ -476,6 +536,8 @@ export class Conductor {
         return;
       }
       case "turn_end": {
+        // A lost turn that finished while the server was away ends normally.
+        this.adoptOrphan(nibbletId, message.turnId);
         await this.finishTurn(nibbletId, message);
         return;
       }
