@@ -333,6 +333,54 @@ setup_engine() {
   ok "Docker $version is running"
 }
 
+# Each nibblet's memory is capped, which needs the kernel's memory
+# controller. Raspberry Pi OS ships with it turned off.
+
+REBOOT=0
+
+memory_cgroup_on() {
+  if [ -r /sys/fs/cgroup/cgroup.controllers ]; then
+    grep -qw memory /sys/fs/cgroup/cgroup.controllers
+  else
+    [ -d /sys/fs/cgroup/memory ]
+  fi
+}
+
+check_memory_cgroup() {
+  memory_cgroup_on && return
+  local cmdline="" f
+  for f in /boot/firmware/cmdline.txt /boot/cmdline.txt; do
+    if [ -f "$f" ]; then cmdline=$f && break; fi
+  done
+  if [ -z "$cmdline" ]; then
+    warn "This kernel's memory controller is off, so nibblets won't start."
+    hint "Add cgroup_enable=memory to the kernel's command line (with GRUB, GRUB_CMDLINE_LINUX"
+    hint "in /etc/default/grub, then sudo update-grub), and restart."
+    return
+  fi
+  if grep -q 'cgroup_enable=memory' "$cmdline" && ! grep -q 'cgroup_disable=memory' "$cmdline"; then
+    # Turned on by an earlier run; it just needs the restart.
+    REBOOT=1
+    warn "The memory controller turns on when this machine restarts."
+    return
+  fi
+  say "This kernel's memory controller is off, and nibblets need it. Raspberry Pi OS leaves it off."
+  if ! ask "Turn it on in $cmdline? It takes a restart."; then
+    warn "Leaving it off. Nibblets won't start until it's on."
+    return
+  fi
+  need_root
+  $SUDO cp "$cmdline" "$cmdline.bak"
+  # It's a single line: take out anything about it, then add the switches that turn it on.
+  $SUDO sed -i \
+    -e 's/[[:space:]]*cgroup_disable=memory//g' \
+    -e 's/[[:space:]]*cgroup_enable=memory//g' \
+    -e 's/[[:space:]]*cgroup_memory=1//g' \
+    -e '1s/[[:space:]]*$/ cgroup_enable=memory cgroup_memory=1/' "$cmdline"
+  REBOOT=1
+  ok "Turned on the memory controller ${D}(from the next restart; the old line is in $cmdline.bak)${R}"
+}
+
 # Node, for the host bridge (it shares this machine's logins and MCP servers
 # with nibblets) and for installing Codex.
 
@@ -664,6 +712,15 @@ finish() {
   say "${D}🔁 Update or add agents: run this installer again${R}"
   say "${D}📜 Logs: $(engine_cli) logs -f nibblet-server-1${R}"
   printf '\n'
+  if [ "$REBOOT" = 1 ]; then
+    warn "${B}Restart this machine before your first nibblet${R}, so the memory controller turns on."
+    hint "Nibblets starts again by itself afterwards."
+    if [ "$INTERACTIVE" = 1 ] && ask "Restart now?"; then
+      need_root
+      $SUDO reboot
+    fi
+    printf '\n'
+  fi
 }
 
 main() {
@@ -673,6 +730,7 @@ main() {
   check_machine
   setup_repo
   setup_engine
+  check_memory_cgroup
   setup_agents
   start_stack
   setup_connect
