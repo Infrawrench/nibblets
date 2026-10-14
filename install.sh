@@ -190,8 +190,18 @@ check_machine() {
   ok "git and curl are here"
 }
 
+# docker/up.sh run through sudo leaves what it writes owned by root, which this
+# script and the host bridge (it runs as you) then can't change. Hands it back.
+reclaim_docker_dir() {
+  [ "$(id -u)" != 0 ] || return 0
+  [ -n "$(find "$DIR/docker" -maxdepth 1 ! -user "$(id -u)" -print -quit 2>/dev/null)" ] || return 0
+  need_root
+  $SUDO find "$DIR/docker" -maxdepth 1 ! -user "$(id -u)" -exec chown "$(id -u):$(id -g)" {} +
+}
+
 env_set() {
   local file="$DIR/docker/.env"
+  reclaim_docker_dir
   touch "$file" && chmod 600 "$file"
   if grep -q "^$1=" "$file"; then
     sed -i "s|^$1=.*|$1=$2|" "$file"
@@ -638,6 +648,7 @@ start_stack() {
   prepare_bridge
   local start_log=$((0 + $(wc -l <"$LOG")))
   spin "$doing" with_docker "cd '$DIR' && sh docker/up.sh"
+  reclaim_docker_dir
   PAIR_LINK=$(tail -n +"$start_log" "$LOG" | grep -o 'http[^ ]*#pair=[A-Za-z0-9_-]*' | tail -n1 || true)
   start_bridge
   ok "Nibblets is running on this machine"
