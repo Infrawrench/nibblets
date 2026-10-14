@@ -40,7 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends gnupg \
  && apt-get install -y --no-install-recommends 1password-cli \
  && rm -rf /var/lib/apt/lists/*
 
-ARG OCU_VERSION=0.7.0
+ARG OCU_VERSION=0.8.0
 ARG TARGETARCH
 RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
       amd64) arch=x86_64 ;; \
