@@ -47,7 +47,12 @@ export async function onePasswordStatus(config: BridgeConfig): Promise<OnePasswo
     return OnePasswordStatus.parse(await res.json());
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { state: "offline", account: null, vaults: [], detail: `Host bridge unreachable: ${message}` };
+    return {
+      state: "offline",
+      account: null,
+      vaults: [],
+      detail: `Host bridge unreachable: ${message}`,
+    };
   }
 }
 

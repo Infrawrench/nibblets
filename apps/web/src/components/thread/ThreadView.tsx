@@ -14,6 +14,7 @@ import {
   HeartPulse,
   Info,
   Loader2,
+  ShieldAlert,
   Wrench,
   X,
 } from "lucide-react";
@@ -21,16 +22,27 @@ import type { Nibblet, StoredItem, ThreadItemOf, TurnSource } from "@nibblet/pro
 import { buildTimeline, sourceLabels, type TimelineEntry } from "../../lib/thread.ts";
 import { clockTime } from "../../lib/time.ts";
 import { cn } from "../../lib/cn.ts";
+import { SharedFileEntry, UserAttachments } from "../files/Files.tsx";
 import { Hamster } from "../hamster/Hamster.tsx";
+import { Button } from "../ui/Button.tsx";
+import { Input } from "../ui/Field.tsx";
+
+/** Answers a gated tool call the nibblet is waiting on. */
+export type DecideFn = (approvalId: string, approve: boolean, reason?: string) => Promise<void>;
 
 export function ThreadView({
   items,
   server,
   nibblets,
+  onDecide,
+  onResume,
 }: {
   items: readonly StoredItem[];
   server: string;
   nibblets: readonly Nibblet[];
+  onDecide?: DecideFn;
+  /** "Try now" on a usage-limit wait. */
+  onResume?: () => Promise<void>;
 }) {
   const timeline = buildTimeline(items);
   const scroller = useRef<HTMLDivElement>(null);
@@ -56,7 +68,14 @@ export function ThreadView({
           <div className="py-16 text-center text-sm text-faint">Nothing here yet. Say hello.</div>
         ) : null}
         {timeline.map((entry) => (
-          <Entry key={entry.key} entry={entry} server={server} nibblets={nibblets} />
+          <Entry
+            key={entry.key}
+            entry={entry}
+            server={server}
+            nibblets={nibblets}
+            onDecide={onDecide}
+            onResume={onResume}
+          />
         ))}
       </div>
     </div>
@@ -67,10 +86,14 @@ function Entry({
   entry,
   server,
   nibblets,
+  onDecide,
+  onResume,
 }: {
   entry: TimelineEntry;
   server: string;
   nibblets: readonly Nibblet[];
+  onDecide?: DecideFn;
+  onResume?: () => Promise<void>;
 }) {
   switch (entry.kind) {
     case "quiet":
@@ -87,8 +110,15 @@ function Entry({
       switch (item.type) {
         case "user_message":
           return (
-            <div className="max-w-[80%] self-end rounded-2xl rounded-br-md bg-bubble px-3.5 py-2 text-base whitespace-pre-wrap">
-              {item.text}
+            <div className="flex max-w-[80%] flex-col items-end gap-1.5 self-end">
+              {item.attachments?.length ? (
+                <UserAttachments server={server} files={item.attachments} />
+              ) : null}
+              {item.text ? (
+                <div className="rounded-2xl rounded-br-md bg-bubble px-3.5 py-2 text-base whitespace-pre-wrap">
+                  {item.text}
+                </div>
+              ) : null}
             </div>
           );
         case "assistant_message":
@@ -109,8 +139,14 @@ function Entry({
               child={nibblets.find((n) => n.id === item.childId)}
             />
           );
+        case "file":
+          return <SharedFileEntry server={server} item={item} />;
         case "notice":
           return <Notice item={item} />;
+        case "approval":
+          return <Approval item={item} onDecide={onDecide} />;
+        case "limit_wait":
+          return <LimitWait item={item} onResume={onResume} />;
         case "turn":
           return null;
       }
@@ -271,6 +307,49 @@ function Subagent({
   );
 }
 
+const subscriptionNames = { anthropic: "Claude", openai: "ChatGPT" } as const;
+
+/** Waiting out a usage limit: when it carries on, and a way to try sooner. */
+function LimitWait({
+  item,
+  onResume,
+}: {
+  item: ThreadItemOf<"limit_wait">;
+  onResume?: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const which = item.provider ? `your ${subscriptionNames[item.provider]} subscription's` : "the";
+  const text =
+    item.status === "waiting"
+      ? `Hit ${which} usage limit. Carrying on by itself at ${clockTime(item.until)}.`
+      : item.status === "resumed"
+        ? `Hit ${which} usage limit, then carried on.`
+        : `Stopped waiting for ${which} usage limit.`;
+  return (
+    <div className="flex items-center gap-2 rounded-md bg-warning/10 px-2.5 py-1.5 text-xs text-warning [&>svg]:size-3.5 [&>svg]:shrink-0">
+      <Clock />
+      <span className="flex-1">{text}</span>
+      {item.status === "waiting" && onResume ? (
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await onResume();
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          Try now
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 function Notice({ item }: { item: ThreadItemOf<"notice"> }) {
   return (
     <div
@@ -283,6 +362,112 @@ function Notice({ item }: { item: ThreadItemOf<"notice"> }) {
     >
       {item.level === "info" ? <Info /> : <AlertTriangle />}
       <span>{item.text}</span>
+    </div>
+  );
+}
+
+const approvalOutcome: Record<
+  Exclude<ThreadItemOf<"approval">["status"], "pending">,
+  { label: string; className: string }
+> = {
+  approved: { label: "Approved", className: "text-ok" },
+  denied: { label: "Declined", className: "text-danger" },
+  expired: { label: "Not answered in time", className: "text-faint" },
+};
+
+/** A gated tool call: what it wants to do, and Approve / Decline while it waits. */
+function Approval({ item, onDecide }: { item: ThreadItemOf<"approval">; onDecide?: DecideFn }) {
+  const [busy, setBusy] = useState(false);
+  const [declining, setDeclining] = useState(false);
+  const [reason, setReason] = useState("");
+  const [showInput, setShowInput] = useState(item.status === "pending");
+  const pending = item.status === "pending";
+  const decide = async (approve: boolean) => {
+    if (!onDecide) return;
+    setBusy(true);
+    try {
+      await onDecide(item.id, approve, approve ? undefined : reason.trim() || undefined);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const server = item.server.replace(/^host_/, "");
+  return (
+    <div
+      className={cn(
+        "rounded-lg border text-xs",
+        pending ? "border-warning/60 bg-warning/5" : "border-line bg-panel",
+      )}
+    >
+      <div className="flex items-center gap-2 px-2.5 py-2">
+        <ShieldAlert className={cn("size-4 shrink-0", pending ? "text-warning" : "text-faint")} />
+        <span className="min-w-0 flex-1">
+          {pending ? "Wants to use " : "Asked to use "}
+          <span className="font-medium">{item.tool.replace(/_/g, " ")}</span>
+          <span className="text-faint"> on {server}</span>
+        </span>
+        {item.status === "pending" ? null : (
+          <span className={approvalOutcome[item.status].className}>
+            {approvalOutcome[item.status].label}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => setShowInput((o) => !o)}
+          className="text-faint hover:text-text"
+          aria-label={showInput ? "Hide details" : "Show details"}
+        >
+          <ChevronRight className={cn("size-3.5 transition-transform", showInput && "rotate-90")} />
+        </button>
+      </div>
+      {showInput ? (
+        <pre className="mx-2.5 mb-2 max-h-56 overflow-auto rounded bg-deep p-2 font-mono text-2xs whitespace-pre-wrap">
+          {JSON.stringify(item.input, null, 2)}
+        </pre>
+      ) : null}
+      {!pending && item.reason ? (
+        <div className="px-2.5 pb-2 text-faint">Reason: {item.reason}</div>
+      ) : null}
+      {pending && onDecide ? (
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-line px-2.5 py-2">
+          {declining ? (
+            <>
+              <Input
+                autoFocus
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Why not? (optional, the nibblet sees this)"
+                className="h-6 min-w-0 flex-1 text-xs"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void decide(false);
+                }}
+              />
+              <Button size="sm" variant="danger" disabled={busy} onClick={() => void decide(false)}>
+                Decline
+              </Button>
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => setDeclining(false)}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button size="sm" variant="primary" disabled={busy} onClick={() => void decide(true)}>
+                <Check />
+                Approve
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => setDeclining(true)}
+              >
+                <X />
+                Decline
+              </Button>
+            </>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

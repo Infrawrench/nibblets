@@ -23,6 +23,23 @@ RUN curl -fsSL -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && apt-get install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/*
 
+# The 1Password CLI, from 1Password's own apt repository, with its package
+# signature policy. A nibblet only gets a token for it when the user shares
+# vaults with it.
+RUN apt-get update && apt-get install -y --no-install-recommends gnupg \
+ && curl -fsSL https://downloads.1password.com/linux/keys/1password.asc \
+      | gpg --dearmor --output /usr/share/keyrings/1password-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/$(dpkg --print-architecture) stable main" \
+      > /etc/apt/sources.list.d/1password.list \
+ && mkdir -p /etc/debsig/policies/AC2D62742012EA22 /usr/share/debsig/keyrings/AC2D62742012EA22 \
+ && curl -fsSL https://downloads.1password.com/linux/debian/debsig/1password.pol \
+      > /etc/debsig/policies/AC2D62742012EA22/1password.pol \
+ && curl -fsSL https://downloads.1password.com/linux/keys/1password.asc \
+      | gpg --dearmor --output /usr/share/debsig/keyrings/AC2D62742012EA22/debsig.gpg \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends 1password-cli \
+ && rm -rf /var/lib/apt/lists/*
+
 ARG OCU_VERSION=0.7.0
 ARG TARGETARCH
 RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \

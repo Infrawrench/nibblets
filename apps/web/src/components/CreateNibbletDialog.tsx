@@ -8,6 +8,7 @@ import {
   type Effort,
   type HamsterLook,
   type Nibblet,
+  type VaultGrant,
 } from "@nibblet/protocol";
 import { HamsterEditor } from "./hamster/HamsterEditor.tsx";
 import { Hamster } from "./hamster/Hamster.tsx";
@@ -18,6 +19,7 @@ import { Button } from "./ui/Button.tsx";
 import { FieldRow, Select, Textarea } from "./ui/Field.tsx";
 import { Switch } from "./ui/Switch.tsx";
 import { NibbletTools, type ToolsValue } from "./tools/NibbletTools.tsx";
+import { NewNibbletVaults } from "./onepassword/OnePasswordSection.tsx";
 import { keys, useServers } from "../lib/servers.tsx";
 import { useServerNames } from "../lib/useServerNames.ts";
 import { nextHamsterName } from "../lib/hamsterNames.ts";
@@ -44,10 +46,12 @@ export function CreateNibbletDialog({
   });
   const [effort, setEffort] = useState<Effort>("medium");
   const [browser, setBrowser] = useState(true);
+  const [vaults, setVaults] = useState<VaultGrant[]>([]);
   const [tools, setTools] = useState<ToolsValue>({
     hostTools: [],
     cliCredentials: [],
     mcpServers: [],
+    toolApprovals: [],
   });
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -63,7 +67,7 @@ export function CreateNibbletDialog({
       .map((n) => n.name);
     setName(nextHamsterName(taken));
     setMessage("");
-    setTools({ hostTools: [], cliCredentials: [], mcpServers: [] });
+    setTools({ hostTools: [], cliCredentials: [], mcpServers: [], toolApprovals: [] });
     setError(null);
   }, [open]);
 
@@ -86,6 +90,12 @@ export function CreateNibbletDialog({
         ...tools,
         ...(message.trim() ? { message: message.trim() } : {}),
       });
+      if (vaults.length > 0) {
+        // Its own 1Password access is made once it exists; failing that isn't a reason to stop.
+        await connection.client.onePassword
+          .setGrants({ nibbletId: created.id, grants: vaults })
+          .catch(() => undefined);
+      }
       await qc.invalidateQueries({ queryKey: keys.nibblets(server) });
       onOpenChange(false);
       void navigate({ to: "/n/$server/$id", params: { server, id: created.id } });
@@ -146,7 +156,17 @@ export function CreateNibbletDialog({
           <FieldRow label="Browser" hint="A Chromium it and you can both drive.">
             <Switch checked={browser} onChange={setBrowser} label="Browser" />
           </FieldRow>
-          {target ? <NibbletTools connection={target} value={tools} onChange={setTools} /> : null}
+          {target ? (
+            <>
+              <NibbletTools
+                connection={target}
+                value={tools}
+                onChange={setTools}
+                browser={browser}
+              />
+              <NewNibbletVaults connection={target} value={vaults} onChange={setVaults} />
+            </>
+          ) : null}
           <FieldRow label="First message" top>
             <Textarea
               value={message}

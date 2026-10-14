@@ -29,6 +29,8 @@ const Env = z.object({
    * the host's $SSH_AUTH_SOCK. Empty turns SSH key sharing off.
    */
   HOST_SSH_AUTH_SOCK: z.string().default(""),
+  /** How long a gated tool call waits for the user before it's declined. */
+  NIBBLET_APPROVAL_TIMEOUT_MINUTES: z.coerce.number().positive().default(30),
   /** Nibblets Connect, where this server can be linked to an account. */
   NIBBLET_CENTRAL_URL: z.url().default("https://nibblets-connect.astrid-906.workers.dev"),
   /** The machine's own name and OS; inside Docker the container can't see them. */

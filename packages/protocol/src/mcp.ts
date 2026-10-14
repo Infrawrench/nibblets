@@ -138,3 +138,57 @@ export const CliLogin = z.object({
   setup: z.array(z.array(z.string())),
 });
 export type CliLogin = z.infer<typeof CliLogin>;
+
+/**
+ * "Ask me first" for an MCP tool. `server` is the name the harness sees
+ * (`host_<name>` for host tools, a nibblet's own server names, `computer` for
+ * the browser); `tool` is an exact tool name or a glob where `*` matches
+ * anything, so `*` gates a whole server and `send_*` a family of tools.
+ */
+export const ToolRule = z.object({
+  server: z.string().min(1).max(80),
+  tool: z.string().min(1).max(120),
+});
+export type ToolRule = z.infer<typeof ToolRule>;
+
+export const ToolRules = z.array(ToolRule).max(200);
+
+/** Whether `name` matches a pattern where `*` stands for any run of characters. Case-insensitive. */
+export function globMatch(pattern: string, name: string): boolean {
+  const escaped = pattern
+    .toLowerCase()
+    .split("*")
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${escaped}$`).test(name.toLowerCase());
+}
+
+/** Whether a call to `tool` on `server` must wait for the user. */
+export function needsApproval(rules: readonly ToolRule[], server: string, tool: string): boolean {
+  return rules.some((r) => r.server === server && globMatch(r.tool, tool));
+}
+
+/**
+ * Tool names that look like moving money or destroying things. The UI ticks
+ * these for approval when a server is first enabled; the user can untick.
+ */
+export const RISKY_TOOL_PATTERNS = [
+  "*pay*",
+  "*transfer*",
+  "*send*",
+  "*delete*",
+  "*purchase*",
+] as const;
+
+export function looksRisky(tool: string): boolean {
+  return RISKY_TOOL_PATTERNS.some((p) => globMatch(p, tool));
+}
+
+/** How long a gated call waits for a decision before it's treated as declined. */
+export const DEFAULT_APPROVAL_TIMEOUT_MS = 30 * 60_000;
+
+/** What a declined or unanswered gated call returns to the agent. */
+export function declinedMessage(reason: string | null): string {
+  const why = reason ? ` Reason: ${reason}` : "";
+  return `The user declined this tool call.${why} Don't retry it unless they ask you to.`;
+}

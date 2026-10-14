@@ -8,11 +8,12 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@nibblet/protocol": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@nibblet/harness": "workspace:*",
     "@nibblet/harness-claude": "workspace:*",
     "@nibblet/harness-codex": "workspace:*",
     "@nibblet/harness-opencode": "workspace:*",
+    "@nibblet/protocol": "workspace:*",
     "ws": "^8.22.0",
     "zod": "^4.6.7"
   },

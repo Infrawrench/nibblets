@@ -10,6 +10,7 @@ import {
 } from "@nibblet/protocol";
 import { z } from "zod";
 import { cliStatuses } from "./clilogins.ts";
+import { forgetGrants, onePasswordStatus, readGrants, setGrants } from "./onepassword.ts";
 import type { Conductor } from "./conductor.ts";
 import type { HarnessModelLists } from "./opencode.ts";
 import {
@@ -21,6 +22,7 @@ import {
 } from "./hostmcp.ts";
 import type { Config } from "./config.ts";
 import type { Scheduler } from "./scheduler.ts";
+import type { Files } from "./files.ts";
 import type { Store } from "./store.ts";
 import type { Connect } from "./connect.ts";
 import type { Tunnel } from "./tunnel.ts";
@@ -35,6 +37,7 @@ export interface Services {
   models: HarnessModelLists;
   serverId: string;
   version: string;
+  files: Files;
 }
 
 const ok = { ok: true } as const;
@@ -56,6 +59,7 @@ async function credentialStatus(config: Config): Promise<CredentialStatus[]> {
       detail,
       plan: null,
       expiresAt: null,
+      limitedUntil: null,
     }));
   }
 }
@@ -139,12 +143,14 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       },
       delete: async ({ id }) => {
         await conductor.delete(id);
+        await forgetGrants(s.config, store, id);
         return ok;
       },
       start: ({ id }) => conductor.start(id),
       stop: ({ id }) => conductor.stop(id),
-      send: async ({ id, text }) => {
-        await conductor.enqueue(id, "user", text);
+      send: async ({ id, text, attachments }) => {
+        const files = await s.files.attachments(id, attachments);
+        await conductor.enqueue(id, "user", text, files);
         return ok;
       },
       interrupt: async ({ id }) => {
@@ -153,6 +159,14 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       },
       wake: async ({ id }) => {
         await conductor.heartbeat(id);
+        return ok;
+      },
+      resume: async ({ id }) => {
+        await conductor.resumeNow(id);
+        return ok;
+      },
+      decide: async ({ id, approvalId, approve, reason }) => {
+        await conductor.approvals.decide(id, approvalId, approve, reason);
         return ok;
       },
     },
@@ -226,6 +240,18 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
 
     clis: {
       list: () => cliStatuses(s.config),
+    },
+
+    onePassword: {
+      status: () => onePasswordStatus(s.config),
+      grants: () => readGrants(store),
+      setGrants: async ({ nibbletId, grants }) => {
+        const nibblet = await store.getNibblet(nibbletId);
+        const all = await setGrants(s.config, store, nibblet, grants);
+        // A running nibblet picks the change up straight away.
+        await conductor.reconfigure(nibbletId);
+        return all;
+      },
     },
 
     auth: {

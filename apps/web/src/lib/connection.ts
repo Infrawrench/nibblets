@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  FileRef,
   LiveMessage,
   contract,
   createClient,
@@ -8,6 +9,7 @@ import {
   type Contract,
   type Transport,
 } from "@nibblet/protocol";
+import { mockFileUrl, registerMockFile } from "./files.ts";
 
 /**
  * One nibblet server the UI talks to: the one that served this page
@@ -24,6 +26,10 @@ export interface ServerConnection {
   socketUrl(path: string): Promise<string>;
   /** An authenticated HTTP request to a path on this server, outside the RPC contract. */
   request(path: string, init?: RequestInit): Promise<Response>;
+  /** Uploads a file to a nibblet, reporting progress from 0 to 1. */
+  upload(nibbletId: string, file: File, onProgress: (fraction: number) => void): Promise<FileRef>;
+  /** A link an <img> or <a> can use for a stored file, signed so it needs no header. */
+  fileUrl(fileId: string): Promise<string>;
   mock: boolean;
 }
 
@@ -74,6 +80,36 @@ export function createConnection(
       headers: { ...(await headers()), ...Object.fromEntries(new Headers(init.headers)) },
     });
 
+  // XMLHttpRequest rather than fetch: it's the one that reports upload progress.
+  const upload = async (nibbletId: string, file: File, onProgress: (f: number) => void) => {
+    const auth = await headers();
+    const url = `${base()}/api/nibblets/${encodeURIComponent(nibbletId)}/files?name=${encodeURIComponent(file.name)}`;
+    return new Promise<FileRef>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", url);
+      for (const [k, v] of Object.entries(auth)) xhr.setRequestHeader(k, v);
+      xhr.setRequestHeader("content-type", file.type || "application/octet-stream");
+      xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+      xhr.onerror = () => reject(new Error("The upload didn't reach the server"));
+      xhr.onload = () => {
+        const body = safeJson(xhr.responseText);
+        const ref = FileRef.safeParse(body);
+        if (xhr.status < 300 && ref.success) resolve(ref.data);
+        else
+          reject(
+            new Error(UploadError.safeParse(body).data?.error ?? `Upload failed (${xhr.status})`),
+          );
+      };
+      xhr.send(file);
+    });
+  };
+
+  const fileUrl = async (fileId: string) => {
+    const res = await request(`/api/files/${encodeURIComponent(fileId)}/link`, { method: "POST" });
+    const link = FileLink.parse(await res.json());
+    return `${base() || window.location.origin}${link.url}`;
+  };
+
   return {
     id,
     base,
@@ -81,9 +117,14 @@ export function createConnection(
     live: socketFeed(() => socketUrl("/api/live")),
     socketUrl,
     request,
+    upload,
+    fileUrl,
     mock: false,
   };
 }
+
+const FileLink = z.object({ url: z.string() });
+const UploadError = z.object({ error: z.string() });
 
 /** A self-reconnecting feed of `LiveMessage`s over a WebSocket. */
 function socketFeed(url: () => Promise<string>): LiveFeed {
@@ -171,6 +212,15 @@ export function createMockConnection(transport: Transport, live: LiveFeed): Serv
       new Response(JSON.stringify({ sessions: [] }), {
         headers: { "content-type": "application/json" },
       }),
+    upload: async (_nibbletId, file, onProgress) => {
+      // Pretend to upload, so the progress UI can be judged in mock mode.
+      for (let i = 1; i <= 10; i++) {
+        await new Promise((r) => setTimeout(r, 60));
+        onProgress(i / 10);
+      }
+      return registerMockFile(file, file.name, file.type || "application/octet-stream");
+    },
+    fileUrl: async (fileId) => mockFileUrl(fileId),
     mock: true,
   };
 }

@@ -5,8 +5,19 @@ import {
   type HarnessSession,
   type McpServerSpec,
 } from "@nibblet/harness";
-import type { HarnessId, RunnerConfig, RunnerToServer, ServerToRunner } from "@nibblet/protocol";
+import {
+  DEFAULT_APPROVAL_TIMEOUT_MS,
+  type HarnessId,
+  type JsonValue,
+  type RunnerConfig,
+  type RunnerToServer,
+  type ServerToRunner,
+  type ToolRule,
+} from "@nibblet/protocol";
+import { randomUUID } from "node:crypto";
 import { CliLogins } from "./cli.ts";
+import type { RunnerFiles } from "./files.ts";
+import type { Decision, McpGate } from "./gate.ts";
 
 type TurnMessage = Extract<ServerToRunner, { type: "turn" }>;
 
@@ -21,7 +32,14 @@ export interface RunnerDeps {
   credproxyKey: string;
   /** Where borrowed CLI logins are applied; the process environment by default. */
   cliLogins?: CliLogins;
+  /** Puts the nibblet's own MCP servers and the browser behind "ask me first" rules. */
+  gate?: Pick<McpGate, "wrap">;
+  /** Fetches a turn's attachments into the workdir. */
+  files?: Pick<RunnerFiles, "fetch">;
 }
+
+/** How long the runner waits for an answer the server may never send (it restarted, say). */
+const APPROVAL_WAIT_MS = DEFAULT_APPROVAL_TIMEOUT_MS + 60_000;
 
 /**
  * The runner's brain, separate from the socket so it can be tested: it
@@ -39,6 +57,10 @@ export class Runner {
   private lastSessionId: string | null = null;
 
   private readonly cli: CliLogins;
+  private readonly approvals = new Map<
+    string,
+    { resolve: (d: Decision) => void; timer: ReturnType<typeof setTimeout> }
+  >();
 
   constructor(deps: RunnerDeps) {
     this.deps = deps;
@@ -57,6 +79,14 @@ export class Runner {
         this.queue.push(msg);
         void this.drain();
         return;
+      case "approval_decision": {
+        const waiting = this.approvals.get(msg.approvalId);
+        if (!waiting) return;
+        this.approvals.delete(msg.approvalId);
+        clearTimeout(waiting.timer);
+        waiting.resolve({ approved: msg.approved, reason: msg.reason });
+        return;
+      }
       case "interrupt":
         if (this.current?.turnId === msg.turnId) {
           this.current.abort.abort();
@@ -78,6 +108,24 @@ export class Runner {
         }
         return;
     }
+  }
+
+  /** The "ask me first" rules from the latest configure. */
+  rules(): readonly ToolRule[] {
+    return this.config?.toolApprovals ?? [];
+  }
+
+  /** Asks the user, through the server, whether a gated call may go ahead. */
+  ask(server: string, tool: string, input: JsonValue): Promise<Decision> {
+    const approvalId = randomUUID();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.approvals.delete(approvalId);
+        resolve({ approved: false, reason: "No one approved this in time" });
+      }, APPROVAL_WAIT_MS);
+      this.approvals.set(approvalId, { resolve, timer });
+      this.deps.send({ type: "approval_request", approvalId, server, tool, input });
+    });
   }
 
   async close(): Promise<void> {
@@ -132,6 +180,11 @@ export class Runner {
     return session;
   }
 
+  /** The turn running now, if any. */
+  currentTurnId(): string | null {
+    return this.current?.turnId ?? null;
+  }
+
   private async runTurn(turn: TurnMessage): Promise<void> {
     const config = this.config;
     if (!config) return;
@@ -140,6 +193,7 @@ export class Runner {
     const out = new TurnWriter(turn.turnId, (item) => this.deps.send({ type: "item", item }));
     try {
       const session = await this.ensureSession(config);
+      const attachments = (await this.deps.files?.fetch(turn.attachments)) ?? [];
       const result = await session.run(
         {
           turnId: turn.turnId,
@@ -147,6 +201,7 @@ export class Runner {
           input: turn.input,
           system: turn.system,
           signal: abort.signal,
+          attachments,
         },
         out,
       );
@@ -173,18 +228,58 @@ export class Runner {
   }
 }
 
-/** The built-in servers, plus the host servers ticked for it, plus its own. */
+/**
+ * The built-in servers, plus the host servers ticked for it, plus its own.
+ * Its own servers and the browser go through the gate, if there is one; host
+ * servers are gated by the nibblet server, and `nibblet` itself never is.
+ */
 export function mcpServersFor(
   config: RunnerConfig,
-  deps: Pick<RunnerDeps, "mcpServers" | "hostMcp">,
+  deps: Pick<RunnerDeps, "mcpServers" | "hostMcp" | "gate">,
 ): Record<string, McpServerSpec> {
-  const out: Record<string, McpServerSpec> = { ...deps.mcpServers };
+  const gated = (name: string, spec: McpServerSpec) => deps.gate?.wrap(name, spec) ?? spec;
+  const out: Record<string, McpServerSpec> = {};
+  for (const [name, spec] of Object.entries(deps.mcpServers)) {
+    out[name] = name === "nibblet" ? spec : gated(name, spec);
+  }
   for (const name of config.hostMcp) out[`host_${name}`] = deps.hostMcp(name);
+  const onePassword = config.cli.find((login) => login.id === "1password");
+  if (onePassword) {
+    out.onepassword = gated(
+      "onepassword",
+      onePasswordServer(onePassword.env, deps.mcpServers.computer),
+    );
+  }
   for (const server of config.mcpServers) {
-    out[server.name] =
+    out[server.name] = gated(
+      server.name,
       server.type === "http"
         ? { type: "http", url: server.url, headers: server.headers }
-        : { type: "stdio", command: server.command, args: server.args, env: server.env };
+        : { type: "stdio", command: server.command, args: server.args, env: server.env },
+    );
   }
   return out;
+}
+
+/**
+ * The `onepassword` tools for a nibblet given 1Password vaults. They get the
+ * browser's MCP address so `fill_login` can type into it directly.
+ */
+export function onePasswordServer(
+  env: Record<string, string>,
+  browser: McpServerSpec | undefined,
+): McpServerSpec {
+  const browserEnv: Record<string, string> =
+    browser?.type === "http"
+      ? {
+          OCU_MCP_URL: browser.url,
+          ...(browser.headers.authorization ? { OCU_MCP_AUTH: browser.headers.authorization } : {}),
+        }
+      : {};
+  return {
+    type: "stdio",
+    command: process.execPath,
+    args: [new URL("./onepassword-mcp.ts", import.meta.url).pathname],
+    env: { ...env, ...browserEnv },
+  };
 }

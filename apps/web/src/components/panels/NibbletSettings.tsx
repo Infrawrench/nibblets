@@ -13,6 +13,7 @@ import { Button } from "../ui/Button.tsx";
 import { FieldRow, Input, SectionHeading, Textarea } from "../ui/Field.tsx";
 import { Switch } from "../ui/Switch.tsx";
 import { NibbletTools } from "../tools/NibbletTools.tsx";
+import { NibbletVaults } from "../onepassword/OnePasswordSection.tsx";
 
 export function NibbletSettings({
   connection,
@@ -116,9 +117,13 @@ export function NibbletSettings({
           hostTools: nibblet.hostTools,
           cliCredentials: nibblet.cliCredentials,
           mcpServers: nibblet.mcpServers,
+          toolApprovals: nibblet.toolApprovals,
         }}
+        browser={nibblet.browser}
         onChange={(tools) => void update({ id: nibblet.id, ...tools })}
       />
+
+      <NibbletVaults connection={connection} nibblet={nibblet} />
 
       <SectionHeading>Heartbeats</SectionHeading>
       <HeartbeatSummary

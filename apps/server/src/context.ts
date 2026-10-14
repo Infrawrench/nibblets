@@ -1,4 +1,11 @@
-import type { Heartbeat, Memory, Nibblet, ThreadItem, TurnSource } from "@nibblet/protocol";
+import type {
+  Heartbeat,
+  Memory,
+  Nibblet,
+  SharedVault,
+  ThreadItem,
+  TurnSource,
+} from "@nibblet/protocol";
 
 export const QUIET_REPLY = "NO_REPLY";
 
@@ -67,6 +74,8 @@ export interface SystemPromptInput {
   history: ThreadItem[] | null;
   parent: Nibblet | null;
   now: Date;
+  /** 1Password vaults shared with it, if any. */
+  onePasswordVaults?: readonly SharedVault[];
 }
 
 export function systemPrompt(input: SystemPromptInput): string {
@@ -91,9 +100,12 @@ export function systemPrompt(input: SystemPromptInput): string {
 
   const rules = [
     "Your instructions are yours to maintain: when the user tells you what you're for or how they want things done, fold it into them with `instructions_update`.",
+    "Keep your status line current with `status_set`, fairly often: when you start something, when what you're doing changes, when you're waiting on something or someone, and update or clear it (`status_clear`) when you're done. A few words, present tense, like a chat status. The user sees it next to your name; it doesn't show in the chat, so don't mention setting it.",
+    "Some tools may need the user's approval before each call. If a call comes back declined, don't retry it; carry on another way or ask the user.",
     "Your container's disk is scratch space and can be wiped at any time. Anything worth keeping goes into memory with `memory_save`; check `memory_search` before asking the user something you may already know.",
     "Use `schedule_create` for anything at a set time, and heartbeats (`heartbeat_set`) for regular check-ins on things you're looking after. Keep as many heartbeats as you need, each with its own interval, hours and checklist, and remove ones that are no longer useful. Don't promise to do something later without scheduling it or setting a heartbeat.",
     "For work that splits into independent pieces, `spawn_subagent` starts a child nibblet; its answer comes back to you as a message.",
+    "Files the user attaches are saved under `uploads/` in your working directory. To give the user a file (a report, an export, an image you made), call `share_file` with its path; it appears in the chat for them to open or download, so don't paste its contents too.",
     `On heartbeat and scheduled turns, if there's nothing worth telling the user, reply with exactly ${QUIET_REPLY}.`,
   ];
   if (nibblet.browser) {
@@ -103,11 +115,29 @@ export function systemPrompt(input: SystemPromptInput): string {
   }
   parts.push(`## How you work\n\n${rules.map((r) => `- ${r}`).join("\n")}`);
 
+  const status = nibblet.statusText
+    ? `${nibblet.statusEmoji ? `${nibblet.statusEmoji} ` : ""}${nibblet.statusText}`
+    : null;
+  parts.push(
+    status
+      ? `## Your status line\n\nCurrently: "${status}". Change it when that's no longer true.`
+      : "## Your status line\n\nNot set.",
+  );
+
   parts.push(
     nibblet.heartbeats.length > 0
       ? `## Your heartbeats\n\n${nibblet.heartbeats.map((h) => `- ${describeHeartbeat(h)}`).join("\n")}`
       : "## Your heartbeats\n\nNone yet. Set one with `heartbeat_set` once there's something worth checking on regularly.",
   );
+
+  if (input.onePasswordVaults?.length) {
+    const vaults = input.onePasswordVaults
+      .map((v) => `- ${v.name} (${v.access === "write" ? "read and write" : "read only"})`)
+      .join("\n");
+    parts.push(
+      `## 1Password\n\nYou can use these 1Password vaults, and only these:\n${vaults}\n\nUse the \`onepassword\` tools (\`item_search\`, \`item_get\`, \`read_secret\`, \`fill_login\` to sign in on the page open in the browser) or the \`op\` CLI (e.g. \`op read "op://Vault/Item/field"\`). Never write a password, token or other secret into the chat, your memory, files, or your status; use it where it's needed and nowhere else.`,
+    );
+  }
 
   if (input.memories.length > 0) {
     const lines = input.memories.map(

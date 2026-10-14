@@ -1,4 +1,10 @@
-import { CredentialStatus, TurnSource, type HarnessId, type ThreadItemOf } from "@nibblet/protocol";
+import {
+  CredentialStatus,
+  FileRef,
+  TurnSource,
+  type HarnessId,
+  type ThreadItemOf,
+} from "@nibblet/protocol";
 import { z } from "zod";
 import type { Config } from "./config.ts";
 import { newId, type Store } from "./store.ts";
@@ -40,7 +46,13 @@ export function resumeAt(limitedUntil: Date | null, now: Date): Date {
   return new Date(now.getTime() + UNKNOWN_RESET_WAIT_MS);
 }
 
-export const WaitingTurn = z.object({ turnId: z.string(), source: TurnSource, input: z.string() });
+export const WaitingTurn = z.object({
+  turnId: z.string(),
+  source: TurnSource,
+  input: z.string(),
+  // Kept, so a turn that waits out a limit across a restart still has its files.
+  attachments: z.array(FileRef).optional(),
+});
 export type WaitingTurn = z.infer<typeof WaitingTurn>;
 
 const Wait = z.object({

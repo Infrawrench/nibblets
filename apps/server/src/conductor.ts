@@ -1,15 +1,26 @@
 import {
   RpcError,
+  type FileRef,
   type Nibblet,
   type RunnerToServer,
+  type SharedVault,
   type ServerToRunner,
   type ThreadItem,
   type TurnSource,
 } from "@nibblet/protocol";
 import { cliLogins } from "./clilogins.ts";
 import type { Config } from "./config.ts";
+import { Approvals } from "./approvals.ts";
 import { heartbeatInput, isQuiet, systemPrompt } from "./context.ts";
+import {
+  LimitWaits,
+  looksLikeUsageLimit,
+  ProviderLimits,
+  providerFor,
+  resumeAt,
+} from "./limits.ts";
 import { dropOverlaps, hostTools } from "./hostmcp.ts";
+import { onePasswordLogin } from "./onepassword.ts";
 import { opencodeLogin } from "./opencode.ts";
 import type { Orchestrator } from "./docker.ts";
 import { hashToken, newId, viewToken, type Store } from "./store.ts";
@@ -23,6 +34,8 @@ interface QueuedTurn {
   turnId: string;
   source: TurnSource;
   input: string;
+  /** Files the user attached to the message that started it. */
+  attachments?: FileRef[];
 }
 
 interface ActiveTurn extends QueuedTurn {
@@ -44,16 +57,36 @@ export class Conductor {
   private readonly store: Store;
   private readonly docker: Orchestrator;
   private readonly config: Config;
+  /** Gated tool calls waiting for the user. */
+  readonly approvals: Approvals;
+  /** Nibblets waiting out a subscription usage limit. */
+  readonly limits: LimitWaits;
+  private readonly providerLimits: ProviderLimits;
+  /** Vault names last shared with each runner, for its system prompt. */
+  private readonly onePasswordVaults = new Map<string, SharedVault[]>();
   serverName = "nibblet";
 
   constructor(store: Store, docker: Orchestrator, config: Config) {
     this.store = store;
     this.docker = docker;
     this.config = config;
+    this.approvals = new Approvals(store, config.NIBBLET_APPROVAL_TIMEOUT_MINUTES * 60_000);
+    this.providerLimits = new ProviderLimits(config);
+    this.limits = new LimitWaits(store, {
+      restoreQueue: (nibbletId, turns) => this.queues.set(nibbletId, [...turns]),
+      resume: (nibbletId) => void this.dispatch(nibbletId),
+    });
+  }
+
+  /** The turn a nibblet is running now, for tagging what it produces. */
+  activeTurnId(nibbletId: string): string | null {
+    return this.active.get(nibbletId)?.turnId ?? null;
   }
 
   /** Brings the database in line with Docker after a server restart. */
   async reconcile(): Promise<void> {
+    await this.approvals.resetStale();
+    await this.limits.restore();
     const runners = await this.docker.runners();
     for (const nibblet of await this.store.listNibblets()) {
       const runner = runners.get(nibblet.id);
@@ -110,6 +143,8 @@ export class Conductor {
   }
 
   async stop(nibbletId: string): Promise<Nibblet> {
+    await this.approvals.cancelAll(nibbletId, "The nibblet was stopped");
+    await this.limits.end(nibbletId, "cancelled");
     this.failActive(nibbletId, "interrupted", "Stopped");
     this.links.get(nibbletId)?.close();
     this.links.delete(nibbletId);
@@ -135,7 +170,17 @@ export class Conductor {
    * Queues a turn and records the message that started it. A stopped
    * nibblet is started, since a message to it is a request for it to act.
    */
-  async enqueue(nibbletId: string, source: TurnSource, input: string): Promise<string> {
+  async enqueue(
+    nibbletId: string,
+    source: TurnSource,
+    input: string,
+    attachments: FileRef[] = [],
+  ): Promise<string> {
+    // While waiting out a usage limit, heartbeats and schedules don't pile up.
+    if (this.limits.waiting(nibbletId) && (source === "heartbeat" || source === "schedule")) {
+      const pending = this.queues.get(nibbletId)?.find((t) => t.source === source);
+      if (pending) return pending.turnId;
+    }
     const nibblet = await this.store.getNibblet(nibbletId);
     const turnId = newId("turn");
     await this.store.putItem(nibbletId, {
@@ -145,10 +190,12 @@ export class Conductor {
       createdAt: now(),
       text: input,
       source,
+      ...(attachments.length > 0 ? { attachments } : {}),
     });
     const queue = this.queues.get(nibbletId) ?? [];
-    queue.push({ turnId, source, input });
+    queue.push({ turnId, source, input, attachments });
     this.queues.set(nibbletId, queue);
+    await this.limits.saveTurns(nibbletId, queue);
     await this.store.updateNibblet(nibbletId, { lastActivityAt: new Date() });
 
     // The caller only needs the message recorded; waking the container and
@@ -193,6 +240,8 @@ export class Conductor {
   }
 
   interrupt(nibbletId: string): void {
+    void this.approvals.cancelAll(nibbletId, "The turn was stopped");
+    void this.limits.end(nibbletId, "cancelled");
     const turn = this.active.get(nibbletId);
     if (turn) this.links.get(nibbletId)?.send({ type: "interrupt", turnId: turn.turnId });
     this.queues.set(nibbletId, []);
@@ -234,6 +283,11 @@ export class Conductor {
     this.links.get(nibbletId)?.close();
     this.links.set(nibbletId, link);
     const row = await this.store.nibbletRow(nibbletId);
+    const onePassword = await onePasswordLogin(this.config, this.store, nibbletId, (m) =>
+      console.warn(`[${nibbletId}] ${m}`),
+    );
+    if (onePassword) this.onePasswordVaults.set(nibbletId, onePassword.vaults);
+    else this.onePasswordVaults.delete(nibbletId);
     link.send({
       type: "configure",
       config: {
@@ -248,9 +302,13 @@ export class Conductor {
           row.hostTools.length > 0 && this.config.HOST_MCP_URL
             ? dropOverlaps(row.mcpServers, row.hostTools, (await hostTools(this.config)).servers)
             : row.mcpServers,
-        cli: await cliLogins(this.config, row.cliCredentials, (m) =>
-          console.warn(`[${nibbletId}] ${m}`),
-        ),
+        toolApprovals: row.toolApprovals,
+        cli: [
+          ...(await cliLogins(this.config, row.cliCredentials, (m) =>
+            console.warn(`[${nibbletId}] ${m}`),
+          )),
+          ...(onePassword ? [onePassword.login] : []),
+        ],
         opencodeLogin:
           row.harness === "opencode"
             ? await opencodeLogin(this.config, (m) => console.warn(`[${nibbletId}] ${m}`))
@@ -295,6 +353,22 @@ export class Conductor {
         await this.finishTurn(nibbletId, message);
         return;
       }
+      case "approval_request": {
+        // Answered whenever the user decides; the runner holds the call until then.
+        const { approvalId, server, tool, input } = message;
+        void this.approvals
+          .request(nibbletId, this.activeTurnId(nibbletId), { server, tool, input })
+          .then((d) =>
+            this.links.get(nibbletId)?.send({
+              type: "approval_decision",
+              approvalId,
+              approved: d.approved,
+              reason: d.reason,
+            }),
+          )
+          .catch((err: unknown) => console.error(`approval for ${nibbletId} failed`, err));
+        return;
+      }
       case "log": {
         const line = `[${nibbletId}] ${message.message}`;
         if (message.level === "error") console.error(line);
@@ -305,9 +379,26 @@ export class Conductor {
     }
   }
 
+  /** "Try now": stop waiting out a usage limit and run what's queued. */
+  async resumeNow(nibbletId: string): Promise<void> {
+    this.providerLimits.invalidate();
+    await this.limits.end(nibbletId, "resumed");
+  }
+
   private async dispatch(nibbletId: string): Promise<void> {
     const link = this.links.get(nibbletId);
-    if (!link || this.active.has(nibbletId)) return;
+    if (!link || this.active.has(nibbletId) || this.limits.waiting(nibbletId)) return;
+    if (!this.queues.get(nibbletId)?.length) return;
+    // Don't send work into a subscription that's known to be out of usage.
+    const nibblet = await this.store.getNibblet(nibbletId);
+    const provider = providerFor(nibblet);
+    const limited = provider ? await this.providerLimits.until(provider) : null;
+    if (limited) {
+      await this.limits.start(nibbletId, provider, resumeAt(limited, new Date()), [
+        ...(this.queues.get(nibbletId) ?? []),
+      ]);
+      return;
+    }
     const next = this.queues.get(nibbletId)?.shift();
     if (!next) return;
 
@@ -324,6 +415,7 @@ export class Conductor {
         source: next.source,
         input: next.input,
         system,
+        attachments: next.attachments ?? [],
       });
     } catch (err) {
       this.active.delete(nibbletId);
@@ -354,6 +446,7 @@ export class Conductor {
       history,
       parent,
       now: new Date(),
+      onePasswordVaults: this.onePasswordVaults.get(nibbletId),
     });
   }
 
@@ -364,6 +457,8 @@ export class Conductor {
     const turn = this.active.get(nibbletId);
     if (!turn || turn.turnId !== end.turnId) return;
     this.active.delete(nibbletId);
+
+    if (end.status === "failed" && (await this.waitOutLimit(nibbletId, turn, end.error))) return;
 
     const quiet = end.status === "completed" && isQuiet(turn.source, turn.lastReply);
     await this.putTurnItem(nibbletId, turn, end.status, quiet, end.usage);
@@ -382,6 +477,28 @@ export class Conductor {
     }
     await this.reportToParent(nibbletId, turn, end);
     await this.dispatch(nibbletId);
+  }
+
+  /**
+   * A turn that failed because the subscription is out of usage goes back on
+   * the queue, and the nibblet waits for the limit to reset. True if it did.
+   */
+  private async waitOutLimit(
+    nibbletId: string,
+    turn: ActiveTurn,
+    error: string | null,
+  ): Promise<boolean> {
+    const nibblet = await this.store.getNibblet(nibbletId);
+    const provider = providerFor(nibblet);
+    this.providerLimits.invalidate();
+    const limited = provider ? await this.providerLimits.until(provider) : null;
+    if (!limited && !looksLikeUsageLimit(error)) return false;
+    await this.putTurnItem(nibbletId, turn, "interrupted", false, null);
+    const queue = this.queues.get(nibbletId) ?? [];
+    queue.unshift({ turnId: turn.turnId, source: turn.source, input: turn.input });
+    this.queues.set(nibbletId, queue);
+    await this.limits.start(nibbletId, provider, resumeAt(limited, new Date()), queue);
+    return true;
   }
 
   /** Sends a finished sub-agent's answer back to the nibblet that asked for it. */

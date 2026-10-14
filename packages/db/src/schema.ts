@@ -4,6 +4,7 @@ import type {
   HarnessId,
   Heartbeat,
   McpServerDef,
+  ToolRule,
   NibbletStatus,
   ThreadItem,
 } from "@nibblet/protocol";
@@ -48,6 +49,11 @@ export const nibblets = pgTable("nibblets", {
   cliCredentials: text("cli_credentials").array().notNull().default([]),
   /** Unmasked: the API masks header and env values on the way out. */
   mcpServers: jsonb("mcp_servers").$type<McpServerDef[]>().notNull().default([]),
+  toolApprovals: jsonb("tool_approvals").$type<ToolRule[]>().notNull().default([]),
+  statusText: text("status_text"),
+  statusEmoji: text("status_emoji"),
+  statusUpdatedAt: timestamp("status_updated_at", { withTimezone: true }),
+  awaitingApproval: boolean("awaiting_approval").notNull().default(false),
   /** Hash of the token its runner and its tool calls authenticate with. */
   tokenHash: text("token_hash").notNull(),
   containerId: text("container_id"),
@@ -125,3 +131,25 @@ export const pairingCodes = pgTable("pairing_codes", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: createdAt(),
 });
+
+/**
+ * Files on the server's data volume, under `files/<nibbletId>/<id>`: what
+ * the user attached to a message, and what a nibblet shared back.
+ */
+export const files = pgTable(
+  "files",
+  {
+    id: text("id").primaryKey(),
+    nibbletId: text("nibblet_id")
+      .notNull()
+      .references(() => nibblets.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    mime: text("mime").notNull(),
+    size: bigint("size", { mode: "number" }).notNull(),
+    sha256: text("sha256"),
+    direction: text("direction").$type<"user" | "nibblet">().notNull(),
+    status: text("status").$type<"uploading" | "ready" | "failed">().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("files_nibblet_idx").on(t.nibbletId)],
+);

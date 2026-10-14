@@ -1,6 +1,8 @@
-import { useRef, useState } from "react";
-import { ArrowUp, Square } from "lucide-react";
-import type { Nibblet } from "@nibblet/protocol";
+import { useEffect, useRef, useState } from "react";
+import { ArrowUp, Loader2, Paperclip, Square, Upload, X } from "lucide-react";
+import type { FileRef, Nibblet } from "@nibblet/protocol";
+import { formatBytes, isImage } from "../../lib/files.ts";
+import { FileTypeIcon } from "../files/Files.tsx";
 import { useModels } from "../../lib/models.ts";
 import { ModelPicker } from "../ModelPicker.tsx";
 import { EffortMenu } from "../EffortMenu.tsx";
@@ -20,6 +22,11 @@ export function Composer({
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  const { attachments, add, remove, clear, dragging } = useAttachments(connection, nibblet.id);
+  const uploading = attachments.some((a) => a.ref === null && a.error === null);
+  const ready = attachments.flatMap((a) => (a.ref ? [a.ref] : []));
+  const canSend = (text.trim().length > 0 || ready.length > 0) && !uploading && !sending;
   const catalogue = useModels(connection);
   const model = catalogue.find(nibblet.harness, nibblet.model);
   const asleep = nibblet.status === "stopped";
@@ -28,14 +35,21 @@ export function Composer({
   // server has it, and comes back to the box only if sending failed.
   const send = async () => {
     const message = text.trim();
-    if (!message || sending) return;
+    if (!canSend) return;
+    const files = attachments;
     setSending(true);
     setText("");
+    clear();
     if (area.current) area.current.style.height = "auto";
     try {
-      await connection.client.nibblets.send({ id: nibblet.id, text: message });
+      await connection.client.nibblets.send({
+        id: nibblet.id,
+        text: message,
+        attachments: ready.map((r) => r.fileId),
+      });
     } catch {
       setText((current) => current || message);
+      for (const f of files) add([f.file]);
     } finally {
       setSending(false);
       area.current?.focus();
@@ -44,7 +58,22 @@ export function Composer({
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 px-4 pb-4">
+      {dragging ? (
+        <div className="pointer-events-none fixed inset-0 z-30 flex items-center justify-center bg-accent/10 backdrop-blur-[1px]">
+          <div className="flex items-center gap-2 rounded-xl border border-accent/50 bg-surface px-4 py-3 text-sm font-medium shadow-float">
+            <Upload className="size-4 text-accent" />
+            Drop to attach for {nibblet.name}
+          </div>
+        </div>
+      ) : null}
       <div className="pointer-events-auto mx-auto max-w-[46rem] rounded-3xl border border-black/8 bg-surface/85 shadow-float backdrop-blur-md transition-colors focus-within:border-accent/50 dark:border-white/8 dark:focus-within:border-accent/50">
+        {attachments.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5 px-3 pt-3">
+            {attachments.map((a) => (
+              <AttachmentChip key={a.key} attachment={a} onRemove={() => remove(a.key)} />
+            ))}
+          </div>
+        ) : null}
         <textarea
           ref={area}
           value={text}
@@ -54,6 +83,13 @@ export function Composer({
             const el = e.currentTarget;
             el.style.height = "auto";
             el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
+          }}
+          onPaste={(e) => {
+            const pasted = [...e.clipboardData.files];
+            if (pasted.length > 0) {
+              e.preventDefault();
+              add(pasted);
+            }
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -69,6 +105,25 @@ export function Composer({
           className="block max-h-56 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-base outline-none placeholder:text-faint"
         />
         <div className="flex items-center gap-0.5 px-2 pb-2">
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              add([...(e.currentTarget.files ?? [])]);
+              e.currentTarget.value = "";
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => picker.current?.click()}
+            className="flex size-7 items-center justify-center rounded-full text-dim hover:bg-hover hover:text-text"
+            aria-label="Attach files"
+            title="Attach files"
+          >
+            <Paperclip className="size-4" />
+          </button>
           <ModelPicker
             catalogue={catalogue}
             value={{ harness: nibblet.harness, model: nibblet.model }}
@@ -105,19 +160,157 @@ export function Composer({
           ) : (
             <button
               type="button"
-              disabled={!text.trim() || sending}
+              disabled={!canSend}
               onClick={() => void send()}
               className={cn(
                 "flex size-7 items-center justify-center rounded-full bg-accent text-accent-text transition-opacity hover:bg-accent-hover disabled:opacity-30",
               )}
               aria-label="Send"
-              title="Send (Enter)"
+              title={uploading ? "Waiting for uploads…" : "Send (Enter)"}
             >
               <ArrowUp className="size-4" />
             </button>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+interface Attachment {
+  key: string;
+  file: File;
+  /** A local preview for images, until it's sent. */
+  preview: string | null;
+  progress: number;
+  ref: FileRef | null;
+  error: string | null;
+}
+
+/**
+ * Files waiting to go with the next message: each starts uploading as soon
+ * as it's added, from the picker, a paste, or a drop anywhere on the page.
+ */
+function useAttachments(connection: ServerConnection, nibbletId: string) {
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const counter = useRef(0);
+
+  const update = (key: string, patch: Partial<Attachment>) =>
+    setAttachments((list) => list.map((a) => (a.key === key ? { ...a, ...patch } : a)));
+
+  const add = (files: File[]) => {
+    for (const file of files) {
+      const key = `a${counter.current++}`;
+      const preview = isImage(file.type) ? URL.createObjectURL(file) : null;
+      setAttachments((list) => [
+        ...list,
+        { key, file, preview, progress: 0, ref: null, error: null },
+      ]);
+      connection
+        .upload(nibbletId, file, (progress) => update(key, { progress }))
+        .then(
+          (ref) => update(key, { ref, progress: 1 }),
+          (err: unknown) =>
+            update(key, { error: err instanceof Error ? err.message : String(err) }),
+        );
+    }
+  };
+
+  const remove = (key: string) =>
+    setAttachments((list) => {
+      const gone = list.find((a) => a.key === key);
+      if (gone?.preview) URL.revokeObjectURL(gone.preview);
+      return list.filter((a) => a.key !== key);
+    });
+
+  const clear = () => setAttachments([]);
+
+  // Drag files anywhere over the page to attach them to this nibblet.
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes("Files") ?? false;
+    const enter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth++;
+      setDragging(true);
+    };
+    const leave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDragging(false);
+    };
+    const over = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault();
+    };
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setDragging(false);
+      add([...(e.dataTransfer?.files ?? [])]);
+    };
+    window.addEventListener("dragenter", enter);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("dragover", over);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragenter", enter);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("drop", drop);
+    };
+  });
+
+  return { attachments, add, remove, clear, dragging };
+}
+
+function AttachmentChip({
+  attachment: a,
+  onRemove,
+}: {
+  attachment: Attachment;
+  onRemove: () => void;
+}) {
+  const busy = a.ref === null && a.error === null;
+  return (
+    <div
+      className={cn(
+        "relative flex items-center gap-2 overflow-hidden rounded-xl border bg-surface pr-1 text-xs",
+        a.error ? "border-danger/50" : "border-line",
+        a.preview ? "pl-1" : "pl-2.5",
+      )}
+      title={a.error ?? a.file.name}
+    >
+      {a.preview ? (
+        <img src={a.preview} alt="" className="size-9 rounded-lg object-cover" />
+      ) : (
+        <FileTypeIcon mime={a.file.type} className="text-dim" />
+      )}
+      <div className="flex max-w-40 min-w-0 flex-col py-1">
+        <span className="truncate font-medium">{a.file.name}</span>
+        <span className={cn("truncate text-2xs", a.error ? "text-danger" : "text-faint")}>
+          {a.error ??
+            (busy ? `Uploading ${Math.round(a.progress * 100)}%` : formatBytes(a.file.size))}
+        </span>
+      </div>
+      {busy ? <Loader2 className="size-3.5 animate-spin text-faint" /> : null}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="rounded-full p-1 text-faint hover:bg-hover hover:text-text"
+        aria-label={`Remove ${a.file.name}`}
+      >
+        <X className="size-3" />
+      </button>
+      {busy ? (
+        <div className="absolute inset-x-0 bottom-0 h-0.5 bg-deep">
+          <div
+            className="h-full bg-accent transition-[width]"
+            style={{ width: `${a.progress * 100}%` }}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

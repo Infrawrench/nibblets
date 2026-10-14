@@ -29,6 +29,20 @@
       "when": 1791934360660,
       "tag": "0003_drop_peers",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791936538899,
+      "tag": "0004_status_and_approvals",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791936997474,
+      "tag": "0005_files",
+      "breakpoints": true
     }
   ]
 }

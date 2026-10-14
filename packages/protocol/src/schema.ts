@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { McpServerDef, McpServerList } from "./mcp.ts";
+import { McpServerDef, McpServerList, ToolRules } from "./mcp.ts";
 import { Effort, HarnessId } from "./models.ts";
 
 const Timestamp = z.iso.datetime();
@@ -139,7 +139,8 @@ export function randomHamsterLook(random: () => number = Math.random): HamsterLo
   };
 }
 
-export const NibbletStatus = z.enum(["stopped", "starting", "idle", "working", "error"]);
+/** `waiting`: its subscription's usage limit is hit; it carries on when that resets. */
+export const NibbletStatus = z.enum(["stopped", "starting", "idle", "working", "waiting", "error"]);
 export type NibbletStatus = z.infer<typeof NibbletStatus>;
 
 export const Nibblet = z.object({
@@ -164,6 +165,14 @@ export const Nibblet = z.object({
   cliCredentials: z.array(z.string()),
   /** MCP servers added to just this nibblet; header and env values come back masked. */
   mcpServers: z.array(McpServerDef),
+  /** MCP tools that wait for the user to approve each call. */
+  toolApprovals: ToolRules,
+  /** A short line the nibblet keeps current about what it's doing, like a chat status. */
+  statusText: z.string().nullable(),
+  statusEmoji: z.string().nullable(),
+  statusUpdatedAt: Timestamp.nullable(),
+  /** A gated tool call is waiting for the user. */
+  awaitingApproval: z.boolean(),
   createdAt: Timestamp,
   updatedAt: Timestamp,
   lastActivityAt: Timestamp.nullable(),
@@ -182,6 +191,7 @@ export const CreateNibblet = z.object({
   hostTools: z.array(z.string()).default([]),
   cliCredentials: z.array(z.string()).default([]),
   mcpServers: McpServerList.default([]),
+  toolApprovals: ToolRules.default([]),
   /** First message, sent once the container is up. */
   message: z.string().optional(),
 });
@@ -200,6 +210,7 @@ export const UpdateNibblet = z.object({
   cliCredentials: z.array(z.string()).optional(),
   /** Values equal to `MASKED` keep the stored secret. */
   mcpServers: McpServerList.optional(),
+  toolApprovals: ToolRules.optional(),
   // No heartbeats: the nibblet sets its own with the `heartbeat_*` tools.
 });
 
@@ -282,6 +293,24 @@ export const ThreadItem = z.discriminatedUnion("type", [
     text: z.string(),
   }),
   ItemBase.extend({
+    /** A gated MCP tool call, waiting for or decided by the user. */
+    type: z.literal("approval"),
+    server: z.string(),
+    tool: z.string(),
+    input: JsonValue,
+    status: z.enum(["pending", "approved", "denied", "expired"]),
+    reason: z.string().nullable(),
+    decidedAt: Timestamp.nullable(),
+  }),
+  /** The nibblet hit its subscription's usage limit and is waiting for it to reset. */
+  ItemBase.extend({
+    type: z.literal("limit_wait"),
+    provider: z.enum(["anthropic", "openai"]).nullable(),
+    /** When it carries on. */
+    until: Timestamp,
+    status: z.enum(["waiting", "resumed", "cancelled"]),
+  }),
+  ItemBase.extend({
     type: z.literal("turn"),
     source: TurnSource,
     status: z.enum(["running", "completed", "interrupted", "failed"]),
@@ -351,6 +380,8 @@ export const CredentialStatus = z.object({
   detail: z.string(),
   plan: z.string().nullable(),
   expiresAt: Timestamp.nullable(),
+  /** Set while the subscription's usage limit is hit: when it resets. */
+  limitedUntil: Timestamp.nullable().default(null),
 });
 export type CredentialStatus = z.infer<typeof CredentialStatus>;
 

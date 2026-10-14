@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Effort, HarnessId } from "./models.ts";
-import { CliLogin, McpServerDef } from "./mcp.ts";
-import { FileRef, ThreadItem, TurnSource, Usage } from "./schema.ts";
+import { CliLogin, McpServerDef, ToolRule } from "./mcp.ts";
+import { FileRef, JsonValue, ThreadItem, TurnSource, Usage } from "./schema.ts";
 
 /**
  * The WebSocket between the server and the runner inside each nibblet's
@@ -34,6 +34,8 @@ export const RunnerConfig = z.object({
   mcpServers: z.array(McpServerDef).default([]),
   /** Borrowed host CLI logins, fetched fresh on every configure. Never stored. */
   cli: z.array(CliLogin).default([]),
+  /** Tools on its own servers and the browser that wait for the user; host tools are gated by the server. */
+  toolApprovals: z.array(ToolRule).default([]),
   /** For OpenCode nibblets: the host's OpenCode login, or null to use the credential proxy. */
   opencodeLogin: OpencodeLogin.nullable().default(null),
 });
@@ -56,6 +58,13 @@ export const ServerToRunner = z.discriminatedUnion("type", [
     attachments: z.array(FileRef).default([]),
   }),
   z.object({ type: z.literal("interrupt"), turnId: z.string() }),
+  /** The user's answer to an `approval_request`. */
+  z.object({
+    type: z.literal("approval_decision"),
+    approvalId: z.string(),
+    approved: z.boolean(),
+    reason: z.string().nullable(),
+  }),
 ]);
 export type ServerToRunner = z.infer<typeof ServerToRunner>;
 
@@ -70,6 +79,14 @@ export const RunnerToServer = z.discriminatedUnion("type", [
     usage: Usage.nullable(),
     /** The harness session the next turn can resume. */
     sessionId: z.string().nullable(),
+  }),
+  /** A gated tool call is waiting; the server asks the user and answers with `approval_decision`. */
+  z.object({
+    type: z.literal("approval_request"),
+    approvalId: z.string(),
+    server: z.string(),
+    tool: z.string(),
+    input: JsonValue,
   }),
   z.object({
     type: z.literal("log"),

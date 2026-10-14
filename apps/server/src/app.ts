@@ -14,6 +14,7 @@ import { runnerName } from "./docker.ts";
 import { createHandlers, type Services } from "./handlers.ts";
 import { hostMcpHandler } from "./hostmcp.ts";
 import { mcpHandler } from "./mcp.ts";
+import { mountFiles } from "./files.ts";
 import { viewToken } from "./store.ts";
 
 const TICKET_TTL_MS = 30_000;
@@ -234,6 +235,8 @@ export function createApp(services: Services, bus: Bus) {
       headers: { "content-type": res.headers.get("content-type") ?? "application/json" },
     });
   });
+
+  mountFiles(app, services.files, { store, config, bus, requireUser });
 
   const webDist = config.NIBBLET_WEB_DIST ?? new URL("../../web/dist", import.meta.url).pathname;
   if (existsSync(webDist)) {

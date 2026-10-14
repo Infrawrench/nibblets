@@ -15,6 +15,7 @@ const config: RunnerConfig = {
   mcpServers: [],
   cli: [],
   opencodeLogin: null,
+  toolApprovals: [],
 };
 
 /** A harness that echoes its input, or waits for an abort when told to. */

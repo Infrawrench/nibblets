@@ -12,6 +12,7 @@ import {
   HamsterLook,
   maskMcpServers,
   McpServerList,
+  ToolRules,
   randomHamsterLook,
   RpcError,
   type CreateNibblet,
@@ -66,6 +67,11 @@ export function toNibblet(row: NibbletRow): Nibblet {
     hostTools: row.hostTools,
     cliCredentials: row.cliCredentials,
     mcpServers: maskMcpServers(row.mcpServers),
+    toolApprovals: row.toolApprovals,
+    statusText: row.statusText,
+    statusEmoji: row.statusEmoji,
+    statusUpdatedAt: iso(row.statusUpdatedAt),
+    awaitingApproval: row.awaitingApproval,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     lastActivityAt: iso(row.lastActivityAt),
@@ -171,6 +177,7 @@ export class Store {
         hostTools: input.hostTools ?? [],
         cliCredentials: input.cliCredentials ?? [],
         mcpServers: McpServerList.parse(input.mcpServers ?? []),
+        toolApprovals: ToolRules.parse(input.toolApprovals ?? []),
         tokenHash: hashToken(token),
       })
       .returning();
@@ -258,6 +265,28 @@ export class Store {
       .from(items)
       .where(and(eq(items.nibbletId, nibbletId), eq(items.itemId, itemId)));
     return row?.item ?? null;
+  }
+
+  /** Approval items still marked pending, across every nibblet. */
+  async pendingApprovalItems(): Promise<
+    { nibbletId: string; item: Extract<ThreadItem, { type: "approval" }> }[]
+  > {
+    const rows = await this.db
+      .select({ nibbletId: items.nibbletId, item: items.item })
+      .from(items)
+      .where(
+        and(sql`${items.item}->>'type' = 'approval'`, sql`${items.item}->>'status' = 'pending'`),
+      );
+    return rows.flatMap((r) =>
+      r.item.type === "approval" ? [{ nibbletId: r.nibbletId, item: r.item }] : [],
+    );
+  }
+
+  async clearAwaitingApproval(): Promise<void> {
+    await this.db
+      .update(nibblets)
+      .set({ awaitingApproval: false })
+      .where(eq(nibblets.awaitingApproval, true));
   }
 
   /** The parent's still-running record of a sub-agent, if there is one. */

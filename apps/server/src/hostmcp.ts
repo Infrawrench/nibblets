@@ -1,6 +1,8 @@
 import {
   HostTools,
+  JsonValue,
   mcpTarget,
+  needsApproval,
   RpcError,
   TailscaleStatus,
   type HostTool,
@@ -8,6 +10,9 @@ import {
 } from "@nibblet/protocol";
 import { createHash } from "node:crypto";
 import type { Context } from "hono";
+import { z } from "zod";
+import { declinedText } from "./approvals.ts";
+import type { Conductor } from "./conductor.ts";
 import type { Config } from "./config.ts";
 import type { Store } from "./store.ts";
 
@@ -25,15 +30,44 @@ const PASS_REQUEST = [
 ];
 const PASS_RESPONSE = ["content-type", "mcp-session-id", "cache-control"];
 
+/** The `tools/call` in a JSON-RPC request body, if that's what it is. */
+export function toolCallIn(body: string): { id: JsonValue; tool: string; input: JsonValue } | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  const msg = ToolCallMessage.safeParse(parsed);
+  if (!msg.success) return null;
+  return { id: msg.data.id, tool: msg.data.params.name, input: msg.data.params.arguments ?? {} };
+}
+
+const ToolCallMessage = z.object({
+  jsonrpc: z.literal("2.0"),
+  id: z.union([z.string(), z.number()]),
+  method: z.literal("tools/call"),
+  params: z.object({ name: z.string(), arguments: JsonValue.optional() }),
+});
+
+/** A JSON-RPC reply standing in for a declined call: an error result the agent reads. */
+export function declinedReply(id: JsonValue, text: string): string {
+  return JSON.stringify({
+    jsonrpc: "2.0",
+    id,
+    result: { content: [{ type: "text", text }], isError: true },
+  });
+}
+
 /**
  * `ALL /hostmcp/:name`: a nibblet's harness talking to one of the host's
  * MCP servers. Authenticated by the nibblet's own token, limited to the
  * servers ticked for it, and forwarded to the host bridge with the bridge's
  * token. Bodies stream both ways, so SSE responses arrive as they're sent.
  */
-export function hostMcpHandler(deps: { store: Store; config: Config }) {
+export function hostMcpHandler(deps: { store: Store; config: Config; conductor: Conductor }) {
   return async (c: Context) => {
-    const { config, store } = deps;
+    const { config, store, conductor } = deps;
     if (!config.HOST_MCP_URL) return c.json({ error: "No host bridge is configured" }, 503);
     const auth = c.req.header("authorization") ?? "";
     const row = auth.startsWith("Bearer ") ? await store.nibbletByToken(auth.slice(7)) : null;
@@ -50,12 +84,35 @@ export function hostMcpHandler(deps: { store: Store; config: Config }) {
     }
     const method = c.req.method;
     const hasBody = method !== "GET" && method !== "HEAD";
+
+    // Requests are small JSON-RPC messages, so read them whole: a gated
+    // `tools/call` waits here for the user before it reaches the host.
+    let body: string | undefined;
+    if (method === "POST") {
+      body = await c.req.text();
+      const call = toolCallIn(body);
+      const server = `host_${name}`;
+      if (call && needsApproval(row.toolApprovals, server, call.tool)) {
+        const decision = await conductor.approvals.request(row.id, conductor.activeTurnId(row.id), {
+          server,
+          tool: call.tool,
+          input: call.input,
+        });
+        if (!decision.approved) {
+          return new Response(declinedReply(call.id, declinedText(decision)), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+      }
+    }
+
     const res = await fetch(`${config.HOST_MCP_URL}/mcp/${encodeURIComponent(name)}`, {
       method,
       headers,
-      body: hasBody ? c.req.raw.body : undefined,
+      body: body ?? (hasBody ? c.req.raw.body : undefined),
       // Node's fetch needs this to stream a request body.
-      ...(hasBody ? { duplex: "half" } : {}),
+      ...(hasBody && body === undefined ? { duplex: "half" } : {}),
       signal: c.req.raw.signal,
     }).catch(() => null);
     if (!res) return c.json({ error: "Host bridge unreachable" }, 502);

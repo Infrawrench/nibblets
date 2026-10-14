@@ -37,6 +37,20 @@ export function maxSeq(items: readonly StoredItem[]): number {
   return max;
 }
 
+/** The nibblet keeping its status line current: stored, never drawn in the chat. */
+export function isStatusCall(item: ThreadItem): boolean {
+  return (
+    item.type === "tool_call" &&
+    item.server === "nibblet" &&
+    (item.name === "status_set" || item.name === "status_clear")
+  );
+}
+
+/** Sharing a file: the file card that follows is what the user sees, not the call. */
+export function isShareCall(item: ThreadItem): boolean {
+  return item.type === "tool_call" && item.server === "files" && item.name === "share_file";
+}
+
 export type TimelineEntry =
   | { kind: "item"; key: string; item: ThreadItem }
   | { kind: "quiet"; key: string; source: TurnSource; at: string }
@@ -57,6 +71,7 @@ export function buildTimeline(items: readonly StoredItem[]): TimelineEntry[] {
   const out: TimelineEntry[] = [];
   const emittedQuiet = new Set<string>();
   for (const { item } of items) {
+    if (isStatusCall(item) || isShareCall(item)) continue;
     const quiet = item.turnId ? quietTurns.get(item.turnId) : undefined;
     if (quiet) {
       if (!emittedQuiet.has(quiet.id)) {

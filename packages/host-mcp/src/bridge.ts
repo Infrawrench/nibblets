@@ -35,6 +35,12 @@ import {
   type ConfigSource,
   type HostServer,
 } from "./config.ts";
+import {
+  defaultTokenStore,
+  GrantRequest,
+  onePasswordStatus,
+  OnePasswordGrantsManager,
+} from "./onepassword.ts";
 import { cliPlugins, runOnHost, type CliPlugin, type Run } from "./clis/index.ts";
 
 export interface ServerStatus {
@@ -217,6 +223,8 @@ export interface BridgeOptions {
   run?: Run;
   /** What `tailscale serve` shares: the nibblet server as the host sees it. */
   serveTarget?: string;
+  /** Per-nibblet 1Password access; swapped in tests. */
+  onePassword?: OnePasswordGrantsManager;
 }
 
 export interface HostMcpBridge {
@@ -237,6 +245,7 @@ export async function startHostMcpBridge(opts: BridgeOptions): Promise<HostMcpBr
   const clis = opts.clis ?? cliPlugins;
   const run = opts.run ?? runOnHost;
   const serveTarget = opts.serveTarget ?? "http://127.0.0.1:8420";
+  const onePassword = opts.onePassword ?? new OnePasswordGrantsManager(run, defaultTokenStore());
 
   const reload = async (): Promise<void> => {
     const next = await loadServers(sources);
@@ -314,6 +323,28 @@ export async function startHostMcpBridge(opts: BridgeOptions): Promise<HostMcpBr
       }
       if (req.method === "GET" && url.pathname === "/harness/opencode/login") {
         return json(res, 200, await readOpencodeLogin());
+      }
+      if (req.method === "GET" && url.pathname === "/1password") {
+        return json(res, 200, await onePasswordStatus(run));
+      }
+      const op = /^\/1password\/(grants|token)\/([\w-]+)$/.exec(url.pathname);
+      if (op?.[1] === "grants" && op[2] && req.method === "PUT") {
+        const body = GrantRequest.safeParse(await readJson(req));
+        if (!body.success) return json(res, 400, { error: "Send { label, grants }" });
+        try {
+          await onePassword.grant(op[2], body.data.label, body.data.grants);
+          return json(res, 200, { ok: true });
+        } catch (err) {
+          return json(res, 409, { error: err instanceof Error ? err.message : "Couldn't share" });
+        }
+      }
+      if (op?.[1] === "grants" && op[2] && req.method === "DELETE") {
+        await onePassword.grant(op[2], "unused", []);
+        return json(res, 200, { ok: true });
+      }
+      if (op?.[1] === "token" && op[2] && req.method === "GET") {
+        const found = await onePassword.token(op[2]);
+        return found ? json(res, 200, found) : json(res, 404, { error: "Nothing shared" });
       }
       const cli = /^\/clis\/([^/]+)\/credential$/.exec(url.pathname);
       if (req.method === "GET" && cli) {

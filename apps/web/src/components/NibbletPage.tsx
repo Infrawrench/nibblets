@@ -82,6 +82,18 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
                 </>
               ) : null}
               {nibblet.name}
+              {nibblet.statusText ? (
+                <span
+                  className="min-w-0 truncate text-xs font-normal text-dim"
+                  title={nibblet.statusText}
+                >
+                  · {nibblet.statusEmoji ? `${nibblet.statusEmoji} ` : ""}
+                  {nibblet.statusText}
+                </span>
+              ) : null}
+              {nibblet.awaitingApproval ? (
+                <span className="shrink-0 text-xs font-normal text-warning">· Needs approval</span>
+              ) : null}
             </span>
             <span className="flex items-center gap-1 truncate text-2xs text-faint">
               <HarnessIcon harness={nibblet.harness} className="size-3" />
@@ -126,7 +138,22 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
             <PanelRight />
           </Button>
         </header>
-        <ThreadView items={items} server={connection.id} nibblets={nibblets.data ?? []} />
+        <ThreadView
+          items={items}
+          server={connection.id}
+          nibblets={nibblets.data ?? []}
+          onDecide={async (approvalId, approve, reason) => {
+            await connection.client.nibblets.decide({
+              id: nibblet.id,
+              approvalId,
+              approve,
+              reason,
+            });
+          }}
+          onResume={async () => {
+            await connection.client.nibblets.resume({ id: nibblet.id });
+          }}
+        />
         <Composer connection={connection} nibblet={nibblet} running={running} />
       </div>
       {panel ? (

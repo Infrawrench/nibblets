@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StoredItem, ThreadItem } from "@nibblet/protocol";
-import { buildTimeline, maxSeq, runningTurn, upsertItems } from "./thread.ts";
+import { buildTimeline, maxSeq, runningTurn, upsertItems, isStatusCall } from "./thread.ts";
 
 const at = (s: number) => new Date(Date.UTC(2026, 9, 13, 12, 0, s)).toISOString();
 const stored = (seq: number, item: ThreadItem): StoredItem => ({ nibbletId: "n", seq, item });
@@ -101,5 +101,34 @@ describe("buildTimeline", () => {
     );
     expect(buildTimeline(items).map((e) => e.kind)).toEqual(["trigger", "item"]);
     expect(runningTurn(items)?.id).toBe("s");
+  });
+});
+
+describe("status line calls", () => {
+  const call = (id: string, name: string, server: string | null) => ({
+    nibbletId: "n",
+    seq: Number(id.slice(1)),
+    item: {
+      type: "tool_call" as const,
+      id,
+      turnId: "t",
+      createdAt: `2026-10-14T00:00:0${id.slice(1)}.000Z`,
+      name,
+      server,
+      input: { text: "Busy" },
+      output: "ok",
+      status: "done" as const,
+    },
+  });
+
+  it("keeps status_set and status_clear out of the chat, but not other tools", () => {
+    const items = [
+      call("c1", "status_set", "nibblet"),
+      call("c2", "memory_save", "nibblet"),
+      call("c3", "status_clear", "nibblet"),
+      call("c4", "status_set", "someone_else"),
+    ];
+    expect(buildTimeline(items).map((e) => e.key)).toEqual(["c2", "c4"]);
+    expect(isStatusCall(items[0]!.item)).toBe(true);
   });
 });

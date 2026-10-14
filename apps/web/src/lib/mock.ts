@@ -9,6 +9,7 @@ import {
   mergeMcpServers,
   randomHamsterLook,
   type Contract,
+  type OnePasswordGrants,
   type HostTool,
   type McpServerDef,
   type Handlers,
@@ -27,6 +28,8 @@ import {
   type LiveState,
   type ServerConnection,
 } from "./connection.ts";
+import type { FileRef } from "@nibblet/protocol";
+import { mockFileRef, registerMockFile } from "./files.ts";
 
 /** What a host's OpenCode might offer: Zen's free models and a couple of its own providers. */
 const mockOpencodeModels = [
@@ -126,6 +129,11 @@ export function createMockServer(): ServerConnection {
     hostTools: [],
     cliCredentials: [],
     mcpServers: [],
+    toolApprovals: [],
+    statusText: null,
+    statusEmoji: null,
+    statusUpdatedAt: null,
+    awaitingApproval: false,
     createdAt: ago(60 * 24 * 3),
     updatedAt: ago(5),
     lastActivityAt: ago(5),
@@ -138,6 +146,9 @@ export function createMockServer(): ServerConnection {
         id: "pip",
         name: "Pip",
         status: "working",
+        statusText: "Hunting for a cheap flight to Lisbon",
+        statusEmoji: "✈️",
+        statusUpdatedAt: ago(3),
         instructions:
           "Look after my inbox and calendar. Summarise anything important each morning.",
         look: { ...defaultHamsterLook, accessory: "headphones", accessoryColour: "teal" },
@@ -147,6 +158,8 @@ export function createMockServer(): ServerConnection {
         name: "Flight research",
         parentId: "pip",
         status: "working",
+        statusText: "Comparing Gatwick fares",
+        statusUpdatedAt: ago(2),
         look: {
           ...defaultHamsterLook,
           fur: "cream",
@@ -160,7 +173,13 @@ export function createMockServer(): ServerConnection {
         name: "Biscuit",
         harness: "codex",
         model: harnesses.codex.defaultModel,
-        status: "idle",
+        status: "working",
+        statusText: "Waiting on you to approve a payment",
+        statusEmoji: "💸",
+        statusUpdatedAt: ago(1),
+        awaitingApproval: true,
+        hostTools: ["mercury"],
+        toolApprovals: [{ server: "host_mercury", tool: "*pay*" }],
         look: {
           ...defaultHamsterLook,
           fur: "cinnamon",
@@ -359,6 +378,29 @@ export function createMockServer(): ServerConnection {
     text: "Will do. I've set a schedule to check every 15 minutes.",
     streaming: false,
   });
+  store("biscuit", {
+    type: "tool_call",
+    id: "b3",
+    turnId: "tb2",
+    createdAt: ago(2),
+    name: "status_set",
+    server: "nibblet",
+    input: { text: "Waiting on you to approve a payment", emoji: "💸" },
+    output: "Status set.",
+    status: "done",
+  });
+  store("biscuit", {
+    type: "approval",
+    id: "b4",
+    turnId: "tb2",
+    createdAt: ago(1),
+    server: "host_mercury",
+    tool: "create_payment",
+    input: { to: "Hetzner Online GmbH", amount: 42.5, currency: "EUR", memo: "October servers" },
+    status: "pending",
+    reason: null,
+    decidedAt: null,
+  });
 
   const schedules = new Map<string, Schedule>([
     [
@@ -442,7 +484,34 @@ export function createMockServer(): ServerConnection {
   };
 
   /** Plays a canned reply, streaming like the real thing. */
-  const reply = (id: string, text: string) => {
+  /** Shares a little SVG, uploading over a second or so, so the card can be judged. */
+  const mockShare = (id: string, turnId: string) => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80"><rect width="120" height="80" rx="10" fill="#dce8f5"/><circle cx="60" cy="44" r="24" fill="#e9a95e"/><circle cx="44" cy="24" r="8" fill="#e9a95e"/><circle cx="76" cy="24" r="8" fill="#e9a95e"/><circle cx="52" cy="42" r="3"/><circle cx="68" cy="42" r="3"/></svg>`;
+    const ref = registerMockFile(
+      new Blob([svg], { type: "image/svg+xml" }),
+      "hamster-sketch.svg",
+      "image/svg+xml",
+    );
+    const base = {
+      type: "file" as const,
+      id: ref.fileId,
+      turnId,
+      createdAt: now(),
+      ...ref,
+      caption: "A quick sketch of me, for your records.",
+      error: null,
+    };
+    let received = 0;
+    const tick = () => {
+      received = Math.min(ref.size, received + Math.ceil(ref.size / 6));
+      const done = received >= ref.size;
+      store(id, { ...base, status: done ? "ready" : "uploading", received });
+      if (!done) setTimeout(tick, 220);
+    };
+    setTimeout(tick, 600);
+  };
+
+  const reply = (id: string, text: string, attachments: FileRef[] = []) => {
     const turnId = crypto.randomUUID();
     const started = now();
     store(id, {
@@ -452,7 +521,10 @@ export function createMockServer(): ServerConnection {
       createdAt: started,
       text,
       source: "user",
+      ...(attachments.length > 0 ? { attachments } : {}),
     });
+    // Mention a file, or attach one, and the mock hamster shares a sketch back.
+    if (attachments.length > 0 || /\bfiles?\b/i.test(text)) mockShare(id, turnId);
     store(id, {
       type: "turn",
       id: turnId,
@@ -499,6 +571,9 @@ export function createMockServer(): ServerConnection {
     });
   };
 
+  const onePasswordGrants: OnePasswordGrants = {
+    pip: [{ vaultId: "v-nibblets", access: "read" }],
+  };
   const handlers: Handlers<Contract, null> = {
     system: {
       info: async () => ({
@@ -547,6 +622,7 @@ export function createMockServer(): ServerConnection {
             hostTools: input.hostTools,
             cliCredentials: input.cliCredentials,
             mcpServers: keepSecrets(id, input.mcpServers),
+            toolApprovals: input.toolApprovals,
             heartbeats: [],
             status: "idle",
             createdAt: now(),
@@ -572,6 +648,7 @@ export function createMockServer(): ServerConnection {
           mcpServers: patch.mcpServers
             ? keepSecrets(id, mergeMcpServers(patch.mcpServers, secrets.get(id) ?? []))
             : current.mcpServers,
+          toolApprovals: patch.toolApprovals ?? current.toolApprovals,
           updatedAt: now(),
         });
       },
@@ -582,8 +659,12 @@ export function createMockServer(): ServerConnection {
       },
       start: async ({ id }) => save({ ...get(id), status: "idle", statusDetail: null }),
       stop: async ({ id }) => save({ ...get(id), status: "stopped" }),
-      send: async ({ id, text }) => {
-        reply(id, text);
+      send: async ({ id, text, attachments }) => {
+        reply(
+          id,
+          text,
+          attachments.flatMap((a) => mockFileRef(a) ?? []),
+        );
         return { ok: true };
       },
       interrupt: async ({ id }) => {
@@ -591,6 +672,23 @@ export function createMockServer(): ServerConnection {
         return { ok: true };
       },
       wake: async () => ({ ok: true }),
+      resume: async ({ id }) => {
+        save({ ...get(id), status: "idle", statusDetail: null });
+        return { ok: true };
+      },
+      decide: async ({ id, approvalId, approve, reason }) => {
+        const found = items.get(id)?.find((s) => s.item.id === approvalId)?.item;
+        if (found?.type === "approval" && found.status === "pending") {
+          store(id, {
+            ...found,
+            status: approve ? "approved" : "denied",
+            reason: reason ?? null,
+            decidedAt: now(),
+          });
+        }
+        save({ ...get(id), awaitingApproval: false });
+        return { ok: true };
+      },
     },
     thread: {
       items: async ({ nibbletId, sinceSeq }) =>
@@ -722,6 +820,25 @@ export function createMockServer(): ServerConnection {
           },
         ],
       }),
+    },
+    onePassword: {
+      status: async () => ({
+        state: "connected",
+        account: "astrid@infrawrench.com on my.1password.com",
+        vaults: [
+          { id: "v-private", name: "Private", shareable: false },
+          { id: "v-nibblets", name: "Nibblets", shareable: true },
+          { id: "v-banking", name: "Banking", shareable: true },
+          { id: "v-work", name: "Work", shareable: true },
+        ],
+        detail: null,
+      }),
+      grants: async () => ({ ...onePasswordGrants }),
+      setGrants: async ({ nibbletId, grants }) => {
+        if (grants.length > 0) onePasswordGrants[nibbletId] = grants;
+        else delete onePasswordGrants[nibbletId];
+        return { ...onePasswordGrants };
+      },
     },
     auth: {
       createPairingLink: async () => ({

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { CliStatuses, HostTools } from "./mcp.ts";
 import { HarnessId, HarnessModels } from "./models.ts";
 import { ConnectStatus, TailscaleStatus } from "./connect.ts";
+import { OnePasswordGrants, OnePasswordStatus, VaultGrant } from "./onepassword.ts";
 import { procedure } from "./rpc.ts";
 import {
   CreateNibblet,
@@ -48,6 +49,18 @@ export const contract = {
     interrupt: procedure(Id, Ok),
     /** Runs the heartbeat now rather than waiting for the next one. */
     wake: procedure(Id, Ok),
+    /** Stops waiting out a usage limit and tries the queued work now. */
+    resume: procedure(Id, Ok),
+    /** Approves or declines a gated tool call the nibblet is waiting on. */
+    decide: procedure(
+      z.object({
+        id: z.string(),
+        approvalId: z.string(),
+        approve: z.boolean(),
+        reason: z.string().max(500).optional(),
+      }),
+      Ok,
+    ),
   },
   harnesses: {
     /** A harness's models: the fixed lists for Claude and Codex, the host's live list for OpenCode. */
@@ -105,6 +118,17 @@ export const contract = {
   clis: {
     /** Host CLIs and whether each is installed and signed in. */
     list: procedure(z.object({}), CliStatuses),
+  },
+  onePassword: {
+    /** Whether 1Password is connected on the server's computer, and its vaults. */
+    status: procedure(z.object({}), OnePasswordStatus),
+    /** Which vaults each nibblet may use. */
+    grants: procedure(z.object({}), OnePasswordGrants),
+    /** Gives one nibblet exactly these vaults; an empty list takes them all away. */
+    setGrants: procedure(
+      z.object({ nibbletId: z.string(), grants: z.array(VaultGrant) }),
+      OnePasswordGrants,
+    ),
   },
   auth: {
     /** A one-time link another device opens to sign in to this server. */

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  globMatch,
+  looksRisky,
+  needsApproval,
   MASKED,
   McpServerList,
   maskMcpServers,
@@ -69,5 +72,31 @@ describe("masking", () => {
       stored,
     );
     expect(merged[0]).toMatchObject({ env: {} });
+  });
+});
+
+describe("approval rules", () => {
+  it("matches tool names by glob, case-insensitively", () => {
+    expect(globMatch("send_*", "send_money")).toBe(true);
+    expect(globMatch("send_*", "resend_money")).toBe(false);
+    expect(globMatch("*", "anything")).toBe(true);
+    expect(globMatch("create_payment", "Create_Payment")).toBe(true);
+    expect(globMatch("a.b", "aXb")).toBe(false);
+  });
+
+  it("only gates tools on the named server", () => {
+    const rules = [{ server: "host_mercury", tool: "*pay*" }];
+    expect(needsApproval(rules, "host_mercury", "create_payment")).toBe(true);
+    expect(needsApproval(rules, "host_mercury", "list_accounts")).toBe(false);
+    expect(needsApproval(rules, "mercury", "create_payment")).toBe(false);
+  });
+
+  it("spots tools that look like moving money or deleting things", () => {
+    expect(
+      ["send_money", "create_payment", "delete_repo", "transfer_funds", "purchase_item"].every(
+        looksRisky,
+      ),
+    ).toBe(true);
+    expect(["list_accounts", "read_file", "search"].some(looksRisky)).toBe(false);
   });
 });

@@ -13,6 +13,7 @@ import { serverName } from "./handlers.ts";
 import { HarnessModelLists } from "./opencode.ts";
 import { Scheduler } from "./scheduler.ts";
 import { Store } from "./store.ts";
+import { Files } from "./files.ts";
 import { Tunnel } from "./tunnel.ts";
 import { Connect } from "./connect.ts";
 import { tailscaleStatus } from "./hostmcp.ts";
@@ -63,6 +64,7 @@ async function main(): Promise<void> {
       models: new HarnessModelLists(config, docker),
       serverId: id,
       version: VERSION,
+      files: new Files(store, config, bus),
     },
     bus,
   );

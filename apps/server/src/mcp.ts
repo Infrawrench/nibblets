@@ -158,6 +158,39 @@ function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
   );
 
   server.registerTool(
+    "status_set",
+    {
+      description:
+        "Set your status line: a few words on what you're doing right now, shown next to your name, like a chat status. Keep it current as things change.",
+      inputSchema: {
+        text: z.string().min(1).max(80).describe("Present tense, e.g. 'Watching the deploy'"),
+        emoji: z.string().max(8).optional().describe("One emoji, if it helps"),
+      },
+    },
+    async ({ text: statusText, emoji }) => {
+      await store.updateNibblet(nibblet.id, {
+        statusText: statusText.trim(),
+        statusEmoji: emoji?.trim() || null,
+        statusUpdatedAt: new Date(),
+      });
+      return text("Status set.");
+    },
+  );
+
+  server.registerTool(
+    "status_clear",
+    { description: "Clear your status line when there's nothing worth saying.", inputSchema: {} },
+    async () => {
+      await store.updateNibblet(nibblet.id, {
+        statusText: null,
+        statusEmoji: null,
+        statusUpdatedAt: new Date(),
+      });
+      return text("Status cleared.");
+    },
+  );
+
+  server.registerTool(
     "instructions_update",
     {
       description:

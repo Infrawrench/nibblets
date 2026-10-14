@@ -6,6 +6,8 @@ import type { McpServerSpec } from "@nibblet/harness";
 import { RunnerEnv } from "@nibblet/protocol";
 import { startComputer, type Computer } from "./computer.ts";
 import { Connection } from "./connection.ts";
+import { RunnerFiles } from "./files.ts";
+import { McpGate } from "./gate.ts";
 import { Runner } from "./runner.ts";
 
 const env = RunnerEnv.parse(process.env);
@@ -36,10 +38,28 @@ if (env.NIBBLET_BROWSER === "1") {
   mcpServers.computer = computer.mcp;
 }
 
+// Attachments come down before a turn; `share_file` sends files up.
+const files = new RunnerFiles({
+  serverUrl: env.NIBBLET_MCP_URL.replace(/\/mcp\/?$/, ""),
+  token: env.NIBBLET_TOKEN,
+  workdir,
+  currentTurn: () => runner.currentTurnId(),
+});
+mcpServers.files = await files.startMcp();
+
 // `/mcp` and `/hostmcp/<name>` live side by side on the nibblet server.
 const hostMcpBase = env.NIBBLET_MCP_URL.replace(/\/mcp\/?$/, "/hostmcp");
 
-const runner = new Runner({
+// Its own MCP servers and the browser sit behind a local gate that holds
+// "ask me first" calls; the runner asks the user through the server.
+const gate = new McpGate({
+  ask: (server, tool, input) => runner.ask(server, tool, input),
+  rules: () => runner.rules(),
+  log: (message) => log("warn", message),
+});
+await gate.start();
+
+const runner: Runner = new Runner({
   plugins,
   send: (msg) => connection?.send(msg),
   workdir,
@@ -51,6 +71,8 @@ const runner = new Runner({
   }),
   credproxyUrl: env.NIBBLET_CREDPROXY_URL,
   credproxyKey: env.NIBBLET_CREDPROXY_KEY,
+  gate,
+  files,
 });
 
 connection = new Connection({
@@ -68,6 +90,8 @@ console.log(`runner: nibblet ${env.NIBBLET_ID} connecting to ${env.NIBBLET_SERVE
 async function shutdown(): Promise<void> {
   connection?.close();
   await runner.close().catch(() => {});
+  await gate.close().catch(() => {});
+  await files.close().catch(() => {});
   computer?.stop();
   process.exit(0);
 }
