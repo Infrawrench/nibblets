@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useRouterState } from "@tanstack/react-router";
-import { ArrowUpCircle, Download, Loader2, X } from "lucide-react";
+import { ArrowUpCircle, Loader2, X } from "lucide-react";
 import type { ServerConnection } from "../lib/connection.ts";
 import { useServers } from "../lib/servers.tsx";
 import { storage } from "../lib/storage.ts";
@@ -45,6 +45,8 @@ function UpdatePrompt({
   const [dismissed, setDismissed] = useState(() => storage.get(dismissedKey(connection.id)));
   const u = update.data;
   if (!u?.latest || !(u.available || u.updating)) return null;
+  // The desktop app asks about its own updates, and installs them itself.
+  if (u.method === "download") return null;
   if (dismissed === u.latest.version && !u.updating) return null;
   const later = () => {
     if (!u.latest) return;
@@ -115,8 +117,8 @@ function UpdatePrompt({
               disabled={install.isPending}
               className="flex h-7 items-center gap-1.5 rounded-md bg-accent px-2.5 text-sm font-medium text-accent-text hover:bg-accent-hover disabled:opacity-50 [&_svg]:size-3.5"
             >
-              {u.method === "download" ? <Download /> : <ArrowUpCircle />}
-              {u.method === "download" ? "Download" : "Update now"}
+              <ArrowUpCircle />
+              Update now
             </button>
           )}
         </div>

@@ -12,9 +12,18 @@ asarUnpack:
 extraResources:
   - from: ../../docker/compose.yaml
     to: docker/compose.yaml
+# Where the app looks for updates (electron-updater): github.com's release
+# files, not its API. CI builds with --publish never and uploads them itself.
+publish:
+  provider: github
+  owner: Infrawrench
+  repo: nibblets
 mac:
   category: public.app-category.developer-tools
-  target: dmg
+  # The dmg to install from, and the zip (with latest-mac.yml) that updates install.
+  target:
+    - dmg
+    - zip
   # One per architecture, built natively: Nibblets-arm64.dmg and Nibblets-x64.dmg.
   artifactName: ${productName}-${arch}.${ext}
   # Signed with the Developer ID in CSC_LINK, and notarised when APPLE_ID,

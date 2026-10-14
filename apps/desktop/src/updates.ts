@@ -1,23 +1,32 @@
-import { app, dialog } from "electron";
+import { app, BrowserWindow, dialog } from "electron";
+import { autoUpdater } from "electron-updater";
 import { openOutside } from "./links.ts";
+import { formatNotes } from "./notes.ts";
 import { compareVersions, latestRelease, type AppRelease } from "@nibblet/protocol";
 
 const REPO = "Infrawrench/nibblets";
 const CHECK_EVERY_MS = 12 * 60 * 60_000;
+/** Where to get it by hand: the site leads with the right download for this machine. */
+const DOWNLOAD_PAGE = "https://nibblets.dev";
 
 /**
- * Offers new releases of the app: a dialog with what's new and a link to
- * download it. A version the person skips isn't offered again.
+ * Offers new releases of the app: a dialog with what's new. On a Mac, the
+ * app installs it itself (electron-updater, from the release's
+ * latest-mac.yml and zips) and restarts; elsewhere, and if that fails, it
+ * sends the person to the download. A version the person skips isn't
+ * offered again.
  */
 export class AppUpdates {
   private timer: ReturnType<typeof setInterval> | null = null;
-  private open = false;
+  private busy = false;
   private readonly skipped: () => string | null;
   private readonly skip: (version: string) => void;
 
   constructor(opts: { skipped: () => string | null; skip: (version: string) => void }) {
     this.skipped = opts.skipped;
     this.skip = opts.skip;
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = false;
   }
 
   start(): void {
@@ -29,9 +38,14 @@ export class AppUpdates {
     if (this.timer) clearInterval(this.timer);
   }
 
+  /** Signed Mac builds install updates themselves; anything else is a new download. */
+  private get installsItself(): boolean {
+    return process.platform === "darwin" && app.isPackaged;
+  }
+
   /** `manual` is the menu item: it says so when there's nothing new, and ignores skipping. */
   async check(manual: boolean): Promise<void> {
-    if (this.open) return;
+    if (this.busy) return;
     let latest: AppRelease | null;
     try {
       latest = await latestRelease(REPO);
@@ -58,26 +72,63 @@ export class AppUpdates {
       return;
     }
     if (!manual && this.skipped() === latest.version) return;
-    this.open = true;
+    this.busy = true;
     try {
+      const notes = formatNotes(latest.notes);
       const { response } = await dialog.showMessageBox({
         type: "info",
         message: `Nibblets ${latest.version} is out`,
-        detail: `You have ${current}.${latest.notes ? `\n\n${trimNotes(latest.notes)}` : ""}`,
-        buttons: ["Download", "Later", "Skip this version"],
+        detail: `You have ${current}.${notes ? `\n\n${notes}` : ""}`,
+        buttons: [
+          this.installsItself ? "Install and Restart" : "Download",
+          "Later",
+          "Skip this version",
+        ],
         defaultId: 0,
         cancelId: 1,
       });
-      if (response === 0) openOutside(latest.url);
       if (response === 2) this.skip(latest.version);
+      if (response !== 0) return;
+      if (!this.installsItself) {
+        openOutside(DOWNLOAD_PAGE);
+        return;
+      }
+      await this.install(latest.version);
     } finally {
-      this.open = false;
+      this.busy = false;
     }
   }
-}
 
-/** Release notes, short enough for a dialog. */
-export function trimNotes(notes: string, max = 600): string {
-  const text = notes.replace(/\r/g, "").trim();
-  return text.length <= max ? text : `${text.slice(0, max).replace(/\s+\S*$/, "")}…`;
+  /** Downloads the update, showing progress on the Dock icon, then restarts into it. */
+  private async install(version: string): Promise<void> {
+    const progress = (fraction: number) => {
+      for (const win of BrowserWindow.getAllWindows()) win.setProgressBar(fraction);
+    };
+    const onProgress = (p: { percent: number }) => progress(p.percent / 100);
+    autoUpdater.on("download-progress", onProgress);
+    try {
+      progress(2); // Indeterminate until the download starts.
+      const found = await autoUpdater.checkForUpdates();
+      if (!found?.isUpdateAvailable || found.updateInfo.version !== version) {
+        throw new Error(`Version ${version} can't be installed from inside the app.`);
+      }
+      await autoUpdater.downloadUpdate();
+      progress(-1);
+      // Quits (stopping the stack first if that's the setting) and opens the new version.
+      autoUpdater.quitAndInstall();
+    } catch (err) {
+      progress(-1);
+      const { response } = await dialog.showMessageBox({
+        type: "warning",
+        message: `Couldn't install Nibblets ${version}`,
+        detail: `${err instanceof Error ? err.message : String(err)}\n\nYou can download it instead.`,
+        buttons: ["Download", "Cancel"],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (response === 0) openOutside(DOWNLOAD_PAGE);
+    } finally {
+      autoUpdater.off("download-progress", onProgress);
+    }
+  }
 }

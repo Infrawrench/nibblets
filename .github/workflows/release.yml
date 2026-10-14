@@ -147,6 +147,10 @@ jobs:
           app=$(ls -d apps/desktop/dist/mac*/Nibblets.app | head -n1)
           codesign --verify --deep --strict "$app"
           spctl --assess --type execute -vv "$app"
+      - name: Keep this architecture's update feed apart (Mac)
+        # Both Mac builds write latest-mac.yml; publishing merges them.
+        if: matrix.os == 'mac'
+        run: mv apps/desktop/dist/latest-mac.yml apps/desktop/dist/latest-mac-${{ matrix.arch }}.yml
       - name: Build (Linux)
         if: matrix.os == 'linux'
         run: pnpm --filter @nibblet/desktop dist:linux
@@ -165,6 +169,8 @@ jobs:
           name: desktop-${{ matrix.os }}-${{ matrix.arch }}
           path: |
             apps/desktop/dist/Nibblets-*.dmg
+            apps/desktop/dist/Nibblets-*.zip
+            apps/desktop/dist/latest-mac-*.yml
             apps/desktop/dist/Nibblets-*.AppImage
             apps/desktop/dist/Nibblets-*.deb
             apps/desktop/dist/Nibblets-setup-*.exe
@@ -184,6 +190,14 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Merge the Mac update feeds
+        run: |
+          node apps/desktop/src/feed.ts dist/latest-mac-*.yml > dist/latest-mac.yml
+          rm dist/latest-mac-*.yml
+          cat dist/latest-mac.yml
       - name: Release notes
         env:
           VERSION: ${{ needs.check.outputs.version }}
