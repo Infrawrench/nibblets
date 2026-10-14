@@ -81,6 +81,7 @@ describe("systemPrompt", () => {
         {
           id: "mem_1",
           nibbletId: null,
+          sharedBy: null,
           content: "Prefers tea",
           tags: [],
           createdAt: "",

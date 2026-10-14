@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Miniflare } from "miniflare";
 import { CentralServer, LinkPollResponse, LinkStartResponse, ServerToken } from "@nibblet/protocol";
@@ -36,10 +36,13 @@ beforeAll(async () => {
     d1Databases: { DB: "nibblets-connect-test" },
   });
   const db = await mf.getD1Database("DB");
-  const schema = readFileSync(
-    fileURLToPath(new URL("../migrations/0001_init.sql", import.meta.url)),
-    "utf8",
-  );
+  // Every migration, in order, as wrangler applies them.
+  const dir = fileURLToPath(new URL("../migrations", import.meta.url));
+  const schema = readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .map((f) => readFileSync(`${dir}/${f}`, "utf8"))
+    .join(";\n");
   const statements = schema
     .replace(/--.*$/gm, "")
     .split(";")
@@ -106,7 +109,14 @@ describe("linking a server", () => {
 
     const pending = await (await call(`/v1/link/${started.code}`)).json();
     expect(pending).toMatchObject({ name: "PogAir", platform: "darwin" });
-    expect((await call(`/v1/link/${started.code}/approve`, { method: "POST" })).status).toBe(200);
+    expect(
+      (
+        await call(`/v1/link/${started.code}/approve`, {
+          method: "POST",
+          body: JSON.stringify({ startedItMyself: true }),
+        })
+      ).status,
+    ).toBe(200);
 
     const approved = await poll();
     if (approved.status !== "approved")
@@ -191,7 +201,10 @@ describe("a server's Connect against the central service", () => {
 
       const linking = await connect.start();
       if (linking.state !== "linking") throw new Error("expected linking");
-      await call(`/v1/link/${linking.code}/approve`, { method: "POST" });
+      await call(`/v1/link/${linking.code}/approve`, {
+        method: "POST",
+        body: JSON.stringify({ startedItMyself: true }),
+      });
       // Polling and the first heartbeat run on timers; wait for them.
       for (let i = 0; i < 50 && connect.status().state !== "linked"; i++) await sleep(100);
       const linked = connect.status();
@@ -246,7 +259,10 @@ describe("a server's Connect against the central service", () => {
     expect(await before.start()).toMatchObject({ code: linking.code });
     before.stop();
 
-    await call(`/v1/link/${linking.code}/approve`, { method: "POST" });
+    await call(`/v1/link/${linking.code}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ startedItMyself: true }),
+    });
     const after = serverConnect(settings, { mode: "off" });
     await after.restore();
     for (let i = 0; i < 50 && after.status().state !== "linked"; i++) await sleep(100);
@@ -267,7 +283,10 @@ describe("sweeping links that went nowhere", () => {
         })
       ).json(),
     );
-    await call(`/v1/link/${started.code}/approve`, { method: "POST" });
+    await call(`/v1/link/${started.code}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ startedItMyself: true }),
+    });
     const names = async () =>
       z
         .object({ servers: z.array(CentralServer) })
@@ -326,3 +345,48 @@ function serverConnect(settings: Map<string, unknown>, tunnel: { mode: string })
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
+
+describe("approving a link from somewhere else", () => {
+  const start = async (ip: string) =>
+    LinkStartResponse.parse(
+      await (
+        await call("/v1/link/start", {
+          method: "POST",
+          headers: { "content-type": "application/json", "cf-connecting-ip": ip },
+          body: JSON.stringify({ name: "Elsewhere", hostname: "elsewhere", platform: "linux" }),
+        })
+      ).json(),
+    );
+
+  it("takes saying you started it, when it came from another network", async () => {
+    const started = await start("203.0.113.9");
+    const pending = await (
+      await call(`/v1/link/${started.code}`, { headers: { "cf-connecting-ip": "198.51.100.1" } })
+    ).json();
+    expect(pending).toMatchObject({ sameNetwork: false });
+    const plain = await call(`/v1/link/${started.code}/approve`, {
+      method: "POST",
+      headers: { "cf-connecting-ip": "198.51.100.1" },
+    });
+    expect(plain.status).toBe(409);
+    const confirmed = await call(`/v1/link/${started.code}/approve`, {
+      method: "POST",
+      headers: { "cf-connecting-ip": "198.51.100.1" },
+      body: JSON.stringify({ startedItMyself: true }),
+    });
+    expect(confirmed.status).toBe(200);
+  });
+
+  it("is a plain click from the same network", async () => {
+    const started = await start("203.0.113.10");
+    const pending = await (
+      await call(`/v1/link/${started.code}`, { headers: { "cf-connecting-ip": "203.0.113.10" } })
+    ).json();
+    expect(pending).toMatchObject({ sameNetwork: true });
+    const res = await call(`/v1/link/${started.code}/approve`, {
+      method: "POST",
+      headers: { "cf-connecting-ip": "203.0.113.10" },
+    });
+    expect(res.status).toBe(200);
+  });
+});

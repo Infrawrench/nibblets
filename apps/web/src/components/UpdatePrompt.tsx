@@ -4,6 +4,7 @@ import { ArrowUpCircle, Download, Loader2, X } from "lucide-react";
 import type { ServerConnection } from "../lib/connection.ts";
 import { useServers } from "../lib/servers.tsx";
 import { storage } from "../lib/storage.ts";
+import { isSafeLink } from "../lib/links.ts";
 import { useAppUpdate, useInstallApp } from "./UpdatesSection.tsx";
 
 const dismissedKey = (server: string) => `nibblets.update.dismissed.${server}`;
@@ -94,7 +95,7 @@ function UpdatePrompt({
         <div className="flex items-center justify-end gap-1.5">
           <a
             className="mr-auto text-xs text-dim underline-offset-2 hover:text-text hover:underline"
-            href={u.latest.url}
+            href={isSafeLink(u.latest.url) ? u.latest.url : undefined}
             target="_blank"
             rel="noreferrer"
           >

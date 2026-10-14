@@ -14,3 +14,14 @@ describe("compareVersions", () => {
     expect(compareVersions("1.0", "1.0.1")).toBe(-1);
   });
 });
+
+describe("WebUrl", () => {
+  it("takes web addresses and nothing else", async () => {
+    const { WebUrl } = await import("./urls.ts");
+    expect(WebUrl.safeParse("https://nibblets.dev").success).toBe(true);
+    expect(WebUrl.safeParse("http://127.0.0.1:8420/").success).toBe(true);
+    expect(WebUrl.safeParse("javascript:alert(1)").success).toBe(false);
+    expect(WebUrl.safeParse("file:///etc/passwd").success).toBe(false);
+    expect(WebUrl.safeParse("smb://evil/share").success).toBe(false);
+  });
+});

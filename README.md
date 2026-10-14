@@ -39,8 +39,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md). In short:
 
 - **server**: the API, the UI, the scheduler and heartbeats, the nibblet tools (over MCP), and Docker orchestration
 - **db**: Postgres with pgvector, which holds every durable thing
-- **credproxy**: holds your subscription credentials and injects them into harness traffic, so containers never see a real token
-- **one runner container per nibblet**: its harness, plus OpenComputerUse driving Chromium on a headless Wayland display
+- **credproxy**: holds your Claude and ChatGPT subscription credentials and injects them into harness traffic, so containers never see those tokens
+- **one runner container per nibblet**: its harness, run as one user, and a guard, run as another, which holds the browser (OpenComputerUse driving Chromium on a headless Wayland display), 1Password and the nibblet's MCP servers behind "ask me first" rules
 - **tunnel**: `cloudflared`, run when the server is linked to Nibblets Connect
 - **Nibblets Connect** (`apps/connect`): the central service on Cloudflare Workers where you sign in and see every server
 

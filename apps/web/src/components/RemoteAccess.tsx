@@ -1,3 +1,4 @@
+import { openWeb } from "../lib/links.ts";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Globe, Loader2, Network, Unplug, Wifi } from "lucide-react";
@@ -254,7 +255,7 @@ function TailscaleRow({ connection }: { connection: ServerConnection }) {
 
 /** Opens a link outside the app: a new tab, or the desktop app's own browser handling. */
 function openUrl(url: string): void {
-  window.open(url, "_blank", "noopener");
+  openWeb(url);
 }
 
 /** Central mode: who's signed in, and the servers on the account. */

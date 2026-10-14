@@ -122,19 +122,30 @@ export function McpServerForm({
           placeholder="github"
         />
       </FieldRow>
-      <FieldRow label="Kind">
+      <FieldRow
+        label="Kind"
+        hint={
+          type === "http"
+            ? "An MCP server on the web, reached over HTTP."
+            : "A command the nibblet runs in its own container, over stdio."
+        }
+      >
         <Segmented
           value={type}
           onChange={setType}
           options={[
-            { value: "stdio", label: "Command", title: "Runs inside the nibblet's container" },
-            { value: "http", label: "Remote URL", title: "A streamable HTTP MCP server" },
+            {
+              value: "stdio",
+              label: "Local command",
+              title: "Runs inside the nibblet's container",
+            },
+            { value: "http", label: "HTTP", title: "A streamable HTTP MCP server" },
           ]}
         />
       </FieldRow>
       {type === "http" ? (
         <>
-          <FieldRow label="URL">
+          <FieldRow label="URL" hint="Its streamable HTTP endpoint, usually ending in /mcp.">
             <Input
               value={url}
               onChange={(e) => setUrl(e.target.value)}

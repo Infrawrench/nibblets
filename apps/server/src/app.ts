@@ -13,6 +13,7 @@ import type { RunnerLink } from "./conductor.ts";
 import { runnerName } from "./docker.ts";
 import { createHandlers, type Services } from "./handlers.ts";
 import { hostMcpHandler } from "./hostmcp.ts";
+import { mountGuard } from "./guard.ts";
 import { mcpHandler } from "./mcp.ts";
 import { mountFiles } from "./files.ts";
 import { viewToken } from "./store.ts";
@@ -165,6 +166,9 @@ export function createApp(services: Services, bus: Bus) {
     });
     return handler(c, next);
   });
+
+  // The guard in each nibblet's container: its settings and secrets, and approvals.
+  mountGuard(app, services);
 
   app.all("/mcp", mcpHandler(services));
   app.all("/hostmcp/:name", hostMcpHandler(services));

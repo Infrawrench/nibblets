@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WebUrl } from "./urls.ts";
 
 /*
  * Nibblets Connect: the central service where you sign in and see every
@@ -10,9 +11,9 @@ import { z } from "zod";
 
 /** The ways a server can be reached, best first: same network, tailnet, then the internet. */
 export const ServerRoutes = z.object({
-  lan: z.array(z.url()),
-  tailscale: z.url().nullable(),
-  tunnel: z.url().nullable(),
+  lan: z.array(WebUrl),
+  tailscale: WebUrl.nullable(),
+  tunnel: WebUrl.nullable(),
 });
 export type ServerRoutes = z.infer<typeof ServerRoutes>;
 
@@ -43,7 +44,7 @@ export const LinkStartRequest = z.object({
 export const LinkStartResponse = z.object({
   /** Shown on both sides so the person can check they're approving the right server. */
   code: z.string(),
-  approveUrl: z.url(),
+  approveUrl: WebUrl,
   pollToken: z.string(),
   expiresAt: z.iso.datetime(),
   intervalSeconds: z.int(),
@@ -62,7 +63,7 @@ export const LinkPollResponse = z.discriminatedUnion("status", [
     status: z.literal("approved"),
     serverId: z.string(),
     serverSecret: z.string(),
-    centralUrl: z.url(),
+    centralUrl: WebUrl,
     account: z.string(),
     /** Null when the central service has no zone to put tunnels in; use a quick tunnel. */
     tunnel: ManagedTunnel.nullable(),
@@ -77,8 +78,21 @@ export const PendingLink = z.object({
   hostname: z.string(),
   platform: Platform,
   expiresAt: z.iso.datetime(),
+  /** Roughly where the server asked from, like "Brighton, GB". */
+  location: z.string().nullable().default(null),
+  /**
+   * Whether it asked from the same network as the person approving. When it
+   * didn't, it may be a link someone sent them, so approving takes a tick.
+   */
+  sameNetwork: z.boolean().default(false),
 });
 export type PendingLink = z.infer<typeof PendingLink>;
+
+export const ApproveLink = z.object({
+  /** "I started this on my own computer", needed when it's from another network. */
+  startedItMyself: z.boolean().default(false),
+});
+export type ApproveLink = z.infer<typeof ApproveLink>;
 
 export const HeartbeatRequest = z.object({
   name: z.string().min(1).max(80),
@@ -95,7 +109,7 @@ export const HeartbeatResponse = z.object({
    * The service's canonical address. When it moves (a custom domain, say),
    * linked servers follow, since tokens name it as their issuer.
    */
-  centralUrl: z.url().optional(),
+  centralUrl: WebUrl.optional(),
 });
 
 /** A server as the central service lists it to its owner. */
@@ -129,7 +143,8 @@ export type PushNote = z.infer<typeof PushNote>;
 
 /** A browser's push subscription, as `PushSubscription.toJSON()` gives it. */
 export const PushSubscriptionInput = z.object({
-  endpoint: z.url().max(2000),
+  // Push services are HTTPS; anything else would have the service fetch it.
+  endpoint: z.url({ protocol: /^https$/ }).max(2000),
   keys: z.object({ p256dh: z.string().max(200), auth: z.string().max(100) }),
   /** Which device, so the person can tell them apart. */
   label: z.string().max(80).optional(),
@@ -157,17 +172,17 @@ export const HEARTBEAT_EVERY_MS = 30_000;
 // What a server's own UI shows about its link.
 
 export const ConnectStatus = z.discriminatedUnion("state", [
-  z.object({ state: z.literal("unlinked"), centralUrl: z.url() }),
+  z.object({ state: z.literal("unlinked"), centralUrl: WebUrl }),
   z.object({
     state: z.literal("linking"),
-    centralUrl: z.url(),
+    centralUrl: WebUrl,
     code: z.string(),
-    approveUrl: z.url(),
+    approveUrl: WebUrl,
     expiresAt: z.iso.datetime(),
   }),
   z.object({
     state: z.literal("linked"),
-    centralUrl: z.url(),
+    centralUrl: WebUrl,
     serverId: z.string(),
     account: z.string(),
     routes: ServerRoutes,
@@ -187,6 +202,6 @@ export const TailscaleStatus = z.object({
   url: z.string().nullable(),
   detail: z.string().nullable(),
   /** Something the person has to do in their browser, shown as a button. */
-  action: z.object({ label: z.string(), url: z.url() }).nullable(),
+  action: z.object({ label: z.string(), url: WebUrl }).nullable(),
 });
 export type TailscaleStatus = z.infer<typeof TailscaleStatus>;

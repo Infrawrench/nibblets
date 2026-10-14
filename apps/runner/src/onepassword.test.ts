@@ -1,46 +1,56 @@
-import { RunnerConfig } from "@nibblet/protocol";
+import { GuardConfig } from "@nibblet/protocol";
 import { describe, expect, it } from "vitest";
-import { mcpServersFor, onePasswordServer } from "./runner.ts";
+import { gatedSpecs } from "./guard.ts";
 
-const base = RunnerConfig.parse({
-  nibbletId: "nib_1",
-  name: "Pip",
-  harness: "claude",
-  model: "claude-haiku-5-5",
-  effort: "low",
-  resumeSessionId: null,
-});
+const base = GuardConfig.parse({ browser: false });
+const browser = {
+  type: "http" as const,
+  url: "http://127.0.0.1:7800/mcp",
+  headers: { authorization: "Bearer t" },
+};
 
 describe("onepassword tools", () => {
-  it("are only offered when vaults are shared", () => {
-    const deps = {
-      mcpServers: {},
-      hostMcp: () => ({ type: "http" as const, url: "", headers: {} }),
-    };
-    expect(mcpServersFor(base, deps).onepassword).toBeUndefined();
+  it("are only offered when vaults are shared, with the token kept in the guard", () => {
+    expect(gatedSpecs(base, null, "/op.ts").onepassword).toBeUndefined();
     const shared = {
       ...base,
-      cli: [
-        {
-          id: "1password",
-          env: { OP_SERVICE_ACCOUNT_TOKEN: "ops_x", NIBBLET_ONEPASSWORD_VAULTS: "[]" },
-          setup: [],
-        },
-      ],
+      onePassword: { token: "ops_x", vaults: [{ name: "Shared", access: "read" as const }] },
     };
-    const spec = mcpServersFor(shared, deps).onepassword;
+    const spec = gatedSpecs(shared, null, "/op.ts").onepassword;
     expect(spec?.type).toBe("stdio");
-    if (spec?.type === "stdio") expect(spec.env.OP_SERVICE_ACCOUNT_TOKEN).toBe("ops_x");
+    if (spec?.type === "stdio") {
+      expect(spec.env.OP_SERVICE_ACCOUNT_TOKEN).toBe("ops_x");
+      expect(JSON.parse(spec.env.NIBBLET_ONEPASSWORD_VAULTS ?? "[]")).toEqual([
+        { name: "Shared", access: "read" },
+      ]);
+    }
   });
 
   it("are told how to reach the browser for fill_login", () => {
-    const spec = onePasswordServer(
-      { OP_SERVICE_ACCOUNT_TOKEN: "ops_x" },
-      { type: "http", url: "http://127.0.0.1:7800/mcp", headers: { authorization: "Bearer t" } },
-    );
-    expect(spec.type === "stdio" && spec.env).toMatchObject({
+    const shared = { ...base, onePassword: { token: "ops_x", vaults: [] } };
+    const spec = gatedSpecs(shared, browser, "/op.ts").onepassword;
+    expect(spec?.type === "stdio" && spec.env).toMatchObject({
       OCU_MCP_URL: "http://127.0.0.1:7800/mcp",
       OCU_MCP_AUTH: "Bearer t",
+    });
+  });
+
+  it("puts the browser and the nibblet's own servers behind the gate too", () => {
+    const specs = gatedSpecs(
+      GuardConfig.parse({
+        browser: true,
+        mcpServers: [
+          { name: "linear", type: "http", url: "https://mcp.linear.app/mcp", headers: { a: "b" } },
+        ],
+      }),
+      browser,
+      "/op.ts",
+    );
+    expect(Object.keys(specs).sort()).toEqual(["computer", "linear"]);
+    expect(specs.linear).toEqual({
+      type: "http",
+      url: "https://mcp.linear.app/mcp",
+      headers: { a: "b" },
     });
   });
 });

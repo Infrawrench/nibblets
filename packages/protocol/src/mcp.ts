@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WebUrl } from "./urls.ts";
 
 /** Names the runner already uses for its own MCP servers. */
 const RESERVED = new Set(["nibblet", "computer"]);
@@ -17,7 +18,7 @@ export const McpServerDef = z.discriminatedUnion("type", [
   z.object({
     name: McpServerName,
     type: z.literal("http"),
-    url: z.url(),
+    url: WebUrl,
     headers: z.record(z.string(), z.string()).default({}),
   }),
   z.object({

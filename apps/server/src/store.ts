@@ -47,6 +47,16 @@ export function viewToken(ownerToken: string, nibbletId: string, tokenHash: stri
     .digest("base64url");
 }
 
+/**
+ * The token a nibblet's guard (the separate user in its container that holds
+ * its secrets) uses for /guard/:id; derived like the view token.
+ */
+export function guardToken(ownerToken: string, nibbletId: string, tokenHash: string): string {
+  return createHmac("sha256", ownerToken)
+    .update(`guard:${nibbletId}:${tokenHash}`)
+    .digest("base64url");
+}
+
 const iso = (d: Date | null): string | null => (d ? d.toISOString() : null);
 
 export function toNibblet(row: NibbletRow): Nibblet {
@@ -372,6 +382,8 @@ export class Store {
 
   async saveMemory(input: {
     nibbletId: string | null;
+    /** For a shared memory, the nibblet sharing it. */
+    sharedBy?: string | null;
     content: string;
     tags: string[];
     kind?: "note" | "transcript";
@@ -383,6 +395,7 @@ export class Store {
       .values({
         id: newId("mem"),
         nibbletId: input.nibbletId,
+        sharedBy: input.nibbletId === null ? (input.sharedBy ?? null) : null,
         kind: input.kind ?? "note",
         content: input.content,
         tags: input.tags,
@@ -393,6 +406,7 @@ export class Store {
     return {
       id: row.id,
       nibbletId: row.nibbletId,
+      sharedBy: row.sharedBy,
       content: row.content,
       tags: row.tags,
       createdAt: row.createdAt.toISOString(),
@@ -409,17 +423,28 @@ export class Store {
     query?: string;
     limit?: number;
     kinds?: ("note" | "transcript")[];
+    /**
+     * Leave out notes other nibblets shared, for what goes into a prompt
+     * unasked: a nibblet that read something nasty can't steer the rest.
+     */
+    trustedOnly?: boolean;
   }): Promise<Memory[]> {
     const limit = opts.limit ?? 20;
     const kinds = opts.kinds ?? ["note"];
+    const shared =
+      opts.trustedOnly && opts.nibbletId !== null
+        ? and(
+            isNull(memories.nibbletId),
+            or(isNull(memories.sharedBy), eq(memories.sharedBy, opts.nibbletId)),
+          )
+        : isNull(memories.nibbletId);
     const visible =
-      opts.nibbletId === null
-        ? isNull(memories.nibbletId)
-        : or(eq(memories.nibbletId, opts.nibbletId), isNull(memories.nibbletId));
+      opts.nibbletId === null ? shared : or(eq(memories.nibbletId, opts.nibbletId), shared);
     const where = and(visible, inArray(memories.kind, kinds));
     const columns = {
       id: memories.id,
       nibbletId: memories.nibbletId,
+      sharedBy: memories.sharedBy,
       content: memories.content,
       tags: memories.tags,
       createdAt: memories.createdAt,
@@ -451,9 +476,19 @@ export class Store {
     }));
   }
 
+  /**
+   * Deletes a memory. A nibblet may delete only its own notes and the shared
+   * ones it shared itself, not the person's or another nibblet's.
+   */
   async deleteMemory(id: string, nibbletId?: string): Promise<boolean> {
     const where = nibbletId
-      ? and(eq(memories.id, id), or(eq(memories.nibbletId, nibbletId), isNull(memories.nibbletId)))
+      ? and(
+          eq(memories.id, id),
+          or(
+            eq(memories.nibbletId, nibbletId),
+            and(isNull(memories.nibbletId), eq(memories.sharedBy, nibbletId)),
+          ),
+        )
       : eq(memories.id, id);
     const rows = await this.db.delete(memories).where(where).returning({ id: memories.id });
     return rows.length > 0;

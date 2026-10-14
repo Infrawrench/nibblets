@@ -116,6 +116,12 @@ export const memories = pgTable(
     id: text("id").primaryKey(),
     /** Null for memories shared by every nibblet on the server. */
     nibbletId: text("nibblet_id").references(() => nibblets.id, { onDelete: "cascade" }),
+    /**
+     * For a shared memory, the nibblet that shared it; null when the person
+     * did (or for ones from before this was kept). A nibblet's shared notes
+     * reach the others only when searched for, never into their prompts.
+     */
+    sharedBy: text("shared_by"),
     /** `note`s are saved on purpose; `transcript` chunks are indexed from threads. */
     kind: text("kind").$type<"note" | "transcript">().notNull().default("note"),
     content: text("content").notNull(),

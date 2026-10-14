@@ -4,7 +4,7 @@ Nibblets are self-hosted, always-on agents, each drawn as a hamster you can dres
 
 ## Processes
 
-Everything runs in Docker on one network, `nibblet`.
+Everything runs in Docker on two networks. `nibblet` has the database, the server and the credential proxy. `nibblet-runners` has the server, the credential proxy and the nibblets' containers, so a nibblet can't reach the database.
 
 | Service        | Image                          | Address on the network | What it does                                                                                                                |
 | -------------- | ------------------------------ | ---------------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -18,7 +18,7 @@ The server is the only service published on the host (`127.0.0.1:8420`). It moun
 
 ## Credentials (`apps/credproxy`)
 
-Runner containers never see a real token. Each gets a base URL on the proxy and `NIBBLET_CREDPROXY_KEY`, a shared secret it sends where the harness would send an API key. The proxy checks the key, swaps in the real credential, and forwards:
+Runner containers never see a Claude or ChatGPT subscription token. (What they can see: an OpenCode login, scoped to the model's own provider, and the CLI logins you tick for a nibblet. See below.) Each gets a base URL on the proxy and `NIBBLET_CREDPROXY_KEY`, a shared secret it sends where the harness would send an API key. The proxy checks the key, swaps in the real credential, and forwards:
 
 | Proxy path                         | Upstream                                  | Injected                                                                                                               |
 | ---------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
@@ -36,10 +36,18 @@ Refresh endpoints: Anthropic `POST https://platform.claude.com/v1/oauth/token` J
 
 Started by the server with the `RunnerEnv` variables from `@nibblet/protocol`. It connects to `NIBBLET_SERVER_WS` with `Authorization: Bearer $NIBBLET_TOKEN`, waits for `configure`, opens the harness plugin for `config.harness`, and then runs `turn`s one at a time, streaming `item`s and ending each with `turn_end`. It keeps no durable state: the server sends the system prompt (instructions, relevant memories, a recap of the thread when the harness session is new) with every turn.
 
-Harnesses get two MCP servers:
+Harnesses get the `nibblet` MCP server (streamable HTTP at `NIBBLET_MCP_URL` with `Authorization: Bearer $NIBBLET_TOKEN`; the tools are below), plus whatever the guard serves through its gate.
 
-- `nibblet`: streamable HTTP at `NIBBLET_MCP_URL` with `Authorization: Bearer $NIBBLET_TOKEN`. The tools are below.
-- `computer`: OpenComputerUse, when `NIBBLET_BROWSER=1`. One long-lived OCU process per container runs Chromium on a headless Wayland display. Its view socket (port 7900) lets the UI watch and take over; the server proxies it at `/api/nibblets/:id/browser`.
+### Inside the container: the guard and the agent
+
+The agent runs whatever a model asks it to, so anything in its reach is in a prompt injection's reach. The container is split so its secrets aren't. The entry (`apps/runner/src/entry.ts`) starts as root, sets things up, and starts two processes under different users:
+
+- **The guard** (uid 1100, `apps/runner/src/guard.ts`) holds the secrets. It runs OpenComputerUse (one Chromium on a headless Wayland display, with its profile in `/home/nibblet/.guard`, and a view socket on port 7900 that the server proxies at `/api/nibblets/:id/browser`), the 1Password MCP server with its service account token, and the nibblet's own MCP servers with their headers and env. All of them sit behind the gate on `127.0.0.1:7810`, which applies the nibblet's "ask me first" rules. The guard fetches its settings from the server's `/guard/:id/*` routes with `NIBBLET_GUARD_TOKEN`, and long-polls the server for approvals, so neither depends on anything the agent can touch.
+- **The runner and the harness** (uid 1001, `nibblet`) only know the gate's address. They can't read the guard's environment, memory or home, and they never get the guard's token or the browser's view token.
+
+Neither keeps any capability, and the server sets no-new-privileges, drops every capability the entry doesn't need, and limits processes. Before they start, the entry sets iptables rules: the cloud metadata range (169.254.0.0/16) is blocked, and on `nibblet-runners` only the server and the credential proxy are reachable, not other nibblets or the tunnel. The internet and `host.docker.internal` stay reachable: the first is the point, and OpenCode's local providers (such as Ollama) need the second. Downloads land in `/home/nibblet/Downloads`, which the agent can read.
+
+1Password's `fill_login` never types into whatever the browser shows. It opens the login's own saved address (or a page the agent names on the same site), checks where it landed, and only then fills the username and password.
 
 Harness plugins live in `packages/harness-*` and implement `HarnessPlugin` from `@nibblet/harness`, using `TurnWriter` to turn deltas into thread items.
 
@@ -48,7 +56,7 @@ Harness plugins live in `packages/harness-*` and implement `HarnessPlugin` from 
 OpenCode nibblets use the host's own OpenCode account, not the credential proxy. The host bridge reports whether OpenCode is set up (`GET /harness/opencode`: the CLI, OpenCode.app, or a config or login in its XDG directories) and hands over the config and `auth.json` (`GET /harness/opencode/login`, bridge token only).
 
 - **The model picker:** `harnesses.models({ harness: "opencode" })` lists whatever OpenCode offers for that login. The server runs `apps/runner/src/opencode-models.ts` in a throwaway runner container with the login on stdin, so the list is exactly what a nibblet will see, and caches it for a minute. The host doesn't need the CLI.
-- **On each configure:** the server fetches the login fresh and sends it only over the runner socket. The runner writes it into the container's OpenCode config and data directories.
+- **On each configure:** the server fetches the login fresh, keeps only the entry for the nibblet's model's provider, and sends it only over the runner socket. The runner writes the config into the container, and the login to `/tmp/nibblet-secrets/opencode-auth.json`, with OpenCode's `auth.json` a link to it, so it never lands in the home folder or its snapshots.
 - **What changes in the container:** the host config's `mcp` section is dropped, because the nibblet brings its own servers. Provider URLs on the host's `localhost` or `127.0.0.1` are pointed at `host.docker.internal`, so a local Ollama still resolves.
 - **Not written back:** a provider whose OAuth token refreshes inside the container doesn't write it back to the host.
 - **Without a bridge or a login:** OpenCode falls back to Anthropic and OpenAI through the credential proxy.
@@ -58,9 +66,9 @@ OpenCode nibblets use the host's own OpenCode account, not the credential proxy.
 
 | Tool                                                    | What it does                                                                                                                                              |
 | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory_search`                                         | Semantic search over this nibblet's notes, shared notes, and indexed transcript                                                                           |
+| `memory_search`                                         | Semantic search over this nibblet's notes, shared notes (labelled as another nibblet's), and indexed transcript                                           |
 | `memory_save`                                           | Saves a note (optionally shared with every nibblet)                                                                                                       |
-| `memory_forget`                                         | Deletes a note by id                                                                                                                                      |
+| `memory_forget`                                         | Deletes one of this nibblet's own notes, or one it shared                                                                                                 |
 | `schedule_create`                                       | Cron or one-shot schedule that sends the nibblet a prompt                                                                                                 |
 | `schedule_list` / `schedule_delete`                     |                                                                                                                                                           |
 | `instructions_update`                                   | Rewrites the nibblet's own standing instructions as it learns what it's for from the chat                                                                 |
@@ -81,6 +89,7 @@ First run prints, and the desktop app opens, a pairing link `http(s)://host/#pai
 Each machine runs its own server. Like T3 Connect, a central service (a Cloudflare Worker with D1, signed in with Clerk) lists every server on an account, without being in the data path:
 
 - A server links with a code approved on the central site, then sends a heartbeat every 30 seconds with its routes: local network (`NIBBLET_LAN_URLS`), Tailscale (`tailscale serve` through the host bridge), and a Cloudflare tunnel (a managed one when the central service has a zone, a quick one otherwise).
+- Approving a link shows where the server asked from. If that's a different network from yours, you have to tick that you started it yourself, so a code sent by someone else can't quietly add their server to your account. Every device you're signed in on is told when a server is linked.
 - The central UI (the web app built with `build:central`) tries each server's routes in that order with a `/healthz` probe, and talks to the first that answers with a five-minute ES256 token from the central service. Servers verify those tokens against its JWKS.
 - The desktop app asks on first run whether to run a server on this computer. If not, it only shows the central UI.
 - "Pair a device" still signs a device in to one server directly, on the same network.
@@ -94,4 +103,7 @@ The host bridge runs on the host, in the desktop app (127.0.0.1:8789) or as `nod
 - **Host MCP servers**: read in Claude's `mcpServers` format from `~/.nibblet/host-mcp.json`, then Claude Code's `~/.claude.json`, then Claude Desktop's config, with the first definition of a name winning. Each server is started on first use and served at `/mcp/<name>`; `GET /servers` lists them. A nibblet's `hostTools` names the ones it may use. Its runner registers each as `host_<name>` at the server's `/hostmcp/<name>`, which checks the nibblet's token and that list before forwarding.
 - **CLI logins**: `CliPlugin`s (`gh` and `ssh` so far) detect whether a CLI is installed and signed in (`GET /clis`) and turn its login into environment variables (`GET /clis/:id/credential`). For each CLI in a nibblet's `cliCredentials`, the server fetches a fresh credential on every configure and sends it only over the runner socket. The runner puts it in the harness's environment and runs the CLI's setup (`gh auth setup-git`). It is never stored, logged, or returned by the API.
 - **SSH keys**: the `ssh` plugin shares the host's SSH agent, never a key. It's offered when `ssh-add -l` lists keys. For a nibblet that has it ticked, the server bind-mounts `HOST_SSH_AUTH_SOCK` (`/run/host-services/ssh-auth.sock` on Docker Desktop and OrbStack, the host's `$SSH_AUTH_SOCK` on Linux) at `/run/nibblet/ssh-agent.sock`. Because it's a mount, ticking or unticking it restarts the container. On Linux the socket is usually `0600`, owned by the host user, so the container's `nibblet` user (uid 1001) can't open it unless the uids match.
-- **A nibblet's own MCP servers** (`mcpServers`): remote URLs, or commands run inside its container. Header and env values are secrets: the API returns them as `••••`, and an update that sends `••••` back keeps the stored value.
+- **A nibblet's own MCP servers** (`mcpServers`): remote URLs, or commands run inside its container by the guard. Header and env values are secrets: the API returns them as `••••`, an update that sends `••••` back keeps the stored value, and only the guard receives them.
+- **Host tool approvals**: `/hostmcp/<name>` reads each request before forwarding it, and refuses batches and anything it can't read, so an "ask me first" host tool can't be called without asking.
+
+Shared memories are written to the system prompt only when they're the nibblet's own. Other nibblets' shared notes come back from `memory_search` marked as information, not instructions.

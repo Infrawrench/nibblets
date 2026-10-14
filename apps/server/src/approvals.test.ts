@@ -1,7 +1,7 @@
 import type { ThreadItem, ThreadItemOf } from "@nibblet/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Approvals, type ApprovalStore } from "./approvals.ts";
-import { declinedReply, toolCallIn } from "./hostmcp.ts";
+import { declinedReply, inspectRequest, toolCallIn } from "./hostmcp.ts";
 
 /** Just the store calls approvals make, recorded. */
 function fakeStore() {
@@ -96,6 +96,36 @@ describe("host tool gate parsing", () => {
     expect(toolCallIn(body)).toEqual({ id: 7, tool: "send_money", input: { amount: 5 } });
     expect(toolCallIn(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }))).toBeNull();
     expect(toolCallIn("not json")).toBeNull();
+  });
+
+  it("refuses anything that could carry a gated call past the check", () => {
+    const call = {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "send_money", arguments: {} },
+    };
+    // A batch, which the bridge would run as is.
+    expect(inspectRequest(JSON.stringify([call])).kind).toBe("refuse");
+    expect(inspectRequest(JSON.stringify([{ ...call, method: "tools/list" }])).kind).toBe("refuse");
+    // A tools/call that's slightly off, so a strict parse would miss it.
+    expect(inspectRequest(JSON.stringify({ ...call, jsonrpc: "1.0" })).kind).toBe("refuse");
+    expect(inspectRequest(JSON.stringify({ ...call, id: null })).kind).toBe("refuse");
+    expect(inspectRequest(JSON.stringify({ ...call, params: { tool: "send_money" } })).kind).toBe(
+      "refuse",
+    );
+    expect(inspectRequest("not json").kind).toBe("refuse");
+    expect(inspectRequest("42").kind).toBe("refuse");
+    // Everything else goes through, and a proper call is checked.
+    expect(inspectRequest(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }))).toEqual(
+      {
+        kind: "other",
+      },
+    );
+    expect(inspectRequest(JSON.stringify(call))).toMatchObject({
+      kind: "call",
+      tool: "send_money",
+    });
   });
 
   it("answers a declined call as an error result for the same request", () => {

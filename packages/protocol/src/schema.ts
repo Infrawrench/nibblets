@@ -421,6 +421,8 @@ export const Memory = z.object({
   id: z.string(),
   /** Null for memories every nibblet on the server shares. */
   nibbletId: z.string().nullable(),
+  /** For a shared memory, the nibblet that shared it; null when the person did. */
+  sharedBy: z.string().nullable().default(null),
   content: z.string(),
   tags: z.array(z.string()),
   createdAt: Timestamp,

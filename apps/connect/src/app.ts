@@ -3,6 +3,7 @@ import {
   HeartbeatRequest,
   LinkStartRequest,
   OFFLINE_AFTER_MS,
+  ApproveLink,
   PendingLink,
   PushNote,
   PushSubscriptionInput,
@@ -79,7 +80,33 @@ const LinkRow = z.object({
   server_secret: z.string().nullable(),
   tunnel: z.string().nullable(),
   expires_at: z.string(),
+  ip: z.string().nullable().default(null),
+  location: z.string().nullable().default(null),
 });
+
+/** Finishes `work` after responding, on Workers; elsewhere (tests), before. */
+async function inBackground(c: Context, work: Promise<unknown>): Promise<void> {
+  try {
+    c.executionCtx.waitUntil(work);
+  } catch {
+    await work;
+  }
+}
+
+/** The address a request came from, as Cloudflare saw it. */
+function clientIp(c: { req: { header(name: string): string | undefined } }): string | null {
+  return c.req.header("cf-connecting-ip") ?? null;
+}
+
+/** Roughly where a request came from ("Brighton, GB"), from Cloudflare's request details. */
+function roughLocation(request: Request): string | null {
+  const cf: unknown = Reflect.get(request, "cf");
+  if (typeof cf !== "object" || cf === null) return null;
+  const city = Reflect.get(cf, "city");
+  const country = Reflect.get(cf, "country");
+  const parts = [city, country].filter((p): p is string => typeof p === "string" && p !== "");
+  return parts.length ? parts.join(", ") : null;
+}
 
 const Platform = PendingLink.shape.platform;
 
@@ -308,7 +335,7 @@ export function createApp() {
         new Date().toISOString(),
       ),
       c.env.DB.prepare(
-        "INSERT INTO link_requests (code, poll_hash, name, hostname, platform, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO link_requests (code, poll_hash, name, hostname, platform, expires_at, created_at, ip, location) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       ).bind(
         code,
         await sha256(pollToken),
@@ -317,6 +344,8 @@ export function createApp() {
         body.data.platform,
         expiresAt,
         new Date().toISOString(),
+        clientIp(c),
+        roughLocation(c.req.raw),
       ),
     ]);
     const approveUrl = `${publicUrl(c)}/link?code=${encodeURIComponent(code)}`;
@@ -383,6 +412,8 @@ export function createApp() {
       hostname: link.hostname,
       platform: Platform.catch("other").parse(link.platform),
       expiresAt: link.expires_at,
+      location: link.location,
+      sameNetwork: link.ip !== null && link.ip === clientIp(c),
     };
     return c.json(pending);
   });
@@ -398,6 +429,16 @@ export function createApp() {
     const link = LinkRow.parse(raw);
     if (Date.parse(link.expires_at) < Date.now())
       return c.json({ error: "That code has expired" }, 410);
+    // A link started from another network may be one someone sent: it takes
+    // the person saying they started it, not just a click.
+    const body = ApproveLink.safeParse(await c.req.json().catch(() => ({})));
+    const sameNetwork = link.ip !== null && link.ip === clientIp(c);
+    if (!sameNetwork && !(body.success && body.data.startedItMyself)) {
+      return c.json(
+        { error: "Confirm you started this on your own computer before connecting it" },
+        409,
+      );
+    }
 
     const user = c.get("user");
     const serverId = randomId("srv");
@@ -432,6 +473,16 @@ export function createApp() {
         code,
       ),
     ]);
+    // Every device hears about it, so a server added by mistake is noticed.
+    await inBackground(
+      c,
+      pushToUser(c.env, user.id, {
+        title: "A server was connected to your account",
+        body: `${link.name} (${link.hostname})${link.location ? ` in ${link.location}` : ""}. Not you? Remove it in Settings.`,
+        url: "/settings",
+        tag: `linked:${serverId}`,
+      }).catch(() => undefined),
+    );
     return c.json({ serverId, name: link.name });
   });
 

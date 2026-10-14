@@ -94,10 +94,18 @@ COPY apps/runner ./apps/runner
 # Codex and OpenCode binaries the SDKs spawn.
 RUN pnpm install --prod --frozen-lockfile --filter @nibblet/runner...
 
-RUN useradd --create-home --uid 1001 --shell /bin/bash nibblet \
+# Two users (see apps/runner/src/entry.ts): the agent, which runs the
+# harness and whatever it does, and the guard, which holds the secrets and
+# the "ask me first" gate. The entry starts as root to set up the firewall
+# and folders, then runs each as its own user with no capabilities.
+RUN apt-get update && apt-get install -y --no-install-recommends iptables \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 1002 nibblet \
+ && useradd --create-home --uid 1001 --gid 1002 --shell /bin/bash nibblet \
+ && groupadd --gid 1100 guard \
+ && useradd --uid 1100 --gid 1100 --no-create-home --home-dir /home/nibblet/.guard --shell /usr/sbin/nologin guard \
  && mkdir -p /home/nibblet/work \
  && chown -R nibblet:nibblet /home/nibblet
-USER nibblet
 WORKDIR /home/nibblet/work
 ENV NODE_ENV=production \
     NIBBLET_WORKDIR=/home/nibblet/work \
@@ -108,4 +116,4 @@ ENV NODE_ENV=production \
 # The browser view, served by OpenComputerUse and proxied by the server.
 EXPOSE 7900
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "/app/apps/runner/src/main.ts"]
+CMD ["node", "/app/apps/runner/src/entry.ts"]

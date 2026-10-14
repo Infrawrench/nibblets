@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, Loader2, Monitor } from "lucide-react";
+import { CheckCircle2, Loader2, MapPin, Monitor, ShieldAlert } from "lucide-react";
 import { z } from "zod";
 import { defaultHamsterLook } from "@nibblet/protocol";
 import { Hamster } from "../components/hamster/Hamster.tsx";
@@ -22,6 +22,7 @@ export const Route = createFileRoute("/link")({
     const [done, setDone] = useState<"approved" | "denied" | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [mine, setMine] = useState(false);
     const pending = useQuery({
       queryKey: ["central", "link", code],
       queryFn: () => {
@@ -79,7 +80,7 @@ export const Route = createFileRoute("/link")({
       setBusy(true);
       setError(null);
       try {
-        if (approve) await central.api.approve(link.code);
+        if (approve) await central.api.approve(link.code, mine);
         else await central.api.deny(link.code);
         central.refresh();
         setDone(approve ? "approved" : "denied");
@@ -106,7 +107,31 @@ export const Route = createFileRoute("/link")({
           <span className="text-2xs text-faint">
             Check it matches the code on the server. Expires {relativeTime(link.expiresAt)}.
           </span>
+          {link.location ? (
+            <span className="flex items-center gap-1.5 text-2xs text-faint">
+              <MapPin className="size-3" />
+              Asked from {link.location}
+              {link.sameNetwork ? ", on the network you're on now" : ""}
+            </span>
+          ) : null}
         </div>
+        {link.sameNetwork ? null : (
+          <div className="flex w-full max-w-sm flex-col gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-left">
+            <span className="flex items-center gap-1.5 text-sm font-medium text-warning">
+              <ShieldAlert className="size-4" />
+              This came from a different network
+            </span>
+            <span className="text-xs text-dim">
+              That's expected for a server or VM somewhere else. But if someone sent you this link,
+              don't connect it: their server would see your nibblets' updates and could message your
+              devices.
+            </span>
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} />I
+              started this on my own computer just now
+            </label>
+          </div>
+        )}
         <p className="max-w-sm text-xs text-dim">
           Signed in as {central.user.name}. Its nibblets will show up here, and you'll be able to
           use them from anywhere you sign in.
@@ -115,7 +140,11 @@ export const Route = createFileRoute("/link")({
           <Button disabled={busy} onClick={() => void decide(false)}>
             Not mine
           </Button>
-          <Button variant="primary" disabled={busy} onClick={() => void decide(true)}>
+          <Button
+            variant="primary"
+            disabled={busy || (!link.sameNetwork && !mine)}
+            onClick={() => void decide(true)}
+          >
             {busy ? <Loader2 className="animate-spin" /> : null}
             Connect
           </Button>

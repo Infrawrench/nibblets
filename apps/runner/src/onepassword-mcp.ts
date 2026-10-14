@@ -14,6 +14,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ONEPASSWORD_VAULTS_ENV, SharedVault } from "@nibblet/protocol";
 import { z } from "zod";
+import { addressBar, hostOf, parseTree, sameSite, usernameField } from "./onepassword-sites.ts";
 
 const vaults = z.array(SharedVault).parse(JSON.parse(process.env[ONEPASSWORD_VAULTS_ENV] ?? "[]"));
 
@@ -69,20 +70,6 @@ async function search(query: string | undefined, url: string | undefined, vault?
     }
   }
   return found;
-}
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url.includes("://") ? url : `https://${url}`).hostname.toLowerCase();
-  } catch {
-    return url.toLowerCase();
-  }
-}
-
-/** login.example.com and example.com count as the same site. */
-function sameSite(a: string, b: string): boolean {
-  const base = (h: string) => h.split(".").slice(-2).join(".");
-  return a === b || base(a) === base(b);
 }
 
 async function getItem(item: string, vault: string | undefined) {
@@ -235,16 +222,20 @@ server.registerTool(
   "fill_login",
   {
     description:
-      "Sign in on the page open in the browser without seeing the password: click into the username (or email) field first, then call this. It types the username, presses Tab, types the password, and presses Enter if submit is true. Finds the login by item, or by the site's address.",
+      "Sign in with a saved login without seeing the password. It opens the login's own website (the one saved in 1Password, or `page` if that's on the same site, like github.com/login), finds the username field, types the username, presses Tab, types the password, and presses Enter if submit is true. It never types into a page you opened yourself.",
     inputSchema: {
       item: z.string().optional().describe("Id or title; or give url"),
       url: z.string().optional().describe("The site, e.g. github.com, to look the login up by"),
+      page: z
+        .string()
+        .optional()
+        .describe("The sign-in page to open, on the login's own site; its saved address otherwise"),
       vault: z.string().optional(),
       session_id: z.string().optional().describe("The browser session; the first one by default"),
       submit: z.boolean().default(false),
     },
   },
-  async ({ item, url, vault, session_id, submit }) => {
+  async ({ item, url, page, vault, session_id, submit }) => {
     let id = item;
     if (!id) {
       if (!url) return failure("Give an item or a url.");
@@ -266,12 +257,22 @@ server.registerTool(
     const password = found.fields?.find((f) => f.purpose === "PASSWORD")?.value;
     if (!username || !password)
       return failure(`${found.title} has no username and password to fill.`);
+    // A login is only typed into its own site, which this tool opens itself.
+    const saved = (found.urls ?? []).map((u) => u.href).filter((href) => hostOf(href));
+    const sites = saved.map(hostOf);
+    if (saved.length === 0) {
+      return failure(
+        `${found.title} has no website saved, so there's nowhere safe to type it. Add the site to the item in 1Password first.`,
+      );
+    }
+    const target = page ?? saved[0] ?? "";
+    if (!sites.some((site) => sameSite(hostOf(target), site))) {
+      return failure(`${hostOf(target)} isn't ${found.title}'s site (${sites.join(", ")}).`);
+    }
 
     const browser = await computer().catch(() => null);
     if (!browser) {
-      return failure(
-        "The browser isn't reachable from here; fill the fields with the computer tools instead.",
-      );
+      return failure("The browser isn't reachable from here, so the login can't be filled.");
     }
     try {
       let session = session_id;
@@ -284,11 +285,53 @@ server.registerTool(
       if (!session) return failure("No browser is open.");
       const act = (name: string, args: Record<string, unknown>) =>
         browser.callTool({ name, arguments: { session_id: session, screenshot: false, ...args } });
+      const tree = async () => {
+        const result = await act("get_ui_tree", {});
+        return parseTree(
+          (Array.isArray(result.content) ? result.content : [])
+            .map((c) => ("text" in c && typeof c.text === "string" ? c.text : ""))
+            .join("\n"),
+        );
+      };
+
+      // Open the site itself, so the page is the one 1Password knows, not one the agent picked.
+      const bar = addressBar(await tree());
+      if (!bar) return failure("Couldn't find the browser's address bar.");
+      await act("click", { element: bar.id });
+      await act("press_key", { keys: "ctrl+a" });
+      await act("type_text", { text: target.includes("://") ? target : `https://${target}` });
+      await act("press_key", { keys: "enter" });
+
+      // Wait for it to land, then check where it landed: redirects can go elsewhere.
+      let field = null;
+      let landed = "";
+      for (let attempt = 0; attempt < 20 && !field; attempt++) {
+        await new Promise((r) => setTimeout(r, 750));
+        const nodes = await tree();
+        const now = addressBar(nodes);
+        if (!now || now.focused) continue;
+        landed = hostOf(now.value ?? "");
+        if (!sites.some((site) => sameSite(landed, site))) continue;
+        field = usernameField(nodes);
+      }
+      if (!sites.some((site) => sameSite(landed, site))) {
+        return failure(
+          `The browser ended up on ${landed || "an unknown page"}, not ${sites.join(", ")}. Nothing was filled.`,
+        );
+      }
+      if (!field) {
+        return failure(
+          `Couldn't find a username field on ${landed}. Pass the sign-in page as page, like ${sites[0]}/login.`,
+        );
+      }
+      await act("click", { element: field.id });
       await act("type_text", { text: username });
       await act("press_key", { keys: "tab" });
       await act("type_text", { text: password });
       if (submit) await act("press_key", { keys: "enter" });
-      return text(`Filled the login for ${found.title}${submit ? " and submitted it" : ""}.`);
+      return text(
+        `Filled the login for ${found.title} on ${landed}${submit ? " and submitted it" : ""}.`,
+      );
     } finally {
       await browser.close().catch(() => undefined);
     }

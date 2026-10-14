@@ -43,7 +43,8 @@ services:
       KEYCHAIN_BRIDGE_TOKEN: ${KEYCHAIN_BRIDGE_TOKEN:-}
     extra_hosts:
       - host.docker.internal:host-gateway
-    networks: [nibblet]
+    # On the runners' network too, which the database isn't on.
+    networks: [nibblet, runners]
 
   server:
     <<: *image-defaults
@@ -66,7 +67,8 @@ services:
       CREDPROXY_KEY: ${CREDPROXY_KEY}
       CREDPROXY_ADMIN_KEY: ${CREDPROXY_ADMIN_KEY}
       NIBBLET_RUNNER_IMAGE: ${NIBBLET_IMAGE_PREFIX:-nibblet/}runner:${NIBBLET_TAG:-dev}
-      NIBBLET_NETWORK: nibblet
+      # Runners join this one: the server and the credential proxy, not the database.
+      NIBBLET_NETWORK: nibblet-runners
       NIBBLET_DATA_DIR: /data
       # The host MCP bridge (desktop app, or packages/host-mcp/src/cli.ts). Empty turns host tools off.
       HOST_MCP_URL: ${HOST_MCP_URL:-}
@@ -85,7 +87,7 @@ services:
     volumes:
       - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
       - data:/data
-    networks: [nibblet]
+    networks: [nibblet, runners]
 
   # Not a service: builds the image the server starts one container of per
   # nibblet. `docker compose --profile build build runner`.
@@ -104,5 +106,9 @@ volumes:
 
 networks:
   nibblet:
-    # Fixed, so the containers the server creates can join it by name.
     name: nibblet
+  # Where nibblets' containers go: fixed, so the server can put them on it by
+  # name. Only the server and the credential proxy share it; the database
+  # stays on the network above.
+  runners:
+    name: nibblet-runners

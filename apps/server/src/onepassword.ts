@@ -1,10 +1,8 @@
 import {
-  ONEPASSWORD_VAULTS_ENV,
   OnePasswordGrants,
   OnePasswordStatus,
   RpcError,
   SharedVault,
-  type CliLogin,
   type VaultGrant,
 } from "@nibblet/protocol";
 import { z } from "zod";
@@ -98,16 +96,16 @@ export async function forgetGrants(config: BridgeConfig, store: Store, nibbletId
 const TokenResponse = z.object({ token: z.string(), vaults: z.array(SharedVault) });
 
 /**
- * A nibblet's 1Password access as a login for its runner: the service
- * account token, which `op` and the `onepassword` tools read, and the vault
- * names, which aren't secret. Null when nothing is shared.
+ * A nibblet's 1Password access: the service account token, for the guard's
+ * 1Password tools (never the runner, which shares a user with the agent),
+ * and the vault names, which aren't secret. Null when nothing is shared.
  */
 export async function onePasswordLogin(
   config: BridgeConfig,
   store: Store,
   nibbletId: string,
   warn: (message: string) => void,
-): Promise<{ login: CliLogin; vaults: SharedVault[] } | null> {
+): Promise<{ token: string; vaults: SharedVault[] } | null> {
   if (!config.HOST_MCP_URL) return null;
   const grants = await readGrants(store);
   if (!grants[nibbletId]?.length) return null;
@@ -117,15 +115,7 @@ export async function onePasswordLogin(
       warn("1Password access isn't available; share the vaults again in Settings");
       return null;
     }
-    const { token, vaults } = TokenResponse.parse(await res.json());
-    return {
-      login: {
-        id: "1password",
-        env: { OP_SERVICE_ACCOUNT_TOKEN: token, [ONEPASSWORD_VAULTS_ENV]: JSON.stringify(vaults) },
-        setup: [],
-      },
-      vaults,
-    };
+    return TokenResponse.parse(await res.json());
   } catch {
     warn("Couldn't reach the host bridge for 1Password");
     return null;

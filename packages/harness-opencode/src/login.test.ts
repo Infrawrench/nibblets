@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readlink, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -37,11 +37,19 @@ describe("containerConfig", () => {
     expect(containerConfig("{ nope")).toEqual({});
   });
 
-  it("writes the login where OpenCode looks, with auth.json private", async () => {
+  it("writes the login where OpenCode looks, with the token kept off the home volume", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "oc-login-"));
     try {
       const dirs = { config: path.join(dir, "config"), data: path.join(dir, "data") };
-      await installLogin(dirs, { config: hostConfig, auth: '{"neon":{"type":"api","key":"k"}}' });
+      const secrets = path.join(dir, "secrets");
+      // An auth.json an earlier version wrote into the home volume goes.
+      await mkdir(path.join(dirs.data, "opencode"), { recursive: true });
+      await writeFile(path.join(dirs.data, "opencode", "auth.json"), '{"old":"token"}');
+      await installLogin(
+        dirs,
+        { config: hostConfig, auth: '{"neon":{"type":"api","key":"k"}}' },
+        secrets,
+      );
       const written = JSON.parse(
         await readFile(path.join(dirs.config, "opencode", "opencode.json"), "utf8"),
       );
@@ -49,6 +57,9 @@ describe("containerConfig", () => {
         "http://host.docker.internal:11434/v1",
       );
       const auth = path.join(dirs.data, "opencode", "auth.json");
+      expect((await lstat(auth)).isSymbolicLink()).toBe(true);
+      expect(await readlink(auth)).toBe(path.join(secrets, "opencode-auth.json"));
+      expect(await readFile(auth, "utf8")).toBe('{"neon":{"type":"api","key":"k"}}');
       expect((await stat(auth)).mode & 0o777).toBe(0o600);
     } finally {
       await rm(dir, { recursive: true, force: true });

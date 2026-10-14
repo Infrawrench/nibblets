@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Effort, HarnessId } from "./models.ts";
 import { CliLogin, McpServerDef, ToolRule } from "./mcp.ts";
+import { SharedVault } from "./onepassword.ts";
 import { FileRef, JsonValue, ThreadItem, TurnSource, Usage } from "./schema.ts";
 
 /**
@@ -30,16 +31,55 @@ export const RunnerConfig = z.object({
   resumeSessionId: z.string().nullable(),
   /** Host MCP servers to register as `host_<name>`, through the server's `/hostmcp/<name>`. */
   hostMcp: z.array(z.string()).default([]),
-  /** This nibblet's own MCP servers, secrets included. */
-  mcpServers: z.array(McpServerDef).default([]),
+  /**
+   * The servers behind the guard's gate: its own MCP servers, the browser
+   * and 1Password, by name only. Their settings and secrets go to the guard
+   * (see GuardConfig), never to the runner, which shares a user with the agent.
+   */
+  gated: z.array(z.string()).default([]),
   /** Borrowed host CLI logins, fetched fresh on every configure. Never stored. */
   cli: z.array(CliLogin).default([]),
-  /** Tools on its own servers and the browser that wait for the user; host tools are gated by the server. */
-  toolApprovals: z.array(ToolRule).default([]),
   /** For OpenCode nibblets: the host's OpenCode login, or null to use the credential proxy. */
   opencodeLogin: OpencodeLogin.nullable().default(null),
 });
 export type RunnerConfig = z.infer<typeof RunnerConfig>;
+
+/**
+ * What the guard runs: a separate user in the container, which holds the
+ * secrets and enforces "ask me first". It fetches this from the server
+ * itself, at `/guard/:id/config`, with its own token.
+ */
+export const GuardConfig = z.object({
+  browser: z.boolean(),
+  toolApprovals: z.array(ToolRule).default([]),
+  /** This nibblet's own MCP servers, secrets included. */
+  mcpServers: z.array(McpServerDef).default([]),
+  /** Its 1Password service account, when it's been given vaults. */
+  onePassword: z
+    .object({ token: z.string(), vaults: z.array(SharedVault) })
+    .nullable()
+    .default(null),
+});
+export type GuardConfig = z.infer<typeof GuardConfig>;
+
+/** A call the guard's gate is holding for the person to decide, at `/guard/:id/approval`. */
+export const GuardApprovalRequest = z.object({
+  server: z.string(),
+  tool: z.string(),
+  input: JsonValue,
+});
+export const GuardApprovalDecision = z.object({
+  approved: z.boolean(),
+  reason: z.string().nullable(),
+});
+
+/** Where the guard's gate listens, inside each container. */
+export const GATE_PORT = 7810;
+/** The container's users: the agent (and the runner) as one, the guard as another. */
+export const AGENT_UID = 1001;
+export const AGENT_GID = 1002;
+export const GUARD_UID = 1100;
+export const GUARD_GID = 1100;
 
 export const ServerToRunner = z.discriminatedUnion("type", [
   z.object({ type: z.literal("configure"), config: RunnerConfig }),
@@ -110,10 +150,23 @@ export const RunnerEnv = z.object({
   NIBBLET_CREDPROXY_KEY: z.string(),
   /** Set when the nibblet has a browser: OpenComputerUse is registered as an MCP server. */
   NIBBLET_BROWSER: z.enum(["0", "1"]).default("0"),
+});
+export type RunnerEnv = z.infer<typeof RunnerEnv>;
+
+/** The guard's environment; the container's entry hands these to the guard alone. */
+export const GuardEnv = z.object({
+  NIBBLET_ID: z.string(),
+  /** The nibblet server, e.g. `http://server:8420`. */
+  NIBBLET_SERVER_URL: z.string(),
+  NIBBLET_GUARD_TOKEN: z.string(),
+  NIBBLET_BROWSER: z.enum(["0", "1"]).default("0"),
   /** Bearer token OpenComputerUse's view server (port 7900) accepts; the server proxies to it. */
   NIBBLET_VIEW_TOKEN: z.string().default(""),
 });
-export type RunnerEnv = z.infer<typeof RunnerEnv>;
+export type GuardEnv = z.infer<typeof GuardEnv>;
+
+/** The environment only the guard may see: the container's entry keeps these from the runner. */
+export const GUARD_ONLY_ENV: readonly string[] = ["NIBBLET_GUARD_TOKEN", "NIBBLET_VIEW_TOKEN"];
 
 /** Where a nibblet that borrows the host's SSH agent finds its socket. */
 export const CONTAINER_SSH_AUTH_SOCK = "/run/nibblet/ssh-agent.sock";

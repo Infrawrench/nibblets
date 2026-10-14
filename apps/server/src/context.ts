@@ -136,7 +136,7 @@ export function systemPrompt(input: SystemPromptInput): string {
       .map((v) => `- ${v.name} (${v.access === "write" ? "read and write" : "read only"})`)
       .join("\n");
     parts.push(
-      `## 1Password\n\nYou can use these 1Password vaults, and only these:\n${vaults}\n\nUse the \`onepassword\` tools (\`item_search\`, \`item_get\`, \`read_secret\`, \`fill_login\` to sign in on the page open in the browser) or the \`op\` CLI (e.g. \`op read "op://Vault/Item/field"\`). Never write a password, token or other secret into the chat, your memory, files, or your status; use it where it's needed and nowhere else.`,
+      `## 1Password\n\nYou can use these 1Password vaults, and only these:\n${vaults}\n\nUse the \`onepassword\` tools: \`item_search\`, \`item_get\`, \`read_secret\`, and \`fill_login\` to sign in, which opens the login's own site in the browser and types it there. Never write a password, token or other secret into the chat, your memory, files, or your status; use it where it's needed and nowhere else.`,
     );
   }
 

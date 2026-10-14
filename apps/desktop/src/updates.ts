@@ -1,4 +1,5 @@
-import { app, dialog, shell } from "electron";
+import { app, dialog } from "electron";
+import { openOutside } from "./links.ts";
 import { compareVersions, latestRelease, type AppRelease } from "@nibblet/protocol";
 
 const REPO = "Infrawrench/nibblets";
@@ -67,7 +68,7 @@ export class AppUpdates {
         defaultId: 0,
         cancelId: 1,
       });
-      if (response === 0) void shell.openExternal(latest.url);
+      if (response === 0) openOutside(latest.url);
       if (response === 2) this.skip(latest.version);
     } finally {
       this.open = false;

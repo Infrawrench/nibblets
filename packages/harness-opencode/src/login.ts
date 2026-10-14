@@ -1,4 +1,4 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { JsonValue, type OpencodeLogin } from "@nibblet/protocol";
 
@@ -68,8 +68,17 @@ export interface OpencodeDirs {
   data: string;
 }
 
-/** Writes the login where OpenCode looks for it under the given XDG directories. */
-export async function installLogin(dirs: OpencodeDirs, login: OpencodeLogin): Promise<void> {
+/**
+ * Writes the login where OpenCode looks for it under the given XDG
+ * directories. The token itself goes in `secrets`, outside the home volume
+ * (so it's never kept there or copied into a snapshot), and auth.json is a
+ * link to it. Any real auth.json an earlier version left behind is removed.
+ */
+export async function installLogin(
+  dirs: OpencodeDirs,
+  login: OpencodeLogin,
+  secrets: string,
+): Promise<void> {
   const configDir = path.join(dirs.config, "opencode");
   const dataDir = path.join(dirs.data, "opencode");
   await mkdir(configDir, { recursive: true });
@@ -78,10 +87,14 @@ export async function installLogin(dirs: OpencodeDirs, login: OpencodeLogin): Pr
     path.join(configDir, "opencode.json"),
     JSON.stringify(containerConfig(login.config), null, 2),
   );
+  const authFile = path.join(dataDir, "auth.json");
+  await rm(authFile, { force: true });
   if (login.auth) {
-    const authFile = path.join(dataDir, "auth.json");
-    await writeFile(authFile, login.auth, { mode: 0o600 });
-    await chmod(authFile, 0o600);
+    await mkdir(secrets, { recursive: true, mode: 0o700 });
+    const real = path.join(secrets, "opencode-auth.json");
+    await writeFile(real, login.auth, { mode: 0o600 });
+    await chmod(real, 0o600);
+    await symlink(real, authFile);
   }
 }
 

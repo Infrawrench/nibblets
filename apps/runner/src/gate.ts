@@ -29,6 +29,10 @@ export interface GateOptions {
   /** The current rules; read on every call, so changes apply without a restart. */
   rules(): readonly ToolRule[];
   log(message: string): void;
+  /** Where to listen on loopback; any free port when left out. */
+  port?: number;
+  /** `POST /refresh`: the runner saying the settings changed. */
+  onRefresh?(): Promise<void>;
 }
 
 type ToolResult = Awaited<ReturnType<Client["callTool"]>> | CallToolResult;
@@ -110,6 +114,12 @@ export class McpGate {
   async start(): Promise<void> {
     const http = createServer((req, res) => {
       void (async () => {
+        if (req.method === "POST" && req.url === "/refresh") {
+          // Harmless to anyone who can reach it: the settings come from the server.
+          await this.opts.onRefresh?.();
+          res.writeHead(204).end();
+          return;
+        }
         const match = /^\/mcp\/([^/?]+)/.exec(req.url ?? "");
         const up = match?.[1] ? this.upstreams.get(decodeURIComponent(match[1])) : undefined;
         if (!up) {
@@ -147,7 +157,7 @@ export class McpGate {
     });
     await new Promise<void>((resolve, reject) => {
       http.once("error", reject);
-      http.listen(0, "127.0.0.1", () => resolve());
+      http.listen(this.opts.port ?? 0, "127.0.0.1", () => resolve());
     });
     const address = http.address();
     this.port = typeof address === "object" && address ? address.port : 0;
@@ -156,17 +166,28 @@ export class McpGate {
 
   /** Puts a server behind the gate and returns what the harness should connect to instead. */
   wrap(name: string, spec: McpServerSpec): McpServerSpec {
-    if (!this.http) throw new Error("start the gate first");
     const existing = this.upstreams.get(name);
     if (!existing || existing.key !== JSON.stringify(spec)) {
       void existing?.close();
       this.upstreams.set(name, new Upstream(name, spec));
     }
-    return {
-      type: "http",
-      url: `http://127.0.0.1:${this.port}/mcp/${encodeURIComponent(name)}`,
-      headers: {},
-    };
+    return { type: "http", url: this.urlFor(name), headers: {} };
+  }
+
+  /** Puts exactly these servers behind the gate, closing any that went or changed. */
+  sync(specs: Record<string, McpServerSpec>): void {
+    for (const [name, upstream] of this.upstreams) {
+      if (!(name in specs)) {
+        void upstream.close();
+        this.upstreams.delete(name);
+      }
+    }
+    for (const [name, spec] of Object.entries(specs)) this.wrap(name, spec);
+  }
+
+  /** The address a server behind the gate is reached at. */
+  urlFor(name: string): string {
+    return `http://127.0.0.1:${this.port}/mcp/${encodeURIComponent(name)}`;
   }
 
   async close(): Promise<void> {

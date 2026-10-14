@@ -1,10 +1,8 @@
 import { mkdir } from "node:fs/promises";
 import type { McpServerSpec } from "@nibblet/harness";
-import { RunnerEnv } from "@nibblet/protocol";
-import { startComputer, type Computer } from "./computer.ts";
+import { GATE_PORT, RunnerEnv } from "@nibblet/protocol";
 import { Connection } from "./connection.ts";
 import { RunnerFiles } from "./files.ts";
-import { McpGate } from "./gate.ts";
 import { plugins } from "./plugins.ts";
 import { Runner } from "./runner.ts";
 
@@ -26,14 +24,6 @@ const log = (level: "info" | "warn", message: string) => {
   connection?.send({ type: "log", level, message });
 };
 
-let computer: Computer | null = null;
-if (env.NIBBLET_BROWSER === "1") {
-  if (!env.NIBBLET_VIEW_TOKEN)
-    log("warn", "NIBBLET_VIEW_TOKEN is empty; the browser view is unprotected");
-  computer = await startComputer(env.NIBBLET_VIEW_TOKEN, log);
-  mcpServers.computer = computer.mcp;
-}
-
 // Attachments come down before a turn; `share_file` sends files up.
 const files = new RunnerFiles({
   serverUrl: env.NIBBLET_MCP_URL.replace(/\/mcp\/?$/, ""),
@@ -46,14 +36,9 @@ mcpServers.files = await files.startMcp();
 // `/mcp` and `/hostmcp/<name>` live side by side on the nibblet server.
 const hostMcpBase = env.NIBBLET_MCP_URL.replace(/\/mcp\/?$/, "/hostmcp");
 
-// Its own MCP servers and the browser sit behind a local gate that holds
-// "ask me first" calls; the runner asks the user through the server.
-const gate = new McpGate({
-  ask: (server, tool, input) => runner.ask(server, tool, input),
-  rules: () => runner.rules(),
-  log: (message) => log("warn", message),
-});
-await gate.start();
+// The browser, 1Password and its own MCP servers sit behind the guard's
+// gate, run as another user; this process only knows their addresses.
+const gateBase = `http://127.0.0.1:${GATE_PORT}`;
 
 const runner: Runner = new Runner({
   plugins,
@@ -67,7 +52,10 @@ const runner: Runner = new Runner({
   }),
   credproxyUrl: env.NIBBLET_CREDPROXY_URL,
   credproxyKey: env.NIBBLET_CREDPROXY_KEY,
-  gate,
+  gateUrl: (name) => `${gateBase}/mcp/${encodeURIComponent(name)}`,
+  refreshGuard: async () => {
+    await fetch(`${gateBase}/refresh`, { method: "POST", signal: AbortSignal.timeout(30_000) });
+  },
   files,
 });
 
@@ -86,9 +74,7 @@ console.log(`runner: nibblet ${env.NIBBLET_ID} connecting to ${env.NIBBLET_SERVE
 async function shutdown(): Promise<void> {
   connection?.close();
   await runner.close().catch(() => {});
-  await gate.close().catch(() => {});
   await files.close().catch(() => {});
-  computer?.stop();
   process.exit(0);
 }
 process.on("SIGTERM", () => void shutdown());

@@ -7,6 +7,7 @@ import {
   HARNESS_CLI_DIR,
   HARNESS_CLI_VOLUME,
   type Resources,
+  type GuardEnv,
   type RunnerEnv,
 } from "@nibblet/protocol";
 import type { Config } from "./config.ts";
@@ -31,11 +32,27 @@ export function limits(r: Resources): { Memory: number; MemorySwap: number; Nano
 const HOME_ARCHIVE_EXCLUDES = [
   "nibblet/.cache",
   "nibblet/.npm/_cacache",
-  "nibblet/.config/chromium/*/Cache",
-  "nibblet/.config/chromium/*/Code Cache",
-  "nibblet/.config/chromium/*/GPUCache",
-  "nibblet/.config/chromium/*/Service Worker/CacheStorage",
+  // The browser's profile, in the guard's home (and where it was before the guard).
+  ...["nibblet/.guard/.config/chromium", "nibblet/.config/chromium"].flatMap((profile) => [
+    `${profile}/*/Cache`,
+    `${profile}/*/Code Cache`,
+    `${profile}/*/GPUCache`,
+    `${profile}/*/Service Worker/CacheStorage`,
+  ]),
 ];
+
+/**
+ * How a runner container is locked down. Its entry runs as root only to set
+ * the firewall and folders, with just the capabilities for that, then starts
+ * the guard and the agent as users with none; no-new-privileges stops anything
+ * regaining one. The process limit keeps a runaway agent from starving the host.
+ */
+export const RUNNER_HARDENING = {
+  CapDrop: ["ALL"],
+  CapAdd: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "KILL", "NET_ADMIN", "NET_RAW"],
+  SecurityOpt: ["no-new-privileges:true"],
+  PidsLimit: 4096,
+};
 
 /** The runner image's user home, which holds its working folder. */
 const RUNNER_HOME = "/home/nibblet";
@@ -78,7 +95,7 @@ export class Orchestrator {
 
   async startRunner(
     nibbletId: string,
-    env: RunnerEnv,
+    env: RunnerEnv & GuardEnv,
     opts: { sshAgent: boolean; resources: Resources } = {
       sshAgent: false,
       resources: defaultResources,
@@ -98,6 +115,7 @@ export class Orchestrator {
         ShmSize: 1024 * 1024 * 1024,
         ...limits(opts.resources),
         RestartPolicy: { Name: "no" },
+        ...RUNNER_HARDENING,
         // Docker Desktop provides this itself; Linux engines need it spelt out.
         ExtraHosts: ["host.docker.internal:host-gateway"],
         // Its home folder (files, browser profile, git and CLI config, agent

@@ -8,6 +8,8 @@ import {
   type ThreadItem,
   type TurnSource,
   type Resources,
+  type GuardConfig,
+  type McpServerDef,
 } from "@nibblet/protocol";
 import { cliLogins } from "./clilogins.ts";
 import type { Config } from "./config.ts";
@@ -24,7 +26,7 @@ import { dropOverlaps, hostTools } from "./hostmcp.ts";
 import { onePasswordLogin } from "./onepassword.ts";
 import { opencodeLogin } from "./opencode.ts";
 import { runnerName, type Orchestrator } from "./docker.ts";
-import { hashToken, newId, viewToken, type Store } from "./store.ts";
+import { guardToken, hashToken, newId, viewToken, type Store } from "./store.ts";
 
 export interface RunnerLink {
   send(message: ServerToRunner): void;
@@ -130,7 +132,14 @@ export class Conductor {
           NIBBLET_CREDPROXY_URL: this.config.CREDPROXY_URL,
           NIBBLET_CREDPROXY_KEY: this.config.CREDPROXY_KEY,
           NIBBLET_BROWSER: nibblet.browser ? "1" : "0",
+          // For the guard alone; the container's entry keeps these from the runner.
+          NIBBLET_SERVER_URL: this.config.NIBBLET_INTERNAL_URL,
           NIBBLET_VIEW_TOKEN: viewToken(
+            this.config.NIBBLET_OWNER_TOKEN,
+            nibbletId,
+            hashToken(token),
+          ),
+          NIBBLET_GUARD_TOKEN: guardToken(
             this.config.NIBBLET_OWNER_TOKEN,
             nibbletId,
             hashToken(token),
@@ -304,6 +313,7 @@ export class Conductor {
     );
     if (onePassword) this.onePasswordVaults.set(nibbletId, onePassword.vaults);
     else this.onePasswordVaults.delete(nibbletId);
+    const mcpServers = await this.ownMcpServers(row);
     link.send({
       type: "configure",
       config: {
@@ -314,23 +324,47 @@ export class Conductor {
         effort: row.effort,
         resumeSessionId: row.harnessSessionId,
         hostMcp: this.config.HOST_MCP_URL ? row.hostTools : [],
-        mcpServers:
-          row.hostTools.length > 0 && this.config.HOST_MCP_URL
-            ? dropOverlaps(row.mcpServers, row.hostTools, (await hostTools(this.config)).servers)
-            : row.mcpServers,
-        toolApprovals: row.toolApprovals,
-        cli: [
-          ...(await cliLogins(this.config, row.cliCredentials, (m) =>
-            console.warn(`[${nibbletId}] ${m}`),
-          )),
-          ...(onePassword ? [onePassword.login] : []),
+        // Names only: the guard fetches the settings and secrets behind them itself.
+        gated: [
+          ...(row.browser ? ["computer"] : []),
+          ...(onePassword ? ["onepassword"] : []),
+          ...mcpServers.map((server) => server.name),
         ],
+        cli: await cliLogins(this.config, row.cliCredentials, (m) =>
+          console.warn(`[${nibbletId}] ${m}`),
+        ),
         opencodeLogin:
           row.harness === "opencode"
-            ? await opencodeLogin(this.config, (m) => console.warn(`[${nibbletId}] ${m}`))
+            ? await opencodeLogin(this.config, row.model, (m) =>
+                console.warn(`[${nibbletId}] ${m}`),
+              )
             : null,
       },
     });
+  }
+
+  /** Its own MCP servers, less any the host's tools now cover. */
+  private async ownMcpServers(row: { hostTools: string[]; mcpServers: McpServerDef[] }) {
+    return row.hostTools.length > 0 && this.config.HOST_MCP_URL
+      ? dropOverlaps(row.mcpServers, row.hostTools, (await hostTools(this.config)).servers)
+      : row.mcpServers;
+  }
+
+  /**
+   * What a nibblet's guard runs, with the secrets it needs: fetched by the
+   * guard itself, so they never pass through the runner or the agent's user.
+   */
+  async guardConfig(nibbletId: string): Promise<GuardConfig> {
+    const row = await this.store.nibbletRow(nibbletId);
+    const onePassword = await onePasswordLogin(this.config, this.store, nibbletId, (m) =>
+      console.warn(`[${nibbletId}] ${m}`),
+    );
+    return {
+      browser: row.browser,
+      toolApprovals: row.toolApprovals,
+      mcpServers: await this.ownMcpServers(row),
+      onePassword,
+    };
   }
 
   async detach(nibbletId: string, link: RunnerLink): Promise<void> {
@@ -446,7 +480,7 @@ export class Conductor {
     const row = await this.store.nibbletRow(nibbletId);
     const nibblet = await this.store.getNibblet(nibbletId);
     const memories = await this.store
-      .searchMemories({ nibbletId, query: input.slice(0, 2000), limit: 8 })
+      .searchMemories({ nibbletId, query: input.slice(0, 2000), limit: 8, trustedOnly: true })
       .catch((err: unknown) => {
         console.warn("memory search failed", err);
         return [];

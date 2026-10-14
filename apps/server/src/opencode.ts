@@ -38,16 +38,44 @@ async function bridgeGet(config: Bridge, path: string): Promise<unknown> {
 }
 
 /**
+ * The part of the host's OpenCode logins (auth.json) a nibblet needs: only
+ * the provider its model is on, never the others. Null when that provider
+ * has no login there.
+ */
+export function scopeOpencodeAuth(auth: string | null, model: string): string | null {
+  if (!auth) return null;
+  const provider = model.split("/")[0] ?? "";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(auth);
+  } catch {
+    return null;
+  }
+  if (!provider || typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return null;
+  }
+  const entry = Object.entries(parsed).find(([key]) => key === provider);
+  return entry ? JSON.stringify({ [provider]: entry[1] }) : null;
+}
+
+/**
  * The host's OpenCode login, fetched fresh for each runner configure. Null
- * without a bridge or a login, in which case OpenCode uses the proxy.
+ * without a bridge or a login, in which case OpenCode uses the proxy. Its
+ * logins are cut down to the one provider `model` is on.
  */
 export async function opencodeLogin(
   config: Bridge,
+  /** Null only for listing models, in a throwaway container with no agent in it. */
+  model: string | null,
   warn: (message: string) => void,
 ): Promise<OpencodeLogin | null> {
   if (!config.HOST_MCP_URL) return null;
   try {
-    const login = OpencodeLogin.parse(await bridgeGet(config, "/harness/opencode/login"));
+    const host = OpencodeLogin.parse(await bridgeGet(config, "/harness/opencode/login"));
+    const login = {
+      config: host.config,
+      auth: model === null ? host.auth : scopeOpencodeAuth(host.auth, model),
+    };
     return login.config === null && login.auth === null ? null : login;
   } catch (err) {
     warn(
@@ -102,7 +130,7 @@ export class HarnessModelLists {
       return unavailable("The host bridge isn't connected");
     }
     if (!host.installed) return unavailable("OpenCode isn't installed on the host");
-    const login = await opencodeLogin(this.config, () => {});
+    const login = await opencodeLogin(this.config, null, () => {});
     if (!login) return unavailable(host.detail ?? "OpenCode isn't signed in on the host");
 
     // Keyed by the login, so signing in to another provider shows up at once.

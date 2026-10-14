@@ -12,10 +12,9 @@ const config: RunnerConfig = {
   effort: "medium",
   resumeSessionId: null,
   hostMcp: [],
-  mcpServers: [],
+  gated: [],
   cli: [],
   opencodeLogin: null,
-  toolApprovals: [],
 };
 
 /** A harness that echoes its input, or waits for an abort when told to. */
@@ -55,6 +54,7 @@ function setup() {
     workdir: "/tmp",
     mcpServers: {},
     hostMcp: (name) => ({ type: "http", url: `http://server/hostmcp/${name}`, headers: {} }),
+    gateUrl: (name) => `http://127.0.0.1:7810/mcp/${name}`,
     credproxyUrl: "http://proxy",
     credproxyKey: "k",
     cliLogins: new CliLogins({}, async () => {}),
@@ -108,28 +108,28 @@ describe("Runner", () => {
 });
 
 describe("mcpServersFor", () => {
-  it("adds ticked host servers and the nibblet's own beside the built-ins", () => {
+  it("adds ticked host servers, and reaches the gated ones through the guard by name", () => {
     const servers = mcpServersFor(
-      {
-        ...config,
-        hostMcp: ["files"],
-        mcpServers: [
-          { name: "linear", type: "http", url: "https://mcp.linear.app/mcp", headers: { a: "b" } },
-          { name: "gh", type: "stdio", command: "npx", args: ["-y", "gh"], env: { T: "x" } },
-        ],
-      },
+      { ...config, hostMcp: ["files"], gated: ["computer", "linear", "onepassword"] },
       {
         mcpServers: { nibblet: { type: "http", url: "http://server/mcp", headers: {} } },
         hostMcp: (name) => ({ type: "http", url: `http://server/hostmcp/${name}`, headers: {} }),
+        gateUrl: (name) => `http://127.0.0.1:7810/mcp/${name}`,
       },
     );
-    expect(Object.keys(servers).sort()).toEqual(["gh", "host_files", "linear", "nibblet"]);
+    expect(Object.keys(servers).sort()).toEqual([
+      "computer",
+      "host_files",
+      "linear",
+      "nibblet",
+      "onepassword",
+    ]);
     expect(servers.host_files).toMatchObject({ url: "http://server/hostmcp/files" });
-    expect(servers.gh).toEqual({
-      type: "stdio",
-      command: "npx",
-      args: ["-y", "gh"],
-      env: { T: "x" },
+    // No settings or secrets, only an address on the guard's gate.
+    expect(servers.onepassword).toEqual({
+      type: "http",
+      url: "http://127.0.0.1:7810/mcp/onepassword",
+      headers: {},
     });
   });
 });

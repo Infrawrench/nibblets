@@ -22,7 +22,7 @@ async function main(): Promise<void> {
   const login = OpencodeLogin.parse(JSON.parse(await readStdin()));
   const home = await mkdtemp(path.join(tmpdir(), "opencode-models-"));
   try {
-    await installLogin(await prepareHome(home), login);
+    await installLogin(await prepareHome(home), login, path.join(home, "secrets"));
     const stdout = await new Promise<string>((resolve, reject) =>
       execFile(
         "opencode",

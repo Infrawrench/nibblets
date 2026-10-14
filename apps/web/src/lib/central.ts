@@ -45,7 +45,8 @@ export interface CentralApi {
   servers(): Promise<ServerList>;
   token(serverId: string): Promise<ServerToken>;
   pendingLink(code: string): Promise<PendingLink>;
-  approve(code: string): Promise<void>;
+  /** `startedItMyself` is needed when the server asked from another network. */
+  approve(code: string, startedItMyself: boolean): Promise<void>;
   deny(code: string): Promise<void>;
   rename(serverId: string, name: string): Promise<void>;
   remove(serverId: string): Promise<void>;
@@ -84,8 +85,11 @@ export function centralApi(sessionToken: () => Promise<string | null>): CentralA
       ),
     pendingLink: async (code) =>
       PendingLink.parse(await call(`/v1/link/${encodeURIComponent(code)}`)),
-    approve: async (code) => {
-      await call(`/v1/link/${encodeURIComponent(code)}/approve`, { method: "POST" });
+    approve: async (code, startedItMyself) => {
+      await call(`/v1/link/${encodeURIComponent(code)}/approve`, {
+        method: "POST",
+        body: JSON.stringify({ startedItMyself }),
+      });
     },
     deny: async (code) => {
       await call(`/v1/link/${encodeURIComponent(code)}/deny`, { method: "POST" });

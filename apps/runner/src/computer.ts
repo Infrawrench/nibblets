@@ -13,14 +13,15 @@
  * it with that bearer.
  *
  * Overrides: `OCU_CMD` (default `opencomputeruse`), `OCU_ARGS` (space
- * separated; `{token}` and `{viewToken}` are filled in), `OCU_MCP_URL`.
+ * separated), `OCU_MCP_URL`.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import type { McpServerSpec } from "@nibblet/harness";
 
-const DEFAULT_ARGS =
-  "serve --port 7800 --token {token} --view-listen 0.0.0.0:7900 --view-token {viewToken}";
+// The tokens go in the environment (OCU_SERVE_TOKEN, OCU_VIEW_TOKEN), never
+// the command line, which every process in the container can read.
+const DEFAULT_ARGS = "serve --port 7800 --view-listen 0.0.0.0:7900";
 const DEFAULT_MCP_URL = "http://127.0.0.1:7800/mcp";
 
 export interface Computer {
@@ -34,17 +35,15 @@ export async function startComputer(
 ): Promise<Computer> {
   const token = randomBytes(24).toString("base64url");
   const command = process.env.OCU_CMD ?? "opencomputeruse";
-  const args = (process.env.OCU_ARGS ?? DEFAULT_ARGS)
-    .split(" ")
-    .filter(Boolean)
-    .map((a) => a.replaceAll("{token}", token).replaceAll("{viewToken}", viewToken));
+  const args = (process.env.OCU_ARGS ?? DEFAULT_ARGS).split(" ").filter(Boolean);
+  const tokens = { OCU_SERVE_TOKEN: token, OCU_VIEW_TOKEN: viewToken };
   const url = process.env.OCU_MCP_URL ?? DEFAULT_MCP_URL;
   const stdio: Computer = {
     mcp: {
       type: "stdio",
       command,
-      args: ["mcp", "--view-listen", "0.0.0.0:7900", "--view-token", viewToken],
-      env: { OCU_LINUX_DISPLAY: "wayland" },
+      args: ["mcp", "--view-listen", "0.0.0.0:7900"],
+      env: { OCU_LINUX_DISPLAY: "wayland", OCU_VIEW_TOKEN: viewToken },
     },
     stop() {},
   };
@@ -53,7 +52,7 @@ export async function startComputer(
   try {
     child = spawn(command, args, {
       stdio: ["ignore", "inherit", "inherit"],
-      env: { ...process.env, OCU_LINUX_DISPLAY: "wayland" },
+      env: { ...process.env, ...tokens, OCU_LINUX_DISPLAY: "wayland" },
     });
   } catch (err) {
     log("warn", `OpenComputerUse serve failed to start (${String(err)}); using stdio`);

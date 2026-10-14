@@ -1,3 +1,4 @@
+import os from "node:os";
 import { execFile } from "node:child_process";
 import { mkdir, rm, symlink } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -122,6 +123,9 @@ async function warmModelsCache(warn: (message: string) => void): Promise<void> {
   );
 }
 
+/** Where the provider token goes: the container's /tmp, never the home volume. */
+const OPENCODE_SECRETS = path.join(os.tmpdir(), "nibblet-secrets");
+
 /** PATH as the runner started, before any installed OpenCode was put ahead of it. */
 const BASE_PATH = process.env.PATH ?? "";
 
@@ -132,7 +136,10 @@ export const opencodeHarness = defineHarness({
   async open(ctx) {
     // createOpencodeServer spawns `opencode` from PATH with the parent's env.
     const dirs = await prepareHome(path.join(ctx.workdir, ".opencode"));
-    if (ctx.config.opencodeLogin) await installLogin(dirs, ctx.config.opencodeLogin);
+    // The token lives outside the home volume, in the container's own /tmp.
+    if (ctx.config.opencodeLogin) {
+      await installLogin(dirs, ctx.config.opencodeLogin, OPENCODE_SECRETS);
+    }
     await warmModelsCache((m) => ctx.log("warn", m));
 
     // A newer OpenCode the server installed goes first on PATH. When another

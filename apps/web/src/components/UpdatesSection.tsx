@@ -3,6 +3,7 @@ import { ArrowUpCircle, CheckCircle2, Download, Loader2, RefreshCw } from "lucid
 import { compareVersions, type AppUpdate, type HarnessUpdate } from "@nibblet/protocol";
 import type { ServerConnection } from "../lib/connection.ts";
 import { keys } from "../lib/servers.tsx";
+import { isSafeLink, openWeb } from "../lib/links.ts";
 import { relativeTime } from "../lib/time.ts";
 import { HarnessIcon } from "./HarnessIcon.tsx";
 import { Button } from "./ui/Button.tsx";
@@ -26,7 +27,7 @@ export function useInstallApp(connection: ServerConnection) {
   return useMutation({
     mutationFn: async (update: AppUpdate) => {
       if (update.method === "download" || update.method === "manual") {
-        if (update.latest) window.open(update.latest.url, "_blank", "noopener");
+        if (update.latest) openWeb(update.latest.url);
         return update;
       }
       return connection.client.updates.applyApp({});
@@ -102,7 +103,7 @@ function AppRow({ connection }: { connection: ServerConnection }) {
               )}
               <a
                 className="inline-flex items-center px-1 text-xs text-dim underline-offset-2 hover:text-text hover:underline"
-                href={u.latest.url}
+                href={isSafeLink(u.latest.url) ? u.latest.url : undefined}
                 target="_blank"
                 rel="noreferrer"
               >

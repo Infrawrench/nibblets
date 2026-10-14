@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WebUrl } from "./urls.ts";
 import { HarnessId } from "./models.ts";
 
 /** Where a harness's CLI stands: what's built in, what's been installed since, and what's out. */
@@ -29,7 +30,7 @@ export const AppRelease = z.object({
   name: z.string(),
   /** The release notes, in Markdown. */
   notes: z.string(),
-  url: z.url(),
+  url: WebUrl,
   publishedAt: z.string().nullable(),
 });
 export type AppRelease = z.infer<typeof AppRelease>;
@@ -76,7 +77,7 @@ const GithubRelease = z.object({
   tag_name: z.string(),
   name: z.string().nullable(),
   body: z.string().nullable(),
-  html_url: z.url(),
+  html_url: WebUrl,
   published_at: z.string().nullable(),
   draft: z.boolean().default(false),
   prerelease: z.boolean().default(false),

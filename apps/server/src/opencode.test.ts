@@ -2,7 +2,7 @@ import { Nibblet } from "@nibblet/protocol";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "./config.ts";
 import type { Orchestrator } from "./docker.ts";
-import { HarnessModelLists } from "./opencode.ts";
+import { HarnessModelLists, scopeOpencodeAuth } from "./opencode.ts";
 
 const config = loadConfig({
   NIBBLET_OWNER_TOKEN: "owner-token-0123456789",
@@ -33,5 +33,26 @@ describe("HarnessModelLists", () => {
 
   it("never puts the host's OpenCode login in a nibblet the API returns", () => {
     expect(Object.keys(Nibblet.shape)).not.toContain("opencodeLogin");
+  });
+});
+
+describe("scopeOpencodeAuth", () => {
+  const auth = JSON.stringify({
+    anthropic: { type: "oauth", access: "a" },
+    "github-copilot": { type: "oauth", access: "g" },
+    openrouter: { type: "api", key: "k" },
+  });
+
+  it("keeps only the login for the model's provider", () => {
+    expect(JSON.parse(scopeOpencodeAuth(auth, "openrouter/qwen-3") ?? "null")).toEqual({
+      openrouter: { type: "api", key: "k" },
+    });
+  });
+
+  it("gives nothing when that provider has no login, or the input is odd", () => {
+    expect(scopeOpencodeAuth(auth, "groq/llama")).toBeNull();
+    expect(scopeOpencodeAuth(auth, "")).toBeNull();
+    expect(scopeOpencodeAuth("not json", "openrouter/x")).toBeNull();
+    expect(scopeOpencodeAuth(null, "openrouter/x")).toBeNull();
   });
 });

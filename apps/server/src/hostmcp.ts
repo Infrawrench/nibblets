@@ -30,17 +30,43 @@ const PASS_REQUEST = [
 ];
 const PASS_RESPONSE = ["content-type", "mcp-session-id", "cache-control"];
 
-/** The `tools/call` in a JSON-RPC request body, if that's what it is. */
-export function toolCallIn(body: string): { id: JsonValue; tool: string; input: JsonValue } | null {
+/**
+ * What a POST to a host MCP server carries, for the approval check. A batch
+ * (an array) is refused outright, since a gated call inside one would skip
+ * the check; so is anything that isn't JSON, and any `tools/call` that
+ * doesn't parse cleanly, so nothing reaches the host unchecked.
+ */
+export function inspectRequest(
+  body: string,
+):
+  | { kind: "call"; id: JsonValue; tool: string; input: JsonValue }
+  | { kind: "other" }
+  | { kind: "refuse"; reason: string } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
   } catch {
-    return null;
+    return { kind: "refuse", reason: "The request isn't JSON" };
   }
+  if (Array.isArray(parsed)) return { kind: "refuse", reason: "Batched requests aren't allowed" };
+  if (typeof parsed !== "object" || parsed === null) {
+    return { kind: "refuse", reason: "The request isn't a JSON-RPC message" };
+  }
+  if (!("method" in parsed) || parsed.method !== "tools/call") return { kind: "other" };
   const msg = ToolCallMessage.safeParse(parsed);
-  if (!msg.success) return null;
-  return { id: msg.data.id, tool: msg.data.params.name, input: msg.data.params.arguments ?? {} };
+  if (!msg.success) return { kind: "refuse", reason: "The tools/call request is malformed" };
+  return {
+    kind: "call",
+    id: msg.data.id,
+    tool: msg.data.params.name,
+    input: msg.data.params.arguments ?? {},
+  };
+}
+
+/** The `tools/call` in a JSON-RPC request body, if that's what it is. */
+export function toolCallIn(body: string): { id: JsonValue; tool: string; input: JsonValue } | null {
+  const req = inspectRequest(body);
+  return req.kind === "call" ? { id: req.id, tool: req.tool, input: req.input } : null;
 }
 
 const ToolCallMessage = z.object({
@@ -90,7 +116,14 @@ export function hostMcpHandler(deps: { store: Store; config: Config; conductor: 
     let body: string | undefined;
     if (method === "POST") {
       body = await c.req.text();
-      const call = toolCallIn(body);
+      const req = inspectRequest(body);
+      if (req.kind === "refuse") {
+        return c.json(
+          { jsonrpc: "2.0", id: null, error: { code: -32600, message: req.reason } },
+          400,
+        );
+      }
+      const call = req.kind === "call" ? req : null;
       const server = `host_${name}`;
       if (call && needsApproval(row.toolApprovals, server, call.tool)) {
         const decision = await conductor.approvals.request(row.id, conductor.activeTurnId(row.id), {

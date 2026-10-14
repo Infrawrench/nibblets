@@ -26,6 +26,7 @@ import { HOST_MCP_PORT, IMAGE_PREFIX, Stack } from "./stack.ts";
 import { SetupTerminal } from "./terminal.ts";
 import { checkTools, findAction, forgetShellPath } from "./tools.ts";
 import { AppUpdates } from "./updates.ts";
+import { navigationAllowed, openOutside } from "./links.ts";
 import { adoptShellPath } from "./shell-path.ts";
 import { opencodePaths } from "@nibblet/host-mcp";
 
@@ -184,8 +185,15 @@ function openMainWindow(url = uiUrl()) {
         },
       };
     }
-    void shell.openExternal(target);
+    openOutside(target);
     return { action: "deny" };
+  });
+  // The window stays on the UI (and its sign-in); a link elsewhere opens in
+  // the browser, so no page can stand in for the app in a window with no URL bar.
+  mainWindow.webContents.on("will-navigate", (event, target) => {
+    if (navigationAllowed(target, uiUrl())) return;
+    event.preventDefault();
+    openOutside(target);
   });
   // Tells the UI it's in the app, so it can make room for the traffic lights.
   const ua = mainWindow.webContents.getUserAgent();
@@ -253,7 +261,7 @@ function setupIpc(): void {
     void findAction(tool, action).then(async (found) => {
       if (!found) return;
       if ("open" in found) {
-        await shell.openExternal(found.open);
+        openOutside(found.open);
         return;
       }
       await terminal
@@ -280,7 +288,7 @@ function setupIpc(): void {
   // Only web pages: these come from whatever a command printed.
   const web = (url: unknown): url is string => typeof url === "string" && /^https?:\/\//.test(url);
   ipcMain.on("setup:open-url", (_e, url: unknown) => {
-    if (web(url)) void shell.openExternal(url);
+    if (web(url)) openOutside(url);
   });
   ipcMain.on("setup:copy-url", (_e, url: unknown) => {
     if (web(url)) clipboard.writeText(url);
@@ -434,7 +442,7 @@ async function connectStatus(path = "connect.status"): Promise<ConnectStatus | n
 
 async function startConnect(): Promise<void> {
   const status = await connectStatus("connect.start");
-  if (status?.state === "linking") void shell.openExternal(status.approveUrl);
+  if (status?.state === "linking") openOutside(status.approveUrl);
   // The code also shows in Settings → Remote access while it waits.
   openMainWindow(new URL("/settings", SERVER_URL).href);
 }

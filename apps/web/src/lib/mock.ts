@@ -501,6 +501,7 @@ export function createMockServer(): ServerConnection {
       {
         id: "m1",
         nibbletId: "pip",
+        sharedBy: null,
         content: "Prefers aisle seats, hates early flights before 8am.",
         tags: ["travel"],
         createdAt: ago(60 * 24 * 30),
@@ -512,6 +513,7 @@ export function createMockServer(): ServerConnection {
       {
         id: "m2",
         nibbletId: null,
+        sharedBy: null,
         content: "Home airport is LGW. Lives in Brighton.",
         tags: ["travel", "home"],
         createdAt: ago(60 * 24 * 40),
@@ -850,6 +852,7 @@ export function createMockServer(): ServerConnection {
         const m: Memory = {
           id: crypto.randomUUID(),
           nibbletId,
+          sharedBy: null,
           content,
           tags,
           createdAt: now(),

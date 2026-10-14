@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import Markdown from "react-markdown";
+import { isSafeLink } from "../../lib/links.ts";
 import remarkGfm from "remark-gfm";
 import {
   AlertTriangle,
@@ -124,7 +125,9 @@ function Entry({
         case "assistant_message":
           return (
             <div className={cn("prose-chat", item.streaming && "streaming")}>
-              <Markdown remarkPlugins={[remarkGfm]}>{item.text}</Markdown>
+              <Markdown remarkPlugins={[remarkGfm]} components={{ a: MarkdownLink }}>
+                {item.text}
+              </Markdown>
             </div>
           );
         case "reasoning":
@@ -469,5 +472,18 @@ function Approval({ item, onDecide }: { item: ThreadItemOf<"approval">; onDecide
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Links in a nibblet's replies open in a new tab, never in place of the app,
+ * and only to web and mail addresses; anything else is shown as text.
+ */
+function MarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
+  if (!href || !isSafeLink(href)) return <span>{children}</span>;
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
   );
 }
