@@ -4,6 +4,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import {
   CalendarClock,
   HeartPulse,
+  History,
   MessageSquare,
   Moon,
   Palette,
@@ -68,6 +69,10 @@ export function NibbletMenu({
               <ContextMenu.Item className={itemClass} onClick={() => open("schedules")}>
                 <CalendarClock />
                 Schedules
+              </ContextMenu.Item>
+              <ContextMenu.Item className={itemClass} onClick={() => open("snapshots")}>
+                <History />
+                Snapshots
               </ContextMenu.Item>
               <ContextMenu.Separator className="my-1 h-px bg-line" />
               <ContextMenu.Item className={itemClass} onClick={() => setRenaming(true)}>

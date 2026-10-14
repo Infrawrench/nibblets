@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Brain, CalendarClock, Globe, HeartPulse, PanelRight, Settings2 } from "lucide-react";
+import {
+  Brain,
+  CalendarClock,
+  Globe,
+  HeartPulse,
+  History,
+  PanelRight,
+  Settings2,
+} from "lucide-react";
 import { harnesses } from "@nibblet/protocol";
 import { modelLabel, useModels } from "../lib/models.ts";
 import { useNibblets, useServer, useServers, useThread } from "../lib/servers.tsx";
@@ -16,6 +24,7 @@ import { Composer } from "./thread/Composer.tsx";
 import { BrowserPanel } from "./panels/BrowserPanel.tsx";
 import { SchedulesPanel } from "./panels/SchedulesPanel.tsx";
 import { MemoryPanel } from "./panels/MemoryPanel.tsx";
+import { SnapshotsPanel } from "./panels/SnapshotsPanel.tsx";
 import { NibbletSettings } from "./panels/NibbletSettings.tsx";
 import { Segmented } from "./ui/Segmented.tsx";
 import { Button } from "./ui/Button.tsx";
@@ -124,6 +133,7 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
               { value: "browser", label: <Globe />, title: "Browser" },
               { value: "schedules", label: <CalendarClock />, title: "Schedules" },
               { value: "memory", label: <Brain />, title: "Memory" },
+              { value: "snapshots", label: <History />, title: "Snapshots" },
               { value: "settings", label: <Settings2 />, title: "Settings" },
             ]}
           />
@@ -164,6 +174,9 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
               <SchedulesPanel connection={connection} nibblet={nibblet} />
             ) : null}
             {panel === "memory" ? <MemoryPanel connection={connection} nibblet={nibblet} /> : null}
+            {panel === "snapshots" ? (
+              <SnapshotsPanel connection={connection} nibblet={nibblet} />
+            ) : null}
             {panel === "settings" ? (
               <NibbletSettings key={nibblet.id} connection={connection} nibblet={nibblet} />
             ) : null}

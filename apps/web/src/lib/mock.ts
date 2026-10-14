@@ -3,6 +3,7 @@ import {
   contract,
   createDispatcher,
   defaultHamsterLook,
+  defaultSnapshotPolicy,
   harnesses,
   opencodeModel,
   maskMcpServers,
@@ -18,6 +19,8 @@ import {
   type Nibblet,
   type ConnectStatus,
   type Schedule,
+  type Snapshot,
+  type SnapshotActivity,
   type StoredItem,
   type ThreadItem,
   type TailscaleStatus,
@@ -110,6 +113,7 @@ export function createMockServer(): ServerConnection {
     status: "idle",
     statusDetail: null,
     resources: { cpus: null, memoryMb: null },
+    snapshotPolicy: defaultSnapshotPolicy,
     heartbeats: [
       {
         name: "inbox",
@@ -235,6 +239,39 @@ export function createMockServer(): ServerConnection {
     items.set(nibbletId, list);
     push({ type: "item", item: stored });
   };
+
+  // Snapshots keep a copy of the thread; the mock has no disk to copy.
+  const snapshots = new Map<string, { snapshot: Snapshot; thread: ThreadItem[]; maxSeq: number }>();
+  const positions = new Map<string, { snapshotId: string; maxSeq: number }>();
+  const activity = new Map<string, NonNullable<SnapshotActivity>>();
+  const threadMax = (nibbletId: string) =>
+    Math.max(0, ...(items.get(nibbletId) ?? []).map((s) => s.seq));
+  const setActivity = (nibbletId: string, a: SnapshotActivity) => {
+    if (a) activity.set(nibbletId, a);
+    else activity.delete(nibbletId);
+    push({ type: "snapshots_changed", nibbletId, activity: a });
+  };
+  const takeSnapshot = (
+    nibbletId: string,
+    trigger: Snapshot["trigger"],
+    label: string | null,
+  ): Snapshot => {
+    const thread = (items.get(nibbletId) ?? []).map((s) => s.item);
+    const snapshot: Snapshot = {
+      id: crypto.randomUUID(),
+      nibbletId,
+      createdAt: now(),
+      label,
+      trigger,
+      sizeBytes: 40_000_000 + thread.length * 2_000,
+      messageCount: thread.filter(
+        (i) => i.type === "user_message" || i.type === "assistant_message",
+      ).length,
+    };
+    snapshots.set(snapshot.id, { snapshot, thread, maxSeq: threadMax(nibbletId) });
+    return snapshot;
+  };
+  const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   // A thread with one of everything, for Pip.
   const t1 = "turn-1";
@@ -363,6 +400,25 @@ export function createMockServer(): ServerConnection {
     },
   ];
   for (const item of seed) store("pip", item);
+  // A few snapshots to look at: automatic ones from before the thread got going, and one by hand.
+  for (const [minutes, trigger, label, upTo] of [
+    [60 * 24 * 2, "auto", null, 0],
+    [60 * 24, "auto", null, 0],
+    [41, "manual", "Before the flight search", 1],
+  ] as const) {
+    const s = takeSnapshot("pip", trigger, label);
+    const kept = snapshots.get(s.id);
+    if (kept) {
+      kept.thread = seed.slice(0, upTo);
+      kept.maxSeq = 0;
+      kept.snapshot = {
+        ...s,
+        createdAt: ago(minutes),
+        messageCount: upTo,
+        sizeBytes: 38_000_000 + minutes * 1000,
+      };
+    }
+  }
   store("biscuit", {
     type: "user_message",
     id: "b1",
@@ -653,6 +709,7 @@ export function createMockServer(): ServerConnection {
             : current.mcpServers,
           toolApprovals: patch.toolApprovals ?? current.toolApprovals,
           resources: patch.resources ?? current.resources,
+          snapshotPolicy: patch.snapshotPolicy ?? current.snapshotPolicy,
           updatedAt: now(),
         });
       },
@@ -746,6 +803,68 @@ export function createMockServer(): ServerConnection {
       },
       delete: async ({ id }) => {
         memories.delete(id);
+        return { ok: true };
+      },
+    },
+    snapshots: {
+      list: async ({ nibbletId }) => {
+        const position = positions.get(nibbletId);
+        return {
+          snapshots: [...snapshots.values()]
+            .map((s) => s.snapshot)
+            .filter((s) => s.nibbletId === nibbletId)
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+          current:
+            position && snapshots.has(position.snapshotId)
+              ? {
+                  snapshotId: position.snapshotId,
+                  changedSince: threadMax(nibbletId) > position.maxSeq,
+                }
+              : null,
+          activity: activity.get(nibbletId) ?? null,
+        };
+      },
+      create: async ({ nibbletId, label }) => {
+        setActivity(nibbletId, "snapshotting");
+        await pause(800);
+        const snapshot = takeSnapshot(nibbletId, "manual", label?.trim() || null);
+        setActivity(nibbletId, null);
+        return snapshot;
+      },
+      restore: async ({ id }) => {
+        const target = snapshots.get(id);
+        if (!target) throw new RpcError("not_found", "That snapshot doesn't exist");
+        const nibbletId = target.snapshot.nibbletId;
+        setActivity(nibbletId, "restoring");
+        const name = target.snapshot.label
+          ? `“${target.snapshot.label}”`
+          : new Date(target.snapshot.createdAt).toLocaleString("en-GB");
+        takeSnapshot(nibbletId, "before_restore", `Before restoring ${name}`);
+        save({ ...get(nibbletId), status: "starting", statusDetail: "Restoring a snapshot…" });
+        await pause(1500);
+        items.set(
+          nibbletId,
+          target.thread.map((item) => ({ nibbletId, seq: ++seq, item })),
+        );
+        positions.set(nibbletId, { snapshotId: id, maxSeq: threadMax(nibbletId) });
+        push({ type: "thread_reset", nibbletId });
+        save({ ...get(nibbletId), status: "idle", statusDetail: null });
+        setActivity(nibbletId, null);
+        return { ok: true };
+      },
+      rename: async ({ id, label }) => {
+        const found = snapshots.get(id);
+        if (!found) throw new RpcError("not_found", "That snapshot doesn't exist");
+        found.snapshot = { ...found.snapshot, label: label?.trim() || null };
+        push({ type: "snapshots_changed", nibbletId: found.snapshot.nibbletId, activity: null });
+        return found.snapshot;
+      },
+      delete: async ({ id }) => {
+        const found = snapshots.get(id);
+        snapshots.delete(id);
+        if (found) {
+          push({ type: "snapshots_changed", nibbletId: found.snapshot.nibbletId, activity: null });
+        }
         return { ok: true };
       },
     },

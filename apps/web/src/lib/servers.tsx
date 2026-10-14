@@ -19,6 +19,7 @@ export const keys = {
   nibblets: (server: string) => ["nibblets", server] as const,
   thread: (server: string, id: string) => ["thread", server, id] as const,
   schedules: (server: string, id: string) => ["schedules", server, id] as const,
+  snapshots: (server: string, id: string) => ["snapshots", server, id] as const,
   memories: (server: string, id: string | null, query: string) =>
     ["memories", server, id, query] as const,
   hostTools: (server: string) => ["hostTools", server] as const,
@@ -245,6 +246,13 @@ export function applyLive(qc: QueryClient, server: string, m: LiveMessage): void
       return;
     case "schedules_changed":
       void qc.invalidateQueries({ queryKey: keys.schedules(server, m.nibbletId) });
+      return;
+    case "thread_reset":
+      // A restore replaced the thread: what's cached can't be patched, only fetched again.
+      void qc.resetQueries({ queryKey: keys.thread(server, m.nibbletId) });
+      return;
+    case "snapshots_changed":
+      void qc.invalidateQueries({ queryKey: keys.snapshots(server, m.nibbletId) });
       return;
   }
 }

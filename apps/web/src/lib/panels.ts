@@ -1,6 +1,6 @@
 import { storage } from "./storage.ts";
 
-export type PanelTab = "browser" | "schedules" | "memory" | "settings";
+export type PanelTab = "browser" | "schedules" | "memory" | "snapshots" | "settings";
 export const PANEL_KEY = "nibblet.panel";
 const EVENT = "nibblet:panel";
 
@@ -24,5 +24,11 @@ export function onPanelRequest(listener: (tab: PanelTab) => void): () => void {
 }
 
 export function isPanelTab(value: unknown): value is PanelTab {
-  return value === "browser" || value === "schedules" || value === "memory" || value === "settings";
+  return (
+    value === "browser" ||
+    value === "schedules" ||
+    value === "memory" ||
+    value === "snapshots" ||
+    value === "settings"
+  );
 }
