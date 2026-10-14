@@ -6,7 +6,15 @@ A nibblet is a thread that never really ends. It runs in its own Docker containe
 
 ## Running it
 
-The desktop app (`apps/desktop`) does all of this for you: it checks Docker, finds your Claude and Codex logins, starts the stack, and opens the UI signed in.
+On a Linux server or VM, one command sets up Docker, your agents, and the stack, then links it to Nibblets Connect:
+
+```sh
+curl -fsSL https://nibblets.dev/install.sh | bash
+```
+
+Run it again to update or to sign in to another agent.
+
+On a Mac, the desktop app (`apps/desktop`) does all of this for you: it checks Docker, finds your Claude and Codex logins, starts the stack, and opens the UI signed in.
 
 By hand, from the repo:
 
@@ -45,3 +53,7 @@ pnpm format
 The server and runner run TypeScript directly on Node 24, with no build step. The web UI is Vite: `pnpm --filter @nibblet/web dev` proxies the API to a server on `:8420`.
 
 Harnesses are plugins (`packages/harness-*`) that implement `HarnessPlugin` from `@nibblet/harness`. Credential sources in the proxy and embedding backends in the server follow the same pattern.
+
+## Licence
+
+GPL-2.0. See [LICENSE](LICENSE).

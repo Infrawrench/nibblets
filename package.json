@@ -1,6 +1,7 @@
 {
   "name": "nibblet",
   "private": true,
+  "license": "GPL-2.0-only",
   "type": "module",
   "packageManager": "pnpm@12.11.2",
   "engines": {

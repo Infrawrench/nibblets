@@ -10,16 +10,12 @@ cd "$(dirname "$0")"
 
 secret() { head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 
-if [ ! -f .env ]; then
-  cat > .env <<ENV
-POSTGRES_PASSWORD=$(secret)
-CREDPROXY_KEY=$(secret)
-CREDPROXY_ADMIN_KEY=$(secret)
-NIBBLET_OWNER_TOKEN=$(secret)
-ENV
-  chmod 600 .env
-  echo "Wrote docker/.env"
-fi
+# Fills in whichever secrets are missing, so the installer can write its own lines first.
+touch .env
+chmod 600 .env
+for key in POSTGRES_PASSWORD CREDPROXY_KEY CREDPROXY_ADMIN_KEY NIBBLET_OWNER_TOKEN; do
+  grep -q "^$key=." .env || echo "$key=$(secret)" >> .env
+done
 
 claude="${CLAUDE_CREDENTIALS_HOST_FILE:-$HOME/.claude/.credentials.json}"
 codex="${CODEX_AUTH_HOST_FILE:-$HOME/.codex/auth.json}"
