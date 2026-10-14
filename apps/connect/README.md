@@ -32,16 +32,25 @@ each server directly.
 Secrets, with `wrangler secret put` (pipe them in; don't paste them into
 files in the repo):
 
-| Secret                  | What                                                                                                                                     |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `CLERK_SECRET_KEY`      | The Clerk application's secret key                                                                                                       |
-| `CLERK_PUBLISHABLE_KEY` | Its publishable key; the UI reads it from `/v1/config`                                                                                   |
-| `JWT_PRIVATE_KEY`       | `node scripts/gen-key.mjs \| npx wrangler secret put JWT_PRIVATE_KEY`. Replacing it signs everyone out of every server until they reload |
-| `CF_API_TOKEN`          | Optional: for managed tunnels                                                                                                            |
+| Secret                  | What                                                                                                                                                     |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CLERK_SECRET_KEY`      | The Clerk application's secret key                                                                                                                       |
+| `CLERK_PUBLISHABLE_KEY` | Its publishable key; the UI reads it from `/v1/config`                                                                                                   |
+| `JWT_PRIVATE_KEY`       | `node scripts/gen-key.mjs \| npx wrangler secret put JWT_PRIVATE_KEY`. Replacing it signs everyone out of every server until they reload                 |
+| `CF_API_TOKEN`          | Optional: for managed tunnels                                                                                                                            |
+| `VAPID_PRIVATE_KEY`     | Optional: for push notifications. `node scripts/gen-key.mjs \| npx wrangler secret put VAPID_PRIVATE_KEY`. Replacing it ends every device's subscription |
 
 Variables in `wrangler.jsonc`: `PUBLIC_URL` (set it when adding a custom
 domain, so tokens and links use it), `CF_ACCOUNT_ID`, `CF_ZONE_ID`,
-`CF_ZONE_NAME`.
+`CF_ZONE_NAME`, and `VAPID_SUBJECT` (who push services can contact).
+
+## Notifications
+
+Servers tell the service when a nibblet needs its person (an approval, an
+error, or its `ask_for_help` tool) with `POST /v1/servers/:id/notify`. It
+sends a Web Push to every device that turned notifications on in Settings,
+encrypted for each browser and signed with the VAPID key (`src/push.ts`, no
+dependencies). Tapping one opens that nibblet.
 
 ```sh
 pnpm --filter @nibblet/connect deploy   # builds the central UI, migrates D1, deploys

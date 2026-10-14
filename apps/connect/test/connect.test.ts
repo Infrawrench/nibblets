@@ -57,6 +57,8 @@ beforeAll(async () => {
     CF_ACCOUNT_ID: "",
     CF_ZONE_ID: "",
     CF_ZONE_NAME: "",
+    VAPID_PRIVATE_KEY: "",
+    VAPID_SUBJECT: "",
   };
 });
 

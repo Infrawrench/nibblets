@@ -38,5 +38,7 @@
     "CF_ACCOUNT_ID": "906034adfe1c457d2388331e220efcc7",
     "CF_ZONE_ID": "1a13924531207540ca5002c03f5a965a",
     "CF_ZONE_NAME": "nibblets.dev",
+    // Who push services can contact about the notifications this sends.
+    "VAPID_SUBJECT": "mailto:astrid@infrawrench.com",
   },
 }

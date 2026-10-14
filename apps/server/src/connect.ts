@@ -7,6 +7,7 @@ import {
   ManagedTunnel,
   ServerTokenClaims,
   type HeartbeatRequest,
+  type PushNote,
   type ServerRoutes,
 } from "@nibblet/protocol";
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
@@ -202,6 +203,26 @@ export class Connect {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Tells the person on their phone and other devices, through the central
+   * service. Does nothing when this server isn't linked; a note that doesn't
+   * get through isn't retried, since it'd be stale by then.
+   */
+  async notify(note: PushNote): Promise<boolean> {
+    const link = this.link;
+    if (!link) return false;
+    const res = await this.fetch(`${link.centralUrl}/v1/servers/${link.serverId}/notify`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${link.serverSecret}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(note),
+      signal: AbortSignal.timeout(10_000),
+    }).catch(() => null);
+    return res?.ok ?? false;
   }
 
   stop(): void {

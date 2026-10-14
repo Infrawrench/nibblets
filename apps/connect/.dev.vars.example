@@ -8,3 +8,4 @@ CF_API_TOKEN=
 # Development only: signs every request to localhost in as this user, without
 # Clerk. Ignored on any other host.
 DEV_AUTH_USER=
+VAPID_PRIVATE_KEY=

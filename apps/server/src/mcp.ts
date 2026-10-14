@@ -5,6 +5,8 @@ import { Cron } from "croner";
 import type { Context } from "hono";
 import { z } from "zod";
 import type { Conductor } from "./conductor.ts";
+import type { Connect } from "./connect.ts";
+import type { Notifier } from "./notifier.ts";
 import { describeHeartbeat } from "./context.ts";
 import type { Scheduler } from "./scheduler.ts";
 import { toNibblet, type Store } from "./store.ts";
@@ -13,6 +15,8 @@ interface ToolDeps {
   store: Store;
   conductor: Conductor;
   scheduler: Scheduler;
+  notifier: Pick<Notifier, "askForHelp">;
+  connect: Pick<Connect, "status">;
 }
 
 const text = (value: string) => ({ content: [{ type: "text" as const, text: value }] });
@@ -29,7 +33,7 @@ function validCron(pattern: string, timezone: string): string | null {
 
 /** The nibblet tools, scoped to the nibblet whose token made the call. */
 function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
-  const { store, conductor, scheduler } = deps;
+  const { store, conductor, scheduler, notifier, connect } = deps;
   const server = new McpServer({ name: "nibblet", version: "0.1.0" });
 
   server.registerTool(
@@ -154,6 +158,30 @@ function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
       scheduler.disarm(id);
       await store.deleteSchedule(id);
       return text("Deleted.");
+    },
+  );
+
+  server.registerTool(
+    "ask_for_help",
+    {
+      description:
+        "Send your person a push notification, to their phone and other devices, when you're blocked and need them: a decision only they can make, a login, something broken you can't fix yourself. Not for routine updates or anything that can wait for them to look. Say briefly what you need. Waiting on an approval already notifies them.",
+      inputSchema: {
+        message: z
+          .string()
+          .min(1)
+          .max(300)
+          .describe("What you need from them, in a sentence or two"),
+      },
+    },
+    async ({ message }) => {
+      if (connect.status().state !== "linked") {
+        return text(
+          "Notifications aren't set up: this server isn't connected to Nibblets Connect. Say what you need in your reply instead.",
+        );
+      }
+      notifier.askForHelp(nibblet, message.trim());
+      return text("Sent to their devices.");
     },
   );
 

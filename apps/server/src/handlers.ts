@@ -21,6 +21,7 @@ import {
   tailscaleStatus,
 } from "./hostmcp.ts";
 import type { Config } from "./config.ts";
+import type { Notifier } from "./notifier.ts";
 import type { Scheduler } from "./scheduler.ts";
 import type { Snapshots } from "./snapshots.ts";
 import type { Files } from "./files.ts";
@@ -40,6 +41,7 @@ export interface Services {
   version: string;
   files: Files;
   snapshots: Snapshots;
+  notifier: Notifier;
 }
 
 const ok = { ok: true } as const;

@@ -113,6 +113,29 @@ export const CentralServer = z.object({
 });
 export type CentralServer = z.infer<typeof CentralServer>;
 
+/**
+ * A server asking the central service to tell its owner something on their
+ * devices, like a nibblet needing an approval. The central service sends it
+ * as a push notification that opens that nibblet.
+ */
+export const PushNote = z.object({
+  nibbletId: z.string().max(64),
+  title: z.string().min(1).max(120),
+  body: z.string().max(400),
+  /** Notes with the same tag replace each other rather than piling up. */
+  tag: z.string().max(80),
+});
+export type PushNote = z.infer<typeof PushNote>;
+
+/** A browser's push subscription, as `PushSubscription.toJSON()` gives it. */
+export const PushSubscriptionInput = z.object({
+  endpoint: z.url().max(2000),
+  keys: z.object({ p256dh: z.string().max(200), auth: z.string().max(100) }),
+  /** Which device, so the person can tell them apart. */
+  label: z.string().max(80).optional(),
+});
+export type PushSubscriptionInput = z.infer<typeof PushSubscriptionInput>;
+
 /** A short-lived credential for one server, minted by the central service. */
 export const ServerToken = z.object({ token: z.string(), expiresAt: z.iso.datetime() });
 export type ServerToken = z.infer<typeof ServerToken>;

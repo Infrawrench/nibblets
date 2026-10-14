@@ -17,6 +17,7 @@ import { Store } from "./store.ts";
 import { Files } from "./files.ts";
 import { Tunnel } from "./tunnel.ts";
 import { Connect } from "./connect.ts";
+import { Notifier } from "./notifier.ts";
 import { tailscaleStatus } from "./hostmcp.ts";
 
 const VERSION = "0.1.0";
@@ -62,8 +63,13 @@ async function main(): Promise<void> {
     tailscaleUrl: async () => (await tailscaleStatus(config)).url,
   });
 
+  // A nibblet needing its person reaches their phone, through Connect.
+  const notifier = new Notifier((note) => void central.notify(note));
+  bus.subscribe((message) => notifier.observe(message));
+
   const app = createApp(
     {
+      notifier,
       config,
       store,
       conductor,

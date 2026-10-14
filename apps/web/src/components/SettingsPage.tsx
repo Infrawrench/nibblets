@@ -11,6 +11,7 @@ import { OnePasswordSettings } from "./onepassword/OnePasswordSection.tsx";
 import { FieldRow, Input, SectionHeading } from "./ui/Field.tsx";
 import { Segmented } from "./ui/Segmented.tsx";
 import { MobileBack } from "./MobileBack.tsx";
+import { NotificationsSection } from "./NotificationsSection.tsx";
 import { hostToolSummary } from "./tools/NibbletTools.tsx";
 
 export function SettingsPage() {
@@ -24,7 +25,12 @@ export function SettingsPage() {
           <MobileBack />
           Settings
         </h1>
-        {central ? <AccountSection /> : null}
+        {central ? (
+          <>
+            <AccountSection />
+            <NotificationsSection />
+          </>
+        ) : null}
         {all.length > 1 && connection ? (
           <FieldRow label="Server" hint="Settings below are for this one.">
             <Segmented

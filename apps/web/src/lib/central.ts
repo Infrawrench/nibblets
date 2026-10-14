@@ -4,6 +4,7 @@ import {
   PendingLink,
   ServerToken,
   routeOrder,
+  type PushSubscriptionInput,
   type RouteKind,
   type ServerRoutes,
 } from "@nibblet/protocol";
@@ -19,6 +20,8 @@ export const CentralConfig = z.object({
   centralUrl: z.string(),
   /** `wrangler dev` with DEV_AUTH_USER: signed in without Clerk. */
   devAuth: z.boolean(),
+  /** For push notifications; null when the service has none set up. */
+  vapidPublicKey: z.string().nullable().default(null),
 });
 export type CentralConfig = z.infer<typeof CentralConfig>;
 
@@ -46,7 +49,12 @@ export interface CentralApi {
   deny(code: string): Promise<void>;
   rename(serverId: string, name: string): Promise<void>;
   remove(serverId: string): Promise<void>;
+  subscribePush(subscription: PushSubscriptionInput): Promise<void>;
+  unsubscribePush(endpoint: string): Promise<void>;
+  testPush(): Promise<{ sent: number; failed: number }>;
 }
+
+const PushTestResult = z.object({ sent: z.number(), failed: z.number() });
 
 const ErrorBody = z.object({ error: z.string() });
 
@@ -88,6 +96,16 @@ export function centralApi(sessionToken: () => Promise<string | null>): CentralA
         body: JSON.stringify({ name }),
       });
     },
+    subscribePush: async (subscription) => {
+      await call("/v1/push/subscriptions", { method: "POST", body: JSON.stringify(subscription) });
+    },
+    unsubscribePush: async (endpoint) => {
+      await call("/v1/push/subscriptions", {
+        method: "DELETE",
+        body: JSON.stringify({ endpoint }),
+      });
+    },
+    testPush: async () => PushTestResult.parse(await call("/v1/push/test", { method: "POST" })),
     remove: async (id) => {
       await call(`/v1/servers/${encodeURIComponent(id)}`, { method: "DELETE" });
     },
