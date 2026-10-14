@@ -45,8 +45,10 @@ export function Sidebar() {
       enabled: s.connection !== null,
     })),
   });
-  // Grouped by machine whenever there's more than one, or in central mode.
-  const grouped = servers.systems.length > 1 || servers.central !== null;
+  // Which computer a nibblet lives on matters once there could be more than one.
+  const showSystem = servers.systems.length > 1 || servers.central !== null;
+  const loaded = lists.every((l, i) => l.data !== undefined || !servers.systems[i]?.connection);
+  const total = lists.reduce((n, l) => n + (l.data?.length ?? 0), 0);
 
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-line bg-panel">
@@ -57,39 +59,42 @@ export function Sidebar() {
           <Plus />
         </Button>
       </div>
-      <nav className="min-h-0 flex-1 overflow-y-auto px-1.5 py-2">
+      <nav className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-1.5 py-2">
         {servers.central && servers.systems.length === 0 ? (
           <div className="px-3 py-8 text-center text-xs text-dim">
             No servers yet. Open Settings on a computer running Nibblets and press Connect.
           </div>
         ) : null}
+        {servers.systems.length > 0 && loaded && total === 0 ? (
+          <EmptyList onCreate={() => setCreating(true)} />
+        ) : null}
         {servers.systems.map((system, i) => {
-          const data = lists[i]?.data;
           const c = system.connection;
-          if (!c) {
-            return grouped ? (
-              <div key={system.id} className="mb-2 opacity-60">
-                <SystemHeading name={system.name} state="offline" />
-                <div className="px-2 py-1 text-2xs text-faint">Offline</div>
-              </div>
-            ) : null;
-          }
-          return (
-            <div key={c.id} className="mb-2">
-              {grouped ? <ServerHeading connection={c} name={system.name} /> : null}
-              {data && data.length === 0 && !grouped ? (
-                <EmptyList onCreate={() => setCreating(true)} />
-              ) : null}
-              {data ? (
-                orderNibblets(data).map(({ nibblet, depth }) => (
-                  <NibbletRow key={nibblet.id} server={c.id} nibblet={nibblet} depth={depth} />
-                ))
-              ) : lists[i]?.isError ? (
-                <div className="px-2 py-1 text-2xs text-danger">Couldn't reach this server.</div>
-              ) : null}
-            </div>
-          );
+          const list = lists[i];
+          if (!c || !list?.data) return null;
+          return orderNibblets(list.data).map(({ nibblet, depth }) => (
+            <NibbletRow
+              key={`${c.id}/${nibblet.id}`}
+              server={c.id}
+              nibblet={nibblet}
+              depth={depth}
+              system={showSystem ? system.name : null}
+            />
+          ));
         })}
+        {servers.systems.map((system, i) =>
+          !system.connection || lists[i]?.isError ? (
+            <div
+              key={system.id}
+              className="flex items-center gap-1.5 px-2 py-1 text-2xs text-faint"
+              title={lists[i]?.isError ? "Couldn't reach this computer" : "Not checking in"}
+            >
+              <span aria-hidden>💻</span>
+              <span className="truncate">{system.name}</span>
+              <span className="shrink-0">· Offline</span>
+            </div>
+          ) : null,
+        )}
       </nav>
       <div className="border-t border-line p-1.5">
         <button
@@ -109,53 +114,17 @@ export function Sidebar() {
   );
 }
 
-function ServerHeading({ connection, name }: { connection: ServerConnection; name: string }) {
-  return <SystemHeading name={name} state={useLiveState(connection)} />;
-}
-
-function SystemHeading({
-  name,
-  state,
-}: {
-  name: string;
-  state: "open" | "connecting" | "closed" | "offline";
-}) {
-  return (
-    <div className="flex h-6 items-center gap-1.5 px-2 text-2xs font-semibold tracking-wider text-faint uppercase">
-      <span
-        className={cn(
-          "size-1.5 rounded-full",
-          state === "open"
-            ? "bg-ok"
-            : state === "connecting"
-              ? "bg-warning"
-              : state === "offline"
-                ? "bg-faint"
-                : "bg-danger",
-        )}
-        title={
-          state === "open"
-            ? "Connected"
-            : state === "connecting"
-              ? "Connecting"
-              : state === "offline"
-                ? "Offline"
-                : "Disconnected"
-        }
-      />
-      <span className="truncate">{name}</span>
-    </div>
-  );
-}
-
 function NibbletRow({
   server,
   nibblet,
   depth,
+  system,
 }: {
   server: string;
   nibblet: Nibblet;
   depth: number;
+  /** The computer it's on, when that's worth saying. */
+  system: string | null;
 }) {
   const params = useParams({ strict: false });
   const navigate = useNavigate();
@@ -169,7 +138,7 @@ function NibbletRow({
       style={{ paddingLeft: `${8 + depth * 16}px` }}
       className={cn(
         "group flex min-h-8 w-full items-center gap-2 rounded-md pr-2 text-left text-sm hover:bg-hover",
-        nibblet.statusText && "py-1",
+        (nibblet.statusText || system) && "py-1",
         active && "bg-active hover:bg-active",
       )}
     >
@@ -198,6 +167,7 @@ function NibbletRow({
             {nibblet.statusText}
           </span>
         ) : null}
+        {system && connection ? <SystemLine connection={connection} name={system} /> : null}
       </span>
       {nibblet.awaitingApproval ? (
         <span className="shrink-0 text-2xs text-warning">Needs approval</span>
@@ -223,6 +193,24 @@ function NibbletRow({
     </NibbletMenu>
   ) : (
     row
+  );
+}
+
+const linkText = { open: "", connecting: "Connecting…", closed: "Disconnected" } as const;
+
+/** "💻 PogAir-4", and whether it's still connecting. */
+function SystemLine({ connection, name }: { connection: ServerConnection; name: string }) {
+  const state = useLiveState(connection);
+  return (
+    <span className="flex min-w-0 items-center gap-1 text-2xs leading-tight text-faint">
+      <span aria-hidden>💻</span>
+      <span className="truncate">{name}</span>
+      {linkText[state] ? (
+        <span className={cn("shrink-0", state === "closed" ? "text-danger" : "text-warning")}>
+          · {linkText[state]}
+        </span>
+      ) : null}
+    </span>
   );
 }
 

@@ -66,8 +66,10 @@ async function credentialStatus(config: Config): Promise<CredentialStatus[]> {
   }
 }
 
-export function serverName(store: Store): Promise<string> {
-  return store.getSetting("name", (v) => z.string().parse(v), "My nibblets");
+/** What the server is called: the name it was given, or else the computer's own name. */
+export function serverName(store: Store, hostName: string): Promise<string> {
+  const machine = hostName.replace(/\.local$/, "").trim() || "My nibblets";
+  return store.getSetting("name", (v) => z.string().parse(v), machine);
 }
 
 export function createHandlers(s: Services): Handlers<Contract, Record<string, never>> {
@@ -83,7 +85,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       info: async () =>
         ServerInfo.parse({
           serverId: s.serverId,
-          name: await serverName(store),
+          name: await serverName(store, s.config.NIBBLET_HOST_NAME),
           version: s.version,
           credentials: await credentialStatus(s.config),
           host: await s.conductor.hostCapacity(),

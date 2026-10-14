@@ -41,7 +41,7 @@ async function main(): Promise<void> {
   await docker.ensureNetwork();
 
   const conductor = new Conductor(store, docker, config);
-  conductor.serverName = await serverName(store);
+  conductor.serverName = await serverName(store, config.NIBBLET_HOST_NAME);
   const scheduler = new Scheduler(store, conductor);
   const snapshots = new Snapshots({
     store,
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
     tunnel,
     config,
     version: VERSION,
-    serverName: () => serverName(store),
+    serverName: () => serverName(store, config.NIBBLET_HOST_NAME),
     nibbletCount: async () => (await store.listNibblets()).length,
     tailscaleUrl: async () => (await tailscaleStatus(config)).url,
   });
