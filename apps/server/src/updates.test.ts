@@ -187,6 +187,34 @@ describe("AppUpdater", () => {
     expect(events).toEqual(["pause", "install", "unpause"]);
   });
 
+  it("lets the nibblets carry on when the host comes back without the update", async () => {
+    const events: string[] = [];
+    let now = 0;
+    let bridge: { method: "here"; updating: boolean } | null = { method: "here", updating: false };
+    const updater = new AppUpdater({
+      config,
+      version: "0.1.0",
+      now: () => now,
+      pause: async () => void events.push("pause"),
+      unpause: async () => void events.push("unpause"),
+      fetch: async (input, init) => {
+        if (!String(input).startsWith("http://bridge")) return json(release);
+        if (init?.method === "POST") bridge = { method: "here", updating: true };
+        return bridge ? json(bridge) : json({ error: "gone" }, 502);
+      },
+    });
+    await updater.apply();
+    // The app quits to install it, then is opened again before it could.
+    bridge = null;
+    now = 60_000;
+    expect((await updater.status()).updating).toBe(true);
+    bridge = { method: "here", updating: false };
+    expect((await updater.status()).updating).toBe(true);
+    now = 4 * 60_000;
+    expect((await updater.status()).updating).toBe(false);
+    expect(events).toEqual(["pause", "unpause"]);
+  });
+
   it("lets the nibblets carry on when the bridge won't take the update", async () => {
     const events: string[] = [];
     const updater = new AppUpdater({

@@ -180,10 +180,14 @@ export class HarnessUpdater {
   }
 }
 
+/** How long after asking for an update the server stops expecting it to restart it. */
+const UPDATE_GIVE_UP_MS = 3 * 60_000;
+
 const BridgeUpdate = z.object({
   method: z.enum(["here", "download", "manual"]),
   updating: z.boolean().default(false),
   error: z.string().nullable().default(null),
+  progress: z.number().min(0).max(1).nullable().default(null),
 });
 
 /**
@@ -197,6 +201,7 @@ export class AppUpdater {
   private checkedAt: string | null = null;
   private error: string | null = null;
   private applying = false;
+  private appliedAt = 0;
 
   private readonly deps: {
     config: Pick<Config, "HOST_MCP_URL" | "HOST_MCP_TOKEN" | "NIBBLET_UPDATE_REPO">;
@@ -206,6 +211,7 @@ export class AppUpdater {
     pause?: () => Promise<void>;
     /** Lets them carry on when the update doesn't happen. */
     unpause?: () => Promise<void>;
+    now?: () => number;
   };
 
   constructor(deps: AppUpdater["deps"]) {
@@ -216,8 +222,8 @@ export class AppUpdater {
     const stale = !this.checkedAt || Date.now() - Date.parse(this.checkedAt) > 60 * 60_000;
     if (refresh || stale) await this.check();
     const bridge = await this.bridge("GET");
-    if (this.applying && bridge && !bridge.updating && bridge.error) {
-      // It failed before restarting anything: the nibblets carry on.
+    if (this.applying && bridge && !bridge.updating && this.updateFailed(bridge.error)) {
+      // It failed, or the host came back without it: the nibblets carry on.
       this.applying = false;
       await this.deps.unpause?.();
     }
@@ -229,6 +235,7 @@ export class AppUpdater {
       available,
       method: bridge?.method ?? "manual",
       updating: this.applying || (bridge?.updating ?? false),
+      progress: bridge?.updating ? bridge.progress : null,
       error: bridge?.error ?? this.error,
       checkedAt: this.checkedAt,
     };
@@ -246,7 +253,22 @@ export class AppUpdater {
       throw new Error("The host bridge didn't take the update");
     }
     this.applying = true;
+    this.appliedAt = this.now();
     return this.status();
+  }
+
+  /**
+   * Whether an update the host isn't working on any more has come to nothing:
+   * it says why, or a while on, this server is still here on its old
+   * version. (A Mac app that was reopened mid-install comes back without it,
+   * and nothing restarts the server to clear this.)
+   */
+  private updateFailed(error: string | null): boolean {
+    return error !== null || this.now() - this.appliedAt > UPDATE_GIVE_UP_MS;
+  }
+
+  private now(): number {
+    return (this.deps.now ?? Date.now)();
   }
 
   private async check(): Promise<void> {

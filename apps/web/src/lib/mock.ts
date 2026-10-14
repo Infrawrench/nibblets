@@ -578,6 +578,7 @@ export function createMockServer(): ServerConnection {
     available: true,
     method: "here",
     updating: false,
+    progress: null,
     error: null,
     checkedAt: ago(10),
   };
@@ -1007,7 +1008,15 @@ export function createMockServer(): ServerConnection {
       },
       setAuto: async ({ auto }) => (harnessUpdates = { ...harnessUpdates, auto }),
       app: async () => appUpdate,
-      applyApp: async () => (appUpdate = { ...appUpdate, updating: true }),
+      applyApp: async () => {
+        // Downloads over a few seconds, then sits there as if restarting.
+        const tick = setInterval(() => {
+          const progress = Math.min(1, (appUpdate.progress ?? 0) + 0.08);
+          appUpdate = { ...appUpdate, progress };
+          if (progress >= 1) clearInterval(tick);
+        }, 500);
+        return (appUpdate = { ...appUpdate, updating: true, progress: 0 });
+      },
     },
 
     clis: {

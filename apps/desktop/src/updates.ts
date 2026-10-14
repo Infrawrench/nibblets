@@ -27,6 +27,7 @@ export class AppUpdates {
   private busy = false;
   private installing = false;
   private installError: string | null = null;
+  private progress: number | null = null;
   private readonly skipped: () => string | null;
   private readonly skip: (version: string) => void;
 
@@ -52,6 +53,7 @@ export class AppUpdates {
       method: this.installsItself ? "here" : "download",
       updating: this.installing,
       error: this.installError,
+      progress: this.installing ? this.progress : null,
     }),
     apply: async (version) => {
       if (!this.installsItself) throw new Error("Download the new version of the app instead");
@@ -147,6 +149,8 @@ export class AppUpdates {
    */
   private async download(version: string): Promise<void> {
     const progress = (fraction: number) => {
+      // The update bar shows it too, through the host bridge; the Dock's 2 is "not started yet".
+      this.progress = fraction >= 0 && fraction <= 1 ? fraction : null;
       for (const win of BrowserWindow.getAllWindows()) win.setProgressBar(fraction);
     };
     const onProgress = (p: { percent: number }) => progress(p.percent / 100);

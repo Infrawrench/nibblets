@@ -10,6 +10,8 @@ export interface UpdateState {
   method: "here" | "download" | "manual";
   updating: boolean;
   error: string | null;
+  /** How much of the download is done, 0 to 1, while there's one to measure. */
+  progress?: number | null;
 }
 
 /** How the host installs a new Nibblets, if it can. A plugin, so each kind of install brings its own. */

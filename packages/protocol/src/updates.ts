@@ -47,6 +47,8 @@ export const AppUpdate = z.object({
   method: z.enum(["here", "download", "manual"]),
   /** Set while an update this server started is running. */
   updating: z.boolean(),
+  /** How much of the new version has downloaded, 0 to 1, while the host can say. */
+  progress: z.number().min(0).max(1).nullable().default(null),
   error: z.string().nullable(),
   checkedAt: z.string().nullable(),
 });

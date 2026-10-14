@@ -61,6 +61,14 @@ export function UpdateBar() {
   const canClick = pending.some((p) => p.update.method !== "manual");
   const error = install.error?.message ?? pending.find((p) => p.update.error)?.update.error ?? null;
   const onlyDownloads = pending.every((p) => p.update.method === "download");
+  // The furthest behind, while any of them is still downloading.
+  const progress = updating
+    ? pending
+        .map((p) => p.update.progress)
+        .filter((f) => f !== null)
+        .reduce<number | null>((low, f) => (low === null ? f : Math.min(low, f)), null)
+    : null;
+  const downloading = progress !== null && progress < 1;
 
   return (
     <div className="px-1.5 pt-1.5">
@@ -82,16 +90,34 @@ export function UpdateBar() {
           <ArrowUpCircle />
         )}
         <span className="min-w-0 flex-1 truncate">
-          {updating
-            ? `Updating to ${newest}…`
-            : `${onlyDownloads ? "Download" : "Update to"} Nibblets ${newest}`}
+          {downloading
+            ? `Downloading ${newest}… ${Math.floor(progress * 100)}%`
+            : updating
+              ? `Updating to ${newest}…`
+              : `${onlyDownloads ? "Download" : "Update to"} Nibblets ${newest}`}
         </span>
         {pending.length > 1 && !updating ? (
           <span className="shrink-0 text-xs opacity-80">{pending.length} servers</span>
         ) : null}
       </button>
+      {progress !== null ? (
+        <div
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.floor(progress * 100)}
+          className="mx-2 mt-1.5 h-1 overflow-hidden rounded-full bg-hover"
+        >
+          <div
+            className="h-full rounded-full bg-accent transition-[width] duration-500"
+            style={{ width: `${progress * 100}%` }}
+          />
+        </div>
+      ) : null}
       {updating ? (
-        <p className="px-2 pt-1 text-xs text-faint">It restarts partway through.</p>
+        <p className="px-2 pt-1 text-xs text-faint">
+          It restarts by itself partway through, which can take a minute.
+        </p>
       ) : error ? (
         <p className="px-2 pt-1 text-xs text-danger" title={error}>
           {error}

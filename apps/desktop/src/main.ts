@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
@@ -10,6 +11,7 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
+  Notification,
   shell,
   Tray,
   type MenuItemConstructorOptions,
@@ -576,8 +578,34 @@ function buildTray() {
   tray.setContextMenu(menu());
 }
 
+/** Squirrel's installer, by its launchd label: electron-builder.yml's appId plus ".ShipIt". */
+const SHIPIT_LABEL = "com.infrawrench.nibblets.ShipIt";
+
+/** Whether an update is being installed right now, after this app quit for it. */
+function installingUpdate(): boolean {
+  if (process.platform !== "darwin" || !app.isPackaged) return false;
+  try {
+    execFileSync("pgrep", ["-f", SHIPIT_LABEL], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false; // pgrep exits 1 when nothing matches.
+  }
+}
+
 const singleInstance = app.requestSingleInstanceLock();
+// Opened again while the update it quit for is installing: being open would
+// make the installer give up, and it opens the new version itself when done.
+const steppingAside = singleInstance && installingUpdate();
 if (!singleInstance) app.quit();
+else if (steppingAside) {
+  void app.whenReady().then(() => {
+    new Notification({
+      title: "Nibblets is updating",
+      body: "It'll open by itself when it's done.",
+    }).show();
+    setTimeout(() => app.exit(0), 1000);
+  });
+}
 
 // `--set-up` opens the getting-ready walkthrough, even on a computer that's done it.
 const SET_UP = "--set-up";
@@ -588,6 +616,7 @@ app.on("second-instance", (_e, argv) => {
 });
 
 app.whenReady().then(async () => {
+  if (steppingAside) return;
   // Opened from the Dock, the app's PATH is bare; take the person's own, so
   // the CLIs, MCP servers and Docker it starts are the ones their terminal finds.
   await adoptShellPath();
@@ -608,7 +637,9 @@ app.whenReady().then(async () => {
 // Closing every window leaves the app in the menu bar; the stack keeps running.
 app.on("window-all-closed", () => {});
 
-app.on("activate", () => openMainWindow());
+app.on("activate", () => {
+  if (!steppingAside) openMainWindow();
+});
 
 let quitting = false;
 app.on("before-quit", (event) => {
