@@ -76,9 +76,16 @@ The typed contract is `contract` in `packages/protocol/src/contract.ts`. Calls a
 
 First run prints, and the desktop app opens, a pairing link `http(s)://host/#pair=<code>`. The UI exchanges the code at `POST /api/pair` for a long-lived token.
 
-## Across machines
+## Across machines: Nibblets Connect (`apps/connect`)
 
-Each machine runs its own server. A server can open a Cloudflare tunnel (quick or named-token). Any server's UI can add other servers as peers (URL plus a token minted on that server); the UI then lists every peer's nibblets alongside its own, talking to each server directly.
+Each machine runs its own server. Like T3 Connect, a central service (a Cloudflare Worker with D1, signed in with Clerk) lists every server on an account, without being in the data path:
+
+- A server links with a code approved on the central site, then sends a heartbeat every 30 seconds with its routes: local network (`NIBBLET_LAN_URLS`), Tailscale (`tailscale serve` through the host bridge), and a Cloudflare tunnel (a managed one when the central service has a zone, a quick one otherwise).
+- The central UI (the web app built with `build:central`) tries each server's routes in that order with a `/healthz` probe, and talks to the first that answers with a five-minute ES256 token from the central service. Servers verify those tokens against its JWKS.
+- The desktop app asks on first run whether to run a server on this computer. If not, it only shows the central UI.
+- "Pair a device" still signs a device in to one server directly, on the same network.
+
+See `apps/connect/README.md` for deploying it.
 
 ## Host tools (`packages/host-mcp`)
 

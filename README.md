@@ -17,7 +17,7 @@ docker compose -f docker/compose.yaml -p nibblet up -d --build
 docker compose -p nibblet exec server node apps/server/src/cli.ts pair
 ```
 
-Open the link it prints. To reach the server from elsewhere, turn on a Cloudflare tunnel in Settings. A quick tunnel needs no account; a named tunnel takes a token from the Cloudflare dashboard.
+Open the link it prints. To reach it from anywhere, press Connect in Settings → Remote access and approve the code on [Nibblets Connect](https://nibblets-connect.astrid-906.workers.dev), signed in to your account: every server you connect shows up there.
 
 ## How it fits together
 
@@ -27,7 +27,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md). In short:
 - **db**: Postgres with pgvector, which holds every durable thing
 - **credproxy**: holds your subscription credentials and injects them into harness traffic, so containers never see a real token
 - **one runner container per nibblet**: its harness, plus OpenComputerUse driving Chromium on a headless Wayland display
-- **tunnel**: optional, `cloudflared`
+- **tunnel**: `cloudflared`, run when the server is linked to Nibblets Connect
+- **Nibblets Connect** (`apps/connect`): the central service on Cloudflare Workers where you sign in and see every server
 
 To see nibblets from several machines in one place, open "Pair a device" on one server and paste the link into "Add a server" on another.
 
