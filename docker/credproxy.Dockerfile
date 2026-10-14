@@ -1,5 +1,7 @@
 # The credential proxy. Small: protocol types, Hono, zod.
 FROM node:24-bookworm-slim
+# Lets the server find this image's old builds to tidy up (Orchestrator.pruneImages).
+LABEL nibblet.image=credproxy
 RUN corepack enable && corepack prepare pnpm@12.11.2 --activate
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./

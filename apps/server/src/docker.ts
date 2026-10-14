@@ -11,6 +11,7 @@ import {
   type RunnerEnv,
 } from "@nibblet/protocol";
 import type { Config } from "./config.ts";
+import { TUNNEL_IMAGE } from "./tunnel.ts";
 
 const MANAGED = "nibblet.managed";
 const ROLE = "nibblet.role";
@@ -242,6 +243,37 @@ export class Orchestrator {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Removes the images earlier releases and builds left behind: our own
+   * (server, runner, credential proxy) under any other tag, untagged leftovers
+   * of rebuilds, and cloudflared versions we've moved on from. Docker refuses
+   * to remove one a container still uses, so an outdated nibblet keeps its
+   * image until it's recreated, and a later run picks it up.
+   */
+  async pruneImages(): Promise<string[]> {
+    const current = currentImages(this.config.NIBBLET_RUNNER_IMAGE);
+    if (!current) return [];
+    let images: Docker.ImageInfo[];
+    let since: number;
+    try {
+      images = await this.docker.listImages();
+      since =
+        images.find((i) => i.RepoTags?.includes(this.config.NIBBLET_RUNNER_IMAGE))?.Created ?? 0;
+    } catch {
+      return [];
+    }
+    const removed: string[] = [];
+    for (const ref of staleImages(images, current, since)) {
+      try {
+        await this.docker.getImage(ref).remove();
+        removed.push(ref);
+      } catch {
+        // In use, or already gone.
+      }
+    }
+    return removed;
   }
 
   /** Changes a running nibblet's limits in place; Docker applies them without a restart. */
@@ -504,6 +536,53 @@ export class Orchestrator {
       if (!isNotFound(err)) throw err;
     }
   }
+}
+
+const STACK_IMAGES = ["server", "runner", "credproxy"];
+/** Where the stack's images come from: local builds, and releases. */
+const IMAGE_PREFIXES = ["nibblet/", "ghcr.io/infrawrench/nibblets-"];
+
+/**
+ * The images this release runs, worked out from the runner's, which the
+ * others share a prefix and tag with. Null for a runner image named some
+ * other way, where there's no telling which of ours are old.
+ */
+export function currentImages(runnerImage: string): Set<string> | null {
+  const m = /^(.*)runner:([^:/]+)$/.exec(runnerImage);
+  if (!m) return null;
+  const [, prefix, tag] = m;
+  return new Set([...STACK_IMAGES.map((name) => `${prefix}${name}:${tag}`), TUNNEL_IMAGE]);
+}
+
+/**
+ * What to remove: tags of our images other than the current ones, and
+ * untagged builds of ours. Only images made before the current runner image
+ * (`since`, in seconds), so a newer release being pulled for an update in
+ * the meantime is left alone.
+ */
+export function staleImages(
+  images: Pick<Docker.ImageInfo, "Id" | "RepoTags" | "Labels" | "Created">[],
+  current: Set<string>,
+  since: number,
+): string[] {
+  const ours = (ref: string) => {
+    const repo = ref.slice(0, ref.lastIndexOf(":"));
+    return (
+      repo === TUNNEL_IMAGE.slice(0, TUNNEL_IMAGE.lastIndexOf(":")) ||
+      IMAGE_PREFIXES.some((p) => STACK_IMAGES.some((name) => repo === `${p}${name}`))
+    );
+  };
+  const out: string[] = [];
+  for (const image of images) {
+    if (image.Created >= since) continue;
+    const tags = (image.RepoTags ?? []).filter((t) => t !== "<none>:<none>");
+    if (tags.length === 0) {
+      if (image.Labels?.["nibblet.image"]) out.push(image.Id);
+      continue;
+    }
+    out.push(...tags.filter((t) => ours(t) && !current.has(t)));
+  }
+  return out;
 }
 
 export function isNotFound(err: unknown): boolean {

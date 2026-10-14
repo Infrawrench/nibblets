@@ -3,7 +3,7 @@ import type { Config } from "./config.ts";
 import type { Orchestrator } from "./docker.ts";
 import type { Store } from "./store.ts";
 
-const IMAGE = "cloudflare/cloudflared:2026.10.0";
+export const TUNNEL_IMAGE = "cloudflare/cloudflared:2026.10.0";
 const NAME = "nibblet-tunnel";
 const QUICK_URL = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
 
@@ -94,7 +94,7 @@ export class Tunnel {
       const cmd = this.command(config);
       const container = await this.docker.docker.createContainer({
         name: NAME,
-        Image: IMAGE,
+        Image: TUNNEL_IMAGE,
         Cmd: cmd,
         Labels: { "nibblet.managed": "true", "nibblet.role": "tunnel" },
         HostConfig: {
@@ -121,9 +121,9 @@ export class Tunnel {
   }
 
   private async pull(): Promise<void> {
-    const images = await this.docker.docker.listImages({ filters: { reference: [IMAGE] } });
+    const images = await this.docker.docker.listImages({ filters: { reference: [TUNNEL_IMAGE] } });
     if (images.length > 0) return;
-    const stream = await this.docker.docker.pull(IMAGE);
+    const stream = await this.docker.docker.pull(TUNNEL_IMAGE);
     await new Promise<void>((resolve, reject) =>
       this.docker.docker.modem.followProgress(stream, (err) => (err ? reject(err) : resolve())),
     );
