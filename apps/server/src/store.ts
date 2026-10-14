@@ -294,6 +294,19 @@ export class Store {
     );
   }
 
+  /** Turn items still marked running, across every nibblet. */
+  async runningTurnItems(): Promise<
+    { nibbletId: string; item: Extract<ThreadItem, { type: "turn" }> }[]
+  > {
+    const rows = await this.db
+      .select({ nibbletId: items.nibbletId, item: items.item })
+      .from(items)
+      .where(and(sql`${items.item}->>'type' = 'turn'`, sql`${items.item}->>'status' = 'running'`));
+    return rows.flatMap((r) =>
+      r.item.type === "turn" ? [{ nibbletId: r.nibbletId, item: r.item }] : [],
+    );
+  }
+
   async clearAwaitingApproval(): Promise<void> {
     await this.db
       .update(nibblets)

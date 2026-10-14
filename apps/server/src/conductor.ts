@@ -11,6 +11,7 @@ import {
   type GuardConfig,
   type McpServerDef,
 } from "@nibblet/protocol";
+import { z } from "zod";
 import { cliLogins } from "./clilogins.ts";
 import type { Config } from "./config.ts";
 import { Approvals } from "./approvals.ts";
@@ -21,6 +22,7 @@ import {
   ProviderLimits,
   providerFor,
   resumeAt,
+  WaitingTurn,
 } from "./limits.ts";
 import { dropOverlaps, hostTools } from "./hostmcp.ts";
 import { onePasswordLogin } from "./onepassword.ts";
@@ -48,6 +50,16 @@ interface ActiveTurn extends QueuedTurn {
 
 const now = () => new Date().toISOString();
 
+/** Who to pick up again once the server is back from an update or a restart. */
+const RESUME_SETTING = "resumeAfterRestart";
+const Resume = z.record(
+  z.string(),
+  z.object({ wasWorking: z.boolean(), turns: z.array(WaitingTurn) }),
+);
+type Resume = z.infer<typeof Resume>;
+const RESUME_INPUT =
+  "Nibblets restarted (to update) while you were working, so your last turn was cut short. Carry on where you left off.";
+
 /**
  * Runs nibblets: starts and stops their containers, queues turns from every
  * source (the user, heartbeats, schedules, sub-agents), hands them to the
@@ -57,6 +69,8 @@ export class Conductor {
   private readonly links = new Map<string, RunnerLink>();
   private readonly queues = new Map<string, QueuedTurn[]>();
   private readonly active = new Map<string, ActiveTurn>();
+  /** Set while an update is on its way: nothing new starts until the server restarts. */
+  private paused = false;
   private readonly store: Store;
   private readonly docker: Orchestrator;
   private readonly config: Config;
@@ -89,6 +103,15 @@ export class Conductor {
   /** Brings the database in line with Docker after a server restart. */
   async reconcile(): Promise<void> {
     await this.approvals.resetStale();
+    // Running turns live in memory, so any the last server left running ended
+    // with it. They're picked up again below, with what an update held back.
+    const resume = await this.store.getSetting(RESUME_SETTING, (v) => Resume.parse(v), {});
+    await this.store.deleteSetting(RESUME_SETTING);
+    for (const { nibbletId, item } of await this.store.runningTurnItems()) {
+      await this.store.putItem(nibbletId, { ...item, status: "interrupted", endedAt: now() });
+      await this.notice(nibbletId, item.turnId, "info", "Paused while Nibblets restarted");
+      resume[nibbletId] = { turns: resume[nibbletId]?.turns ?? [], wasWorking: true };
+    }
     await this.limits.restore();
     const runners = await this.docker.runners();
     for (const nibblet of await this.store.listNibblets()) {
@@ -111,6 +134,56 @@ export class Conductor {
       }
     }
     await this.docker.watchRunnerExits((id, code) => void this.onContainerExit(id, code));
+    await this.resume(resume);
+  }
+
+  /**
+   * Before an update restarts the server: stops each working nibblet's turn
+   * (as the stop button does), holds every queue, and saves both, so they
+   * carry on once the new version is up.
+   */
+  async pauseForUpdate(): Promise<void> {
+    this.paused = true;
+    const saved: Resume = {};
+    for (const id of new Set([...this.active.keys(), ...this.queues.keys()])) {
+      const wasWorking = this.active.has(id);
+      const turns = this.queues.get(id) ?? [];
+      if (!wasWorking && turns.length === 0) continue;
+      saved[id] = { wasWorking, turns };
+      if (wasWorking) {
+        this.interrupt(id);
+        void this.notice(id, this.activeTurnId(id), "info", "Paused while Nibblets updates");
+      }
+    }
+    await this.store.setSetting(RESUME_SETTING, saved);
+  }
+
+  /** The update didn't happen: carry on now rather than after a restart. */
+  async unpause(): Promise<void> {
+    if (!this.paused) return;
+    this.paused = false;
+    const saved = await this.store.getSetting(RESUME_SETTING, (v) => Resume.parse(v), {});
+    await this.store.deleteSetting(RESUME_SETTING);
+    for (const [id, { wasWorking }] of Object.entries(saved)) {
+      if (wasWorking) {
+        await this.enqueue(id, "system", RESUME_INPUT, [], { first: true }).catch(() => undefined);
+      }
+      void this.dispatch(id);
+    }
+  }
+
+  /** Puts back what was held over a restart: a nudge to carry on first, then the queue. */
+  private async resume(saved: Resume): Promise<void> {
+    for (const [id, { wasWorking, turns }] of Object.entries(saved)) {
+      const nibblet = await this.store.getNibblet(id).catch(() => null);
+      if (!nibblet) continue;
+      this.queues.set(id, [...turns, ...(this.queues.get(id) ?? [])]);
+      if (wasWorking) {
+        await this.enqueue(id, "system", RESUME_INPUT, [], { first: true }).catch(() => undefined);
+      } else {
+        void this.dispatch(id);
+      }
+    }
   }
 
   async start(nibbletId: string): Promise<Nibblet> {
@@ -191,6 +264,7 @@ export class Conductor {
     source: TurnSource,
     input: string,
     attachments: FileRef[] = [],
+    opts: { first?: boolean } = {},
   ): Promise<string> {
     // While waiting out a usage limit, heartbeats and schedules don't pile up.
     if (this.limits.waiting(nibbletId) && (source === "heartbeat" || source === "schedule")) {
@@ -209,7 +283,9 @@ export class Conductor {
       ...(attachments.length > 0 ? { attachments } : {}),
     });
     const queue = this.queues.get(nibbletId) ?? [];
-    queue.push({ turnId, source, input, attachments });
+    // `first`: ahead of anything already waiting.
+    if (opts.first) queue.unshift({ turnId, source, input, attachments });
+    else queue.push({ turnId, source, input, attachments });
     this.queues.set(nibbletId, queue);
     await this.limits.saveTurns(nibbletId, queue);
     await this.store.updateNibblet(nibbletId, { lastActivityAt: new Date() });
@@ -437,6 +513,7 @@ export class Conductor {
 
   private async dispatch(nibbletId: string): Promise<void> {
     const link = this.links.get(nibbletId);
+    if (this.paused) return;
     if (!link || this.active.has(nibbletId) || this.limits.waiting(nibbletId)) return;
     if (!this.queues.get(nibbletId)?.length) return;
     // Don't send work into a subscription that's known to be out of usage.

@@ -17,7 +17,7 @@ import {
 import { ConnectStatus } from "@nibblet/protocol";
 import { z } from "zod";
 import { ipcMain } from "electron/main";
-import { downloadUpdater, startHostMcpBridge, type HostMcpBridge } from "@nibblet/host-mcp";
+import { startHostMcpBridge, type HostMcpBridge } from "@nibblet/host-mcp";
 import { startKeychainBridge } from "./bridge.ts";
 import { detectCredentials } from "./credentials.ts";
 import { checkDocker } from "./docker.ts";
@@ -369,8 +369,8 @@ async function bringUp(options: { getReady?: boolean } = {}): Promise<void> {
         port: HOST_MCP_PORT,
         token: stack.env.HOST_MCP_TOKEN ?? "",
         log: (m) => console.log(m),
-        // The app is the update: the web UI links to the download, and so does this app.
-        updater: downloadUpdater,
+        // The web UI's update bar installs the app's updates through this (and the stack's with them).
+        updater: updates.host,
       }).catch((err: unknown) => {
         log(`Host tools are off: ${err instanceof Error ? err.message : String(err)}`);
         return null;
@@ -552,7 +552,8 @@ app.whenReady().then(async () => {
     await saveSettings(settings);
   }
   buildTray();
-  updates.start();
+  // With a server, the web UI's update bar offers updates; without one, the app asks itself.
+  if (!settings.runServer) updates.start();
   if (settings.runServer) await bringUp({ getReady: process.argv.includes(SET_UP) });
   else openMainWindow();
 });

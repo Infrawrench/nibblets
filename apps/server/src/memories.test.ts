@@ -80,4 +80,25 @@ describe.skipIf(!url)("shared memories", () => {
     // The person can delete anything.
     expect(await store.deleteMemory(person.id)).toBe(true);
   });
+
+  it("finds turns still marked running, for the server to close after a restart", async () => {
+    const turn = (id: string, status: "running" | "completed") => ({
+      type: "turn" as const,
+      id,
+      turnId: id,
+      createdAt: new Date().toISOString(),
+      source: "user" as const,
+      status,
+      quiet: false,
+      usage: null,
+      endedAt: status === "running" ? null : new Date().toISOString(),
+    });
+    await store.putItem(pip, turn("turn_a", "completed"));
+    await store.putItem(pip, turn("turn_b", "running"));
+    await store.putItem(mochi, turn("turn_c", "running"));
+    const running = await store.runningTurnItems();
+    expect(running.map((r) => `${r.nibbletId}:${r.item.id}`).sort()).toEqual(
+      [`${mochi}:turn_c`, `${pip}:turn_b`].sort(),
+    );
+  });
 });

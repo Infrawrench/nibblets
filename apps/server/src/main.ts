@@ -61,7 +61,12 @@ async function main(): Promise<void> {
   });
   const tunnel = new Tunnel(docker, store, config);
   const harnessUpdates = new HarnessUpdater({ store, docker, log: (m) => console.log(m) });
-  const appUpdates = new AppUpdater({ config, version: VERSION });
+  const appUpdates = new AppUpdater({
+    config,
+    version: VERSION,
+    pause: () => conductor.pauseForUpdate(),
+    unpause: () => conductor.unpause(),
+  });
   const central = new Connect({
     store,
     tunnel,

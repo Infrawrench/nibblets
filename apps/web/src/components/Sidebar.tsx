@@ -10,6 +10,7 @@ import { keys, useLiveState, useServer, useServers } from "../lib/servers.tsx";
 import { NibbletMenu } from "./NibbletMenu.tsx";
 import type { ServerConnection } from "../lib/connection.ts";
 import { cn } from "../lib/cn.ts";
+import { UpdateBar } from "./UpdateBar.tsx";
 import { orderNibblets } from "../lib/nibblets.ts";
 
 const statusText: Record<NibbletStatus, string> = {
@@ -101,6 +102,7 @@ export function Sidebar({ className }: { className?: string }) {
           ) : null,
         )}
       </nav>
+      <UpdateBar />
       <div className="border-t border-line px-1.5 pt-1.5 safe-bottom-3">
         <button
           type="button"

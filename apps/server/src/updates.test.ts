@@ -151,4 +151,55 @@ describe("AppUpdater", () => {
     });
     expect((await updater.status()).available).toBe(false);
   });
+
+  it("pauses the nibblets before updating, and lets them carry on if it fails", async () => {
+    const events: string[] = [];
+    let bridgeState: { method: "here"; updating: boolean; error: string | null } = {
+      method: "here",
+      updating: false,
+      error: null,
+    };
+    const updater = new AppUpdater({
+      config,
+      version: "0.1.0",
+      pause: async () => void events.push("pause"),
+      unpause: async () => void events.push("unpause"),
+      fetch: async (input, init) => {
+        if (!String(input).startsWith("http://bridge")) return json(release);
+        if (init?.method === "POST") {
+          events.push("install");
+          bridgeState = { ...bridgeState, updating: true };
+        }
+        return json(bridgeState);
+      },
+    });
+    await updater.status();
+    await updater.apply();
+    expect(events).toEqual(["pause", "install"]);
+
+    // Still going: nothing changes.
+    await updater.status();
+    expect(events).toEqual(["pause", "install"]);
+
+    // It failed without restarting anything.
+    bridgeState = { method: "here", updating: false, error: "Couldn't download it" };
+    expect((await updater.status()).updating).toBe(false);
+    expect(events).toEqual(["pause", "install", "unpause"]);
+  });
+
+  it("lets the nibblets carry on when the bridge won't take the update", async () => {
+    const events: string[] = [];
+    const updater = new AppUpdater({
+      config,
+      version: "0.1.0",
+      pause: async () => void events.push("pause"),
+      unpause: async () => void events.push("unpause"),
+      fetch: async (input, init) => {
+        if (!String(input).startsWith("http://bridge")) return json(release);
+        return init?.method === "POST" ? json({ error: "busy" }, 409) : json({ method: "here" });
+      },
+    });
+    await expect(updater.apply()).rejects.toThrow(/didn't take/);
+    expect(events).toEqual(["pause", "unpause"]);
+  });
 });

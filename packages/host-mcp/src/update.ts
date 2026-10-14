@@ -19,14 +19,6 @@ export interface AppUpdaterHost {
   apply(version: string): Promise<void>;
 }
 
-/** For the desktop app: a new version is a new download, which the app offers itself. */
-export const downloadUpdater: AppUpdaterHost = {
-  describe: async () => ({ method: "download", updating: false, error: null }),
-  apply: async () => {
-    throw new Error("Download the new version of the app instead");
-  },
-};
-
 /**
  * For a checkout set up by install.sh: checks out the release's tag and
  * reruns docker/up.sh, which pulls the release's images and restarts the stack. Under systemd

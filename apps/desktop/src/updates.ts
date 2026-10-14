@@ -1,7 +1,10 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { app, BrowserWindow, dialog } from "electron";
 import { autoUpdater } from "electron-updater";
 import { openOutside } from "./links.ts";
 import { formatNotes } from "./notes.ts";
+import type { AppUpdaterHost } from "@nibblet/host-mcp";
 import { compareVersions, latestRelease, type AppRelease } from "@nibblet/protocol";
 
 const REPO = "Infrawrench/nibblets";
@@ -10,15 +13,20 @@ const CHECK_EVERY_MS = 12 * 60 * 60_000;
 const DOWNLOAD_PAGE = "https://nibblets.dev";
 
 /**
- * Offers new releases of the app: a dialog with what's new. On a Mac, the
- * app installs it itself (electron-updater, from the release's
- * latest-mac.yml and zips) and restarts; elsewhere, and if that fails, it
- * sends the person to the download. A version the person skips isn't
- * offered again.
+ * New releases of the app. On a Mac the app installs them itself
+ * (electron-updater, from the release's latest-mac.yml and zips) and
+ * restarts, which also moves its stack onto the release's images; elsewhere
+ * they're a new download.
+ *
+ * Usually the web UI's update bar asks, through the host bridge (`host`).
+ * Without a server to show it, and from the menu, a dialog with what's new
+ * asks instead; a version the person skips there isn't offered again.
  */
 export class AppUpdates {
   private timer: ReturnType<typeof setInterval> | null = null;
   private busy = false;
+  private installing = false;
+  private installError: string | null = null;
   private readonly skipped: () => string | null;
   private readonly skip: (version: string) => void;
 
@@ -38,9 +46,33 @@ export class AppUpdates {
     if (this.timer) clearInterval(this.timer);
   }
 
-  /** Signed Mac builds install updates themselves; anything else is a new download. */
+  /** For the host bridge, so the web UI's update bar can start it: one click, no questions. */
+  readonly host: AppUpdaterHost = {
+    describe: async () => ({
+      method: this.installsItself ? "here" : "download",
+      updating: this.installing,
+      error: this.installError,
+    }),
+    apply: async (version) => {
+      if (!this.installsItself) throw new Error("Download the new version of the app instead");
+      if (this.installing) return;
+      void this.download(version).catch((err: unknown) => {
+        this.installError = `Couldn't install ${version}: ${err instanceof Error ? err.message : String(err)}`;
+      });
+    },
+  };
+
+  /**
+   * Release builds for the Mac install updates themselves; anything else is a
+   * new download. Local builds (`pnpm run package`) lack the updater's
+   * settings file, and their unsigned app couldn't take a signed update anyway.
+   */
   private get installsItself(): boolean {
-    return process.platform === "darwin" && app.isPackaged;
+    return (
+      process.platform === "darwin" &&
+      app.isPackaged &&
+      existsSync(join(process.resourcesPath, "app-update.yml"))
+    );
   }
 
   /** `manual` is the menu item: it says so when there's nothing new, and ignores skipping. */
@@ -93,42 +125,46 @@ export class AppUpdates {
         openOutside(DOWNLOAD_PAGE);
         return;
       }
-      await this.install(latest.version);
+      await this.download(latest.version).catch(async (err: unknown) => {
+        const { response } = await dialog.showMessageBox({
+          type: "warning",
+          message: `Couldn't install Nibblets ${latest.version}`,
+          detail: `${err instanceof Error ? err.message : String(err)}\n\nYou can download it instead.`,
+          buttons: ["Download", "Cancel"],
+          defaultId: 0,
+          cancelId: 1,
+        });
+        if (response === 0) openOutside(DOWNLOAD_PAGE);
+      });
     } finally {
       this.busy = false;
     }
   }
 
-  /** Downloads the update, showing progress on the Dock icon, then restarts into it. */
-  private async install(version: string): Promise<void> {
+  /**
+   * Downloads the update, showing progress on the Dock icon, then quits
+   * (stopping the stack first if that's the setting) and opens the new version.
+   */
+  private async download(version: string): Promise<void> {
     const progress = (fraction: number) => {
       for (const win of BrowserWindow.getAllWindows()) win.setProgressBar(fraction);
     };
     const onProgress = (p: { percent: number }) => progress(p.percent / 100);
+    this.installing = true;
+    this.installError = null;
     autoUpdater.on("download-progress", onProgress);
     try {
       progress(2); // Indeterminate until the download starts.
       const found = await autoUpdater.checkForUpdates();
       if (!found?.isUpdateAvailable || found.updateInfo.version !== version) {
-        throw new Error(`Version ${version} can't be installed from inside the app.`);
+        throw new Error(`version ${version} can't be installed from inside the app.`);
       }
       await autoUpdater.downloadUpdate();
-      progress(-1);
-      // Quits (stopping the stack first if that's the setting) and opens the new version.
       autoUpdater.quitAndInstall();
-    } catch (err) {
-      progress(-1);
-      const { response } = await dialog.showMessageBox({
-        type: "warning",
-        message: `Couldn't install Nibblets ${version}`,
-        detail: `${err instanceof Error ? err.message : String(err)}\n\nYou can download it instead.`,
-        buttons: ["Download", "Cancel"],
-        defaultId: 0,
-        cancelId: 1,
-      });
-      if (response === 0) openOutside(DOWNLOAD_PAGE);
     } finally {
+      progress(-1);
       autoUpdater.off("download-progress", onProgress);
+      this.installing = false;
     }
   }
 }

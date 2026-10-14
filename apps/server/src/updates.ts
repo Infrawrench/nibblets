@@ -202,6 +202,10 @@ export class AppUpdater {
     config: Pick<Config, "HOST_MCP_URL" | "HOST_MCP_TOKEN" | "NIBBLET_UPDATE_REPO">;
     version: string;
     fetch?: typeof fetch;
+    /** Holds the nibblets' work over the restart an update brings (Conductor.pauseForUpdate). */
+    pause?: () => Promise<void>;
+    /** Lets them carry on when the update doesn't happen. */
+    unpause?: () => Promise<void>;
   };
 
   constructor(deps: AppUpdater["deps"]) {
@@ -212,6 +216,11 @@ export class AppUpdater {
     const stale = !this.checkedAt || Date.now() - Date.parse(this.checkedAt) > 60 * 60_000;
     if (refresh || stale) await this.check();
     const bridge = await this.bridge("GET");
+    if (this.applying && bridge && !bridge.updating && bridge.error) {
+      // It failed before restarting anything: the nibblets carry on.
+      this.applying = false;
+      await this.deps.unpause?.();
+    }
     const available =
       this.latest !== null && compareVersions(this.latest.version, this.deps.version) > 0;
     return {
@@ -230,8 +239,12 @@ export class AppUpdater {
     const status = await this.status();
     if (!status.available || !this.latest) throw new Error("There's nothing newer to install");
     if (status.method !== "here") throw new Error("This computer can't update itself from here");
+    await this.deps.pause?.();
     const res = await this.bridge("POST", { version: this.latest.version });
-    if (!res) throw new Error("The host bridge didn't take the update");
+    if (!res) {
+      await this.deps.unpause?.();
+      throw new Error("The host bridge didn't take the update");
+    }
     this.applying = true;
     return this.status();
   }
