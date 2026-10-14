@@ -343,8 +343,8 @@ export const cities: Record<CityBackground, CityScene> = {
           <ellipse cx="41" cy="10.5" rx="6" ry="3" />
           <ellipse cx="88" cy="30" rx="9" ry="3" />
         </g>
-        {/* Its hill, running down behind the head so it's on solid ground. */}
-        <path d="M44 52 Q56 27 70 26 Q84 27 96 52Z" fill="#7F8F86" />
+        {/* Its hill, running all the way down to the river, so it's on solid ground. */}
+        <path d="M40 100 V62 Q54 28 70 26 Q86 28 100 46 V100Z" fill="#7F8F86" />
         {/* The Angel of the North, far off on its hill, wings out. */}
         <g fill="#9C5A3A">
           <path d="M58.6 11.6 L70 13.4 L81.4 11.6 L81.4 13.6 L70 15.8 L58.6 13.6Z" />
