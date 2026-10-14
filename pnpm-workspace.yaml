@@ -35,3 +35,7 @@ allowBuilds:
 permissions:
   "@tanstack/router-plugin":
     skills: true
+# Where approved agent skills are linked; pnpm keeps the links out of git.
+skills:
+  dirs:
+    - .claude/skills
