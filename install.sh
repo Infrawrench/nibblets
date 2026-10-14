@@ -298,8 +298,9 @@ setup_engine() {
   choose_engine
   local version
   if [ "$ENGINE" = podman ]; then
-    command -v systemctl >/dev/null && [ -d /run/systemd/system ] ||
+    if ! command -v systemctl >/dev/null || [ ! -d /run/systemd/system ]; then
       fail "Podman needs systemd here for its API socket. Start 'podman system service --time=0 unix://$PODMAN_SOCK' and set DOCKER_HOST yourself."
+    fi
     need_root
     $SUDO systemctl is-active --quiet podman.socket || spin "Starting Podman's API socket" $SUDO systemctl enable --now podman.socket
     compose_for_podman
