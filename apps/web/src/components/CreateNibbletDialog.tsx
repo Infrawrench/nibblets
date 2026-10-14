@@ -61,6 +61,8 @@ export function CreateNibbletDialog({
   useEffect(() => {
     if (!open) return;
     setStep(choosing ? "computer" : "look");
+    // The list may have loaded since this mounted; start on the first one reachable, this computer's if any.
+    if (!servers.byId(server)) setServer(servers.all[0]?.id ?? "local");
     setLook(randomHamsterLook());
     const taken = qc
       .getQueriesData<Nibblet[]>({ queryKey: ["nibblets"] })
@@ -250,7 +252,11 @@ function ComputerList({
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="truncate text-sm font-medium">{system.name}</span>
               <span className="text-2xs text-faint">
-                {reachable ? (platformName(system.platform) ?? "Ready") : "Offline"}
+                {reachable
+                  ? [system.local ? "This computer" : null, platformName(system.platform)]
+                      .filter((part) => part !== null)
+                      .join(" · ") || "Ready"
+                  : "Offline"}
               </span>
             </span>
             {reachable ? <ChevronRight className="size-4 text-faint" /> : null}

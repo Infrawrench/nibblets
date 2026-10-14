@@ -151,9 +151,23 @@ export const probeHealth: Probe = async (url) => {
   }
 };
 
+/** How a server is being reached: one of its routes, or this computer's own address. */
+export type ChosenRouteKind = RouteKind | "local";
+
 export interface ChosenRoute {
-  kind: RouteKind;
+  kind: ChosenRouteKind;
   url: string;
+}
+
+/** Where the desktop app's own server answers, on the computer it runs on. */
+export const LOCAL_SERVER_URL = "http://127.0.0.1:8420";
+
+/**
+ * The server running on this computer, when the desktop app has one linked to
+ * the account. The app says so in its user agent, which a link can't set.
+ */
+export function localServerId(userAgent = navigator.userAgent): string | null {
+  return /\bNibbletsLocal\/([\w-]+)/.exec(userAgent)?.[1] ?? null;
 }
 
 /**
@@ -163,8 +177,14 @@ export interface ChosenRoute {
 export async function chooseRoute(
   routes: ServerRoutes,
   probe: Probe = probeHealth,
+  local = false,
 ): Promise<ChosenRoute | null> {
-  for (const route of routeOrder(routes)) {
+  // On its own computer, a server is best reached without leaving it.
+  const order = [
+    ...(local ? [{ kind: "local" as const, url: LOCAL_SERVER_URL }] : []),
+    ...routeOrder(routes),
+  ];
+  for (const route of order) {
     if (await probe(route.url)) return { kind: route.kind, url: route.url.replace(/\/+$/, "") };
   }
   return null;

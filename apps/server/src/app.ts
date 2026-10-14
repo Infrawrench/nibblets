@@ -67,6 +67,14 @@ export function createApp(services: Services, bus: Bus) {
 
   const app = new Hono();
 
+  // Nibblets Connect, open in the desktop app, reaches the app's own server on
+  // 127.0.0.1; the browser asks first whether a public page may.
+  app.use("*", async (c, next) => {
+    await next();
+    if (c.req.method === "OPTIONS" && c.req.header("access-control-request-private-network")) {
+      c.res.headers.set("access-control-allow-private-network", "true");
+    }
+  });
   // Peers' UIs call this server from their own origin, with bearer tokens rather than cookies.
   app.use(
     "/api/*",

@@ -9,7 +9,13 @@ import {
 } from "react";
 import { useQueries, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { LiveMessage, Nibblet, StoredItem } from "@nibblet/protocol";
-import { chooseRoute, TokenCache, type CentralApi, type ChosenRoute } from "./central.ts";
+import {
+  chooseRoute,
+  localServerId,
+  TokenCache,
+  type CentralApi,
+  type ChosenRoute,
+} from "./central.ts";
 import { createConnection, type LiveState, type ServerConnection } from "./connection.ts";
 import { maxSeq, upsertItems } from "./thread.ts";
 
@@ -38,6 +44,8 @@ export interface System {
   name: string;
   platform: string | null;
   online: boolean;
+  /** Running on this computer. */
+  local: boolean;
   /** How it's being reached, in central mode. */
   route: ChosenRoute | null;
   connection: ServerConnection | null;
@@ -116,7 +124,17 @@ export function LocalServers({
   });
   const name = info.data?.name ?? "This server";
   const systems = useMemo<System[]>(
-    () => [{ id: connection.id, name, platform: null, online: true, route: null, connection }],
+    () => [
+      {
+        id: connection.id,
+        name,
+        platform: null,
+        online: true,
+        local: true,
+        route: null,
+        connection,
+      },
+    ],
     [connection, name],
   );
   return <ServersProvider systems={systems}>{children}</ServersProvider>;
@@ -133,13 +151,22 @@ export function CentralServers({ api, children }: { api: CentralApi; children: R
     queryFn: () => api.servers(),
     refetchInterval: 15_000,
   });
-  const servers = list.data?.servers ?? [];
+  // This computer's own server first, then the rest as the account lists them.
+  const localId = useMemo(() => localServerId(), []);
+  const servers = useMemo(
+    () =>
+      [...(list.data?.servers ?? [])].sort(
+        (a, b) => Number(b.id === localId) - Number(a.id === localId),
+      ),
+    [list.data, localId],
+  );
   const tokens = useMemo(() => new TokenCache(api), [api]);
   const routes = useQueries({
     queries: servers.map((s) => ({
       queryKey: keys.route(s.id, JSON.stringify(s.routes)),
-      queryFn: () => chooseRoute(s.routes),
-      enabled: s.online,
+      queryFn: () => chooseRoute(s.routes, undefined, s.id === localId),
+      // This computer's server can be reached even before its heartbeat says it's up.
+      enabled: s.online || s.id === localId,
       // Re-probe now and then, so a closer route is picked up when it appears.
       refetchInterval: 30_000,
       staleTime: 25_000,
@@ -171,7 +198,9 @@ export function CentralServers({ api, children }: { api: CentralApi; children: R
       }
     }
     return servers.map((s, i) => {
-      const route = s.online ? (routes[i]?.data ?? lastRoutes.current.get(s.id) ?? null) : null;
+      const local = s.id === localId;
+      const route =
+        s.online || local ? (routes[i]?.data ?? lastRoutes.current.get(s.id) ?? null) : null;
       let connection = connections.current.get(s.id) ?? null;
       if (route && !connection) {
         connection = createConnection(
@@ -185,7 +214,8 @@ export function CentralServers({ api, children }: { api: CentralApi; children: R
         id: s.id,
         name: s.name,
         platform: s.platform,
-        online: s.online && route !== null,
+        online: (s.online || local) && route !== null,
+        local,
         route,
         connection: route ? connection : null,
       };

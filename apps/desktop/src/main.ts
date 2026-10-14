@@ -123,8 +123,28 @@ const updates = new AppUpdates({
   },
 });
 
-/** The UI the main window shows: this computer's server, or Nibblets Connect. */
-const uiUrl = (): string => (settings.runServer ? SERVER_URL : settings.centralUrl);
+/** This computer's server's id on Nibblets Connect, once it's linked to an account. */
+let linkedServerId: string | null = null;
+let baseUserAgent: string | null = null;
+
+/**
+ * The UI the main window shows: this computer's server on its own, or
+ * Nibblets Connect, with every server on the account, when there's no server
+ * here or it's linked (Connect then reaches it here directly).
+ */
+const uiUrl = (): string =>
+  settings.runServer && !linkedServerId ? SERVER_URL : settings.centralUrl;
+
+/** Tells the UI it's in the app, and which server on the account is this computer's. */
+function userAgent(base: string): string {
+  const local = settings.runServer && linkedServerId ? ` NibbletsLocal/${linkedServerId}` : "";
+  return `${base} NibbletsDesktop/${process.platform}${local}`;
+}
+
+/** Either UI may send the window to the other: this computer's server, or Connect. */
+const windowAllowed = (target: string): boolean =>
+  navigationAllowed(target, uiUrl()) ||
+  (settings.runServer === true && navigationAllowed(target, SERVER_URL));
 
 function step(s: SetupStep) {
   setupWindow?.webContents.send("setup:step", s);
@@ -191,13 +211,13 @@ function openMainWindow(url = uiUrl()) {
   // The window stays on the UI (and its sign-in); a link elsewhere opens in
   // the browser, so no page can stand in for the app in a window with no URL bar.
   mainWindow.webContents.on("will-navigate", (event, target) => {
-    if (navigationAllowed(target, uiUrl())) return;
+    if (windowAllowed(target)) return;
     event.preventDefault();
     openOutside(target);
   });
   // Tells the UI it's in the app, so it can make room for the traffic lights.
-  const ua = mainWindow.webContents.getUserAgent();
-  mainWindow.webContents.setUserAgent(`${ua} NibbletsDesktop/${process.platform}`);
+  baseUserAgent ??= mainWindow.webContents.getUserAgent();
+  mainWindow.webContents.setUserAgent(userAgent(baseUserAgent));
   // The UI is served by the local stack and changes with it; never show a stale copy.
   // If the server was mid-restart, try again rather than sit on an error page.
   mainWindow.webContents.on("did-fail-load", (_e, code, _desc, failed, isMainFrame) => {
@@ -391,6 +411,8 @@ async function bringUp(options: { getReady?: boolean } = {}): Promise<void> {
     }
     step({ id: "signin", state: "done", detail: "Already signed in" });
     win.close();
+    await checkLink();
+    watchLink();
     openMainWindow();
     void offerConnect();
     return;
@@ -403,6 +425,7 @@ async function bringUp(options: { getReady?: boolean } = {}): Promise<void> {
     step({ id: "signin", state: "done", detail: "Signed in" });
     win.close();
     openMainWindow(url);
+    watchLink();
     void offerConnect();
   } catch (err) {
     step({ id: "signin", state: "error", detail: String(err) });
@@ -440,6 +463,29 @@ async function connectStatus(path = "connect.status"): Promise<ConnectStatus | n
   return parsed.success ? parsed.data.data : null;
 }
 
+/**
+ * Keeps up with whether this computer's server is linked to an account, and
+ * moves the window between its own UI and Nibblets Connect when that changes.
+ */
+async function checkLink(): Promise<void> {
+  const status = settings.runServer ? await connectStatus() : null;
+  // The server not answering (restarting, say) isn't a reason to switch.
+  if (settings.runServer && !status) return;
+  const id = status?.state === "linked" ? status.serverId : null;
+  if (id === linkedServerId) return;
+  linkedServerId = id;
+  if (mainWindow && !mainWindow.isDestroyed() && baseUserAgent) {
+    mainWindow.webContents.setUserAgent(userAgent(baseUserAgent));
+    void mainWindow.loadURL(uiUrl());
+  }
+}
+
+let linkTimer: NodeJS.Timeout | null = null;
+
+function watchLink(): void {
+  linkTimer ??= setInterval(() => void checkLink(), 15_000);
+}
+
 async function startConnect(): Promise<void> {
   const status = await connectStatus("connect.start");
   if (status?.state === "linking") openOutside(status.approveUrl);
@@ -475,6 +521,7 @@ async function setRunServer(run: boolean): Promise<void> {
   bridge = null;
   await hostMcp?.close();
   hostMcp = null;
+  await checkLink();
   openMainWindow();
 }
 

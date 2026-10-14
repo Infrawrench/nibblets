@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Globe, Loader2, Network, Unplug, Wifi } from "lucide-react";
 import type { ConnectStatus, RouteKind, ServerRoutes, TailscaleStatus } from "@nibblet/protocol";
 import type { ServerConnection } from "../lib/connection.ts";
+import type { ChosenRouteKind } from "../lib/central.ts";
 import { keys, useServers } from "../lib/servers.tsx";
 import { relativeTime } from "../lib/time.ts";
 import { cn } from "../lib/cn.ts";
@@ -17,7 +18,8 @@ import { Switch } from "./ui/Switch.tsx";
  * over the nearest route.
  */
 
-const routeLabels: Record<RouteKind, string> = {
+const routeLabels: Record<ChosenRouteKind, string> = {
+  local: "this computer",
   lan: "Local network",
   tailscale: "Tailscale",
   tunnel: "Cloudflare Tunnel",
