@@ -390,3 +390,54 @@ describe("approving a link from somewhere else", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("signing the desktop app in from the browser", () => {
+  const tickets = createApp({ signInTicket: async (_env, userId) => `ticket-for-${userId}` });
+  const desk = (path: string, body: unknown) =>
+    tickets.fetch(
+      new Request(`${LOCAL}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      env,
+    );
+  const hex = async (value: string) =>
+    [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  const verifier = "a-secret-only-the-desktop-app-knows-0123456789";
+
+  it("hands the sign-in to the app holding the secret, once", async () => {
+    const { handle } = z
+      .object({ handle: z.string() })
+      .parse(await (await desk("/v1/desktop/sign-in", { challenge: await hex(verifier) })).json());
+    const redeemed = await desk("/v1/desktop/sign-in/redeem", { handle, verifier });
+    expect(await redeemed.json()).toEqual({ ticket: "ticket-for-astrid" });
+    const again = await desk("/v1/desktop/sign-in/redeem", { handle, verifier });
+    expect(again.status).toBe(400);
+  });
+
+  it("won't hand it over without the secret", async () => {
+    const { handle } = z
+      .object({ handle: z.string() })
+      .parse(await (await desk("/v1/desktop/sign-in", { challenge: await hex(verifier) })).json());
+    const wrong = await desk("/v1/desktop/sign-in/redeem", {
+      handle,
+      verifier: "someone-who-only-saw-the-link-0123456789",
+    });
+    expect(wrong.status).toBe(400);
+    expect((await desk("/v1/desktop/sign-in/redeem", { handle, verifier })).status).toBe(400);
+  });
+
+  it("needs someone signed in to start", async () => {
+    const res = await tickets.fetch(
+      new Request("https://app.nibblets.dev/v1/desktop/sign-in", {
+        method: "POST",
+        body: JSON.stringify({ challenge: await hex(verifier) }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(401);
+  });
+});

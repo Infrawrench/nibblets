@@ -19,7 +19,13 @@ import type { D1Database, Fetcher } from "@cloudflare/workers-types/index.ts";
 import { Hono, type Context, type Next } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
-import { clerkUser, devUser, type SignedIn } from "./auth.ts";
+import {
+  clerkSignInTicket,
+  clerkUser,
+  DESKTOP_TICKET_SECONDS,
+  devUser,
+  type SignedIn,
+} from "./auth.ts";
 import { loadSigningKey, serverToken } from "./jwt.ts";
 import { linkCode, randomId, randomToken, sameDigest, sha256 } from "./secrets.ts";
 import { createTunnel, deleteTunnel, tunnelsConfigured } from "./tunnels.ts";
@@ -243,10 +249,31 @@ export async function sweepLinks(env: ConnectEnv, now = Date.now()): Promise<num
     .all();
   for (const raw of results) await removeServer(env, ServerRow.parse(raw));
   await env.DB.prepare("DELETE FROM link_requests WHERE expires_at < ?").bind(cutoff).run();
+  // Desktop sign-ins nobody collected: unused, the Clerk token behind each expires by itself.
+  await env.DB.prepare("DELETE FROM desktop_sign_ins WHERE expires_at < ?")
+    .bind(new Date().toISOString())
+    .run();
   return results.length;
 }
 
-export function createApp() {
+const DesktopSignInStart = z.object({
+  /** The hex SHA-256 of a secret only the desktop app holds. */
+  challenge: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
+const DesktopSignInRedeem = z.object({
+  handle: z.string().min(1).max(200),
+  /** The secret itself. */
+  verifier: z.string().min(32).max(200),
+});
+
+export interface ConnectOptions {
+  /** Mints a Clerk sign-in token for a person; tests stand in for Clerk. */
+  signInTicket?: (env: ConnectEnv, userId: string) => Promise<string>;
+}
+
+export function createApp(options: ConnectOptions = {}) {
+  const signInTicket = options.signInTicket ?? clerkSignInTicket;
   const app = new Hono<App>();
 
   // The central UI is served from this origin, but the desktop app and
@@ -630,6 +657,45 @@ export function createApp() {
       name: user.name,
     });
     return c.json(minted);
+  });
+
+  // Signing the desktop app in from the browser
+
+  /**
+   * The browser, signed in: leaves a sign-in for the desktop app that asked,
+   * under a handle the browser passes back to the app through its own link.
+   */
+  app.post("/v1/desktop/sign-in", requireUser, async (c) => {
+    const body = DesktopSignInStart.safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: "Send { challenge }" }, 400);
+    const ticket = await signInTicket(c.env, c.get("user").id);
+    const handle = randomToken();
+    const expires = new Date(Date.now() + DESKTOP_TICKET_SECONDS * 1000).toISOString();
+    await c.env.DB.prepare(
+      "INSERT INTO desktop_sign_ins (handle_hash, challenge, ticket, expires_at) VALUES (?, ?, ?, ?)",
+    )
+      .bind(await sha256(handle), body.data.challenge, ticket, expires)
+      .run();
+    return c.json({ handle });
+  });
+
+  /** The desktop app: collects the sign-in, once, with the secret behind the challenge. */
+  app.post("/v1/desktop/sign-in/redeem", async (c) => {
+    const body = DesktopSignInRedeem.safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: "Send { handle, verifier }" }, 400);
+    const row = await c.env.DB.prepare(
+      "DELETE FROM desktop_sign_ins WHERE handle_hash = ? RETURNING challenge, ticket, expires_at",
+    )
+      .bind(await sha256(body.data.handle))
+      .first<{ challenge: string; ticket: string; expires_at: string }>();
+    if (
+      !row ||
+      row.expires_at < new Date().toISOString() ||
+      !sameDigest(await sha256(body.data.verifier), row.challenge)
+    ) {
+      return c.json({ error: "That sign-in has expired or was already used" }, 400);
+    }
+    return c.json({ ticket: row.ticket });
   });
 
   app.all("/v1/*", (c) => c.json({ error: "Not found" }, 404));

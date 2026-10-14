@@ -18,6 +18,11 @@ publish:
   provider: github
   owner: Infrawrench
   repo: nibblets
+# nibblets:// links bring a sign-in made in the browser back to the app.
+protocols:
+  - name: Nibblets
+    schemes:
+      - nibblets
 mac:
   category: public.app-category.developer-tools
   # The dmg to install from, and the zip (with latest-mac.yml) that updates install.

@@ -23,6 +23,21 @@ export function devUser(env: AuthEnv, url: URL): SignedIn | null {
   return { id: env.DEV_AUTH_USER, name: `${env.DEV_AUTH_USER} (dev)` };
 }
 
+/**
+ * A one-off Clerk sign-in token for this person, which the desktop app signs
+ * in with (Clerk's "ticket" strategy) after they sign in in their browser.
+ */
+export async function clerkSignInTicket(env: AuthEnv, userId: string): Promise<string> {
+  if (!env.CLERK_SECRET_KEY) throw new Error("Signing in through the browser needs Clerk");
+  const token = await createClerkClient({
+    secretKey: env.CLERK_SECRET_KEY,
+  }).signInTokens.createSignInToken({ userId, expiresInSeconds: DESKTOP_TICKET_SECONDS });
+  return token.token;
+}
+
+/** How long the browser's sign-in is good for, from leaving it to the app using it. */
+export const DESKTOP_TICKET_SECONDS = 300;
+
 /** The person behind a Clerk session token, or null. */
 export async function clerkUser(
   env: AuthEnv,

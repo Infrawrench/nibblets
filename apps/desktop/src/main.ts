@@ -28,7 +28,14 @@ import { HOST_MCP_PORT, IMAGE_PREFIX, Stack } from "./stack.ts";
 import { SetupTerminal } from "./terminal.ts";
 import { checkTools, findAction, forgetShellPath } from "./tools.ts";
 import { AppUpdates } from "./updates.ts";
-import { navigationAllowed, openOutside } from "./links.ts";
+import {
+  APP_SCHEME,
+  isProviderSignIn,
+  navigationAllowed,
+  openOutside,
+  parseSignInLink,
+} from "./links.ts";
+import { BrowserSignIn } from "./browser-sign-in.ts";
 import { adoptShellPath } from "./shell-path.ts";
 import { opencodePaths } from "@nibblet/host-mcp";
 
@@ -47,6 +54,8 @@ interface Settings {
   setupDone: boolean;
   /** A release the person chose not to be offered again. */
   skippedVersion: string | null;
+  /** With a linked server here, chose its own UI over signing in to Nibblets Connect. */
+  skippedSignIn: boolean;
 }
 
 const settingsPath = () => join(app.getPath("userData"), "settings.json");
@@ -60,6 +69,7 @@ async function loadSettings(): Promise<Settings> {
     offeredConnect: false,
     setupDone: false,
     skippedVersion: null,
+    skippedSignIn: false,
   };
   try {
     const parsed: Partial<Settings> = JSON.parse(await readFile(settingsPath(), "utf8"));
@@ -115,6 +125,7 @@ let settings: Settings = {
   offeredConnect: false,
   setupDone: false,
   skippedVersion: null,
+  skippedSignIn: false,
 };
 const terminal = new SetupTerminal();
 const updates = new AppUpdates({
@@ -135,7 +146,9 @@ let baseUserAgent: string | null = null;
  * here or it's linked (Connect then reaches it here directly).
  */
 const uiUrl = (): string =>
-  settings.runServer && !linkedServerId ? SERVER_URL : settings.centralUrl;
+  settings.runServer && (!linkedServerId || settings.skippedSignIn)
+    ? SERVER_URL
+    : settings.centralUrl;
 
 /** Tells the UI it's in the app, and which server on the account is this computer's. */
 function userAgent(base: string): string {
@@ -145,8 +158,55 @@ function userAgent(base: string): string {
 
 /** Either UI may send the window to the other: this computer's server, or Connect. */
 const windowAllowed = (target: string): boolean =>
-  navigationAllowed(target, uiUrl()) ||
+  navigationAllowed(target, settings.centralUrl) ||
   (settings.runServer === true && navigationAllowed(target, SERVER_URL));
+
+const sameOrigin = (a: string, b: string): boolean => {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Following a link between the two UIs is the choice of which to show: "Just
+ * use this computer" on Connect's sign-in, or "Sign in" on the server's own.
+ */
+function rememberUiChoice(target: string): void {
+  if (!settings.runServer || !linkedServerId) return;
+  const skipped = sameOrigin(target, SERVER_URL)
+    ? true
+    : sameOrigin(target, settings.centralUrl)
+      ? false
+      : settings.skippedSignIn;
+  if (skipped === settings.skippedSignIn) return;
+  settings.skippedSignIn = skipped;
+  void saveSettings(settings);
+}
+
+const browserSignIn = new BrowserSignIn();
+
+/** Google and the like sign in in the browser; it comes back through a `nibblets:` link. */
+function signInInBrowser(): void {
+  openOutside(browserSignIn.start(settings.centralUrl));
+}
+
+/** A `nibblets:` link: a sign-in coming back from the browser. */
+async function openAppLink(link: string): Promise<void> {
+  const back = parseSignInLink(link);
+  if (!back) return;
+  const ticket = await browserSignIn.finish(settings.centralUrl, back).catch(() => null);
+  if (!ticket) return;
+  // Signing in is choosing Connect over this computer's UI on its own.
+  if (settings.skippedSignIn) {
+    settings.skippedSignIn = false;
+    void saveSettings(settings);
+  }
+  const url = new URL(settings.centralUrl);
+  url.hash = `sign-in-ticket=${ticket}`;
+  openMainWindow(url.href);
+}
 
 function step(s: SetupStep) {
   setupWindow?.webContents.send("setup:step", s);
@@ -213,9 +273,23 @@ function openMainWindow(url = uiUrl()) {
   // The window stays on the UI (and its sign-in); a link elsewhere opens in
   // the browser, so no page can stand in for the app in a window with no URL bar.
   mainWindow.webContents.on("will-navigate", (event, target) => {
-    if (windowAllowed(target)) return;
+    if (isProviderSignIn(target)) {
+      event.preventDefault();
+      signInInBrowser();
+      return;
+    }
+    if (windowAllowed(target)) {
+      rememberUiChoice(target);
+      return;
+    }
     event.preventDefault();
     openOutside(target);
+  });
+  // Clerk may get to Google by a redirect from its own pages rather than a link.
+  mainWindow.webContents.on("will-redirect", (event, target) => {
+    if (!isProviderSignIn(target)) return;
+    event.preventDefault();
+    signInInBrowser();
   });
   // Tells the UI it's in the app, so it can make room for the traffic lights.
   baseUserAgent ??= mainWindow.webContents.getUserAgent();
@@ -610,8 +684,19 @@ else if (steppingAside) {
 // `--set-up` opens the getting-ready walkthrough, even on a computer that's done it.
 const SET_UP = "--set-up";
 
+// `nibblets:` links: macOS hands them to the running app; Windows and Linux
+// start another instance with the link in its arguments.
+app.setAsDefaultProtocolClient(APP_SCHEME);
+const appLinkIn = (argv: string[]) => argv.find((a) => a.startsWith(`${APP_SCHEME}://`));
+app.on("open-url", (event, link) => {
+  event.preventDefault();
+  void app.whenReady().then(() => openAppLink(link));
+});
+
 app.on("second-instance", (_e, argv) => {
-  if (argv.includes(SET_UP) && settings.runServer) void bringUp({ getReady: true });
+  const link = appLinkIn(argv);
+  if (link) void openAppLink(link);
+  else if (argv.includes(SET_UP) && settings.runServer) void bringUp({ getReady: true });
   else openMainWindow();
 });
 

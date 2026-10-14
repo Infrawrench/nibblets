@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("electron", () => ({ shell: { openExternal: vi.fn() } }));
-const { isExternalSafe, navigationAllowed } = await import("./links.ts");
+const { isExternalSafe, isProviderSignIn, navigationAllowed, parseSignInLink } =
+  await import("./links.ts");
 
 describe("desktop links", () => {
   it("hands only web and mail addresses to the system", () => {
@@ -22,8 +23,26 @@ describe("desktop links", () => {
     expect(navigationAllowed("https://close-foal-8519.clerk.accounts.dev/v1/oauth", central)).toBe(
       true,
     );
-    expect(navigationAllowed("https://accounts.google.com/o/oauth2/auth", central)).toBe(true);
-    expect(navigationAllowed("http://accounts.google.com/", central)).toBe(false);
-    expect(navigationAllowed("https://accounts.google.com.evil.example/", central)).toBe(false);
+    expect(navigationAllowed("https://clerk.app.nibblets.dev/v1/client", central)).toBe(true);
+    // Social sign-ins go to the browser instead.
+    expect(navigationAllowed("https://accounts.google.com/o/oauth2/auth", central)).toBe(false);
+  });
+
+  it("sends social sign-ins to the browser", () => {
+    expect(isProviderSignIn("https://accounts.google.com/o/oauth2/auth?x=1")).toBe(true);
+    expect(isProviderSignIn("https://github.com/login/oauth/authorize")).toBe(true);
+    expect(isProviderSignIn("http://accounts.google.com/")).toBe(false);
+    expect(isProviderSignIn("https://accounts.google.com.evil.example/")).toBe(false);
+    expect(isProviderSignIn("https://app.nibblets.dev/")).toBe(false);
+  });
+
+  it("reads a sign-in coming back from the browser", () => {
+    expect(parseSignInLink("nibblets://sign-in?state=abc&handle=def")).toEqual({
+      state: "abc",
+      handle: "def",
+    });
+    expect(parseSignInLink("nibblets://sign-in?state=abc")).toBeNull();
+    expect(parseSignInLink("nibblets://other?state=abc&handle=def")).toBeNull();
+    expect(parseSignInLink("https://sign-in/?state=abc&handle=def")).toBeNull();
   });
 });

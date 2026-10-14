@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
-import { useQueries } from "@tanstack/react-query";
-import { Laptop, Plus, Settings } from "lucide-react";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import { Laptop, LogIn, Plus, Settings } from "lucide-react";
 import { defaultHamsterLook, type Nibblet, type NibbletStatus } from "@nibblet/protocol";
 import { Hamster } from "./hamster/Hamster.tsx";
 import { CreateNibbletDialog } from "./CreateNibbletDialog.tsx";
@@ -12,6 +12,7 @@ import type { ServerConnection } from "../lib/connection.ts";
 import { cn } from "../lib/cn.ts";
 import { UpdateBar } from "./UpdateBar.tsx";
 import { orderNibblets } from "../lib/nibblets.ts";
+import { localServerId } from "../lib/central.ts";
 
 const statusText: Record<NibbletStatus, string> = {
   stopped: "Asleep",
@@ -102,6 +103,9 @@ export function Sidebar({ className }: { className?: string }) {
           ) : null,
         )}
       </nav>
+      {servers.central === null && localServerId() && servers.all[0] ? (
+        <SignInRow connection={servers.all[0]} />
+      ) : null}
       <UpdateBar />
       <div className="border-t border-line px-1.5 pt-1.5 safe-bottom-3">
         <button
@@ -218,6 +222,30 @@ function SystemLine({ connection, name }: { connection: ServerConnection; name: 
         </span>
       ) : null}
     </span>
+  );
+}
+
+/**
+ * In the desktop app, on this computer's own server after choosing not to
+ * sign in: the way back to Nibblets Connect and the other computers.
+ */
+function SignInRow({ connection }: { connection: ServerConnection }) {
+  const status = useQuery({
+    queryKey: keys.connect(connection.id),
+    queryFn: () => connection.client.connect.status({}),
+  });
+  if (status.data?.state !== "linked") return null;
+  const central = status.data.centralUrl;
+  return (
+    <div className="px-1.5 pt-1.5">
+      <a
+        href={central}
+        className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-sm text-dim hover:bg-hover hover:text-text"
+      >
+        <LogIn className="size-3.5" />
+        Sign in to see other computers
+      </a>
+    </div>
   );
 }
 

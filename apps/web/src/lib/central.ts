@@ -53,7 +53,11 @@ export interface CentralApi {
   subscribePush(subscription: PushSubscriptionInput): Promise<void>;
   unsubscribePush(endpoint: string): Promise<void>;
   testPush(): Promise<{ sent: number; failed: number }>;
+  /** Leaves this sign-in for the desktop app that sent `challenge`; returns the handle it collects it with. */
+  desktopSignIn(challenge: string): Promise<{ handle: string }>;
 }
+
+const DesktopHandle = z.object({ handle: z.string() });
 
 const PushTestResult = z.object({ sent: z.number(), failed: z.number() });
 
@@ -110,6 +114,10 @@ export function centralApi(sessionToken: () => Promise<string | null>): CentralA
       });
     },
     testPush: async () => PushTestResult.parse(await call("/v1/push/test", { method: "POST" })),
+    desktopSignIn: async (challenge) =>
+      DesktopHandle.parse(
+        await call("/v1/desktop/sign-in", { method: "POST", body: JSON.stringify({ challenge }) }),
+      ),
     remove: async (id) => {
       await call(`/v1/servers/${encodeURIComponent(id)}`, { method: "DELETE" });
     },
@@ -157,6 +165,23 @@ export type ChosenRouteKind = RouteKind | "local";
 export interface ChosenRoute {
   kind: ChosenRouteKind;
   url: string;
+}
+
+/** Where the desktop app picks up a sign-in made in the browser (its `nibblets:` link). */
+export function desktopSignInLink(state: string, handle: string): string {
+  const q = new URLSearchParams({ state, handle });
+  return `nibblets://sign-in?${q}`;
+}
+
+/**
+ * A sign-in handed over from the browser: the desktop app opens Nibblets
+ * Connect with `#sign-in-ticket=…`. Read once, then wiped from the address.
+ */
+export function takeSignInTicket(): string | null {
+  const match = /^#sign-in-ticket=([\w.-]+)$/.exec(window.location.hash);
+  if (!match?.[1]) return null;
+  history.replaceState(null, "", window.location.pathname + window.location.search);
+  return match[1];
 }
 
 /** Where the desktop app's own server answers, on the computer it runs on. */

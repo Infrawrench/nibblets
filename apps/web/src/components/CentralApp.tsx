@@ -1,9 +1,16 @@
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ClerkProvider, SignIn, useAuth } from "@clerk/react";
+import { ClerkProvider, SignIn, useAuth, useSignIn } from "@clerk/react";
 import { Loader2 } from "lucide-react";
 import { defaultHamsterLook } from "@nibblet/protocol";
-import { centralApi, loadCentralConfig, type CentralApi } from "../lib/central.ts";
+import {
+  centralApi,
+  loadCentralConfig,
+  LOCAL_SERVER_URL,
+  localServerId,
+  takeSignInTicket,
+  type CentralApi,
+} from "../lib/central.ts";
 import { CentralServers } from "../lib/servers.tsx";
 import { Hamster } from "./hamster/Hamster.tsx";
 import { Button } from "./ui/Button.tsx";
@@ -39,7 +46,8 @@ function DevSignedIn({ children }: { children: ReactNode }) {
 function ClerkSignedIn({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const api = useMemo<CentralApi>(() => centralApi(() => getToken()), [getToken]);
-  if (!isLoaded) return <Spinner />;
+  const ticket = useTicketSignIn(isLoaded && !isSignedIn);
+  if (!isLoaded || (ticket === "signing-in" && !isSignedIn)) return <Spinner />;
   if (!isSignedIn) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-5 bg-bg p-6">
@@ -56,10 +64,42 @@ function ClerkSignedIn({ children }: { children: ReactNode }) {
           forceRedirectUrl={window.location.pathname + window.location.search}
           signUpForceRedirectUrl={window.location.pathname + window.location.search}
         />
+        {ticket === "failed" ? (
+          <p className="max-w-xs text-center text-xs text-danger">
+            Signing in from the browser didn't work. Try again.
+          </p>
+        ) : null}
+        {/* In the desktop app with a server of its own, signing in is optional. */}
+        {localServerId() ? (
+          <a href={`${LOCAL_SERVER_URL}/`} className="text-sm text-dim hover:text-text">
+            Just use this computer
+          </a>
+        ) : null}
       </div>
     );
   }
   return <CentralServers api={api}>{children}</CentralServers>;
+}
+
+/**
+ * Signs in with a ticket the desktop app brought back from the browser, where
+ * the person signed in (Google won't sign in inside an app's window).
+ */
+function useTicketSignIn(ready: boolean): "none" | "signing-in" | "failed" {
+  const { signIn } = useSignIn();
+  const [ticket] = useState(takeSignInTicket);
+  const [state, setState] = useState<"none" | "signing-in" | "failed">(
+    ticket ? "signing-in" : "none",
+  );
+  useEffect(() => {
+    if (!ticket || !ready || state !== "signing-in") return;
+    void (async () => {
+      const used = await signIn.ticket({ ticket });
+      const done = used.error ? used : await signIn.finalize();
+      setState(done.error ? "failed" : "none");
+    })().catch(() => setState("failed"));
+  }, [ticket, ready, state, signIn]);
+  return state;
 }
 
 function Spinner() {
