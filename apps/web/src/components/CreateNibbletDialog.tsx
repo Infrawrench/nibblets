@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, Laptop, Loader2 } from "lucide-react";
 import {
   harnesses,
   randomHamsterLook,
@@ -16,14 +16,14 @@ import { ModelPicker, type ModelChoice } from "./ModelPicker.tsx";
 import { EffortMenu } from "./EffortMenu.tsx";
 import { Modal } from "./ui/Modal.tsx";
 import { Button } from "./ui/Button.tsx";
-import { FieldRow, Select, Textarea } from "./ui/Field.tsx";
+import { FieldRow, Textarea } from "./ui/Field.tsx";
 import { Switch } from "./ui/Switch.tsx";
 import { NibbletTools, type ToolsValue } from "./tools/NibbletTools.tsx";
 import { NewNibbletVaults } from "./onepassword/OnePasswordSection.tsx";
-import { keys, useServers } from "../lib/servers.tsx";
-import { useServerNames } from "../lib/useServerNames.ts";
+import { keys, useServers, type System } from "../lib/servers.tsx";
 import { nextHamsterName } from "../lib/hamsterNames.ts";
 import { useModels } from "../lib/models.ts";
+import { cn } from "../lib/cn.ts";
 
 export function CreateNibbletDialog({
   open,
@@ -33,10 +33,11 @@ export function CreateNibbletDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const servers = useServers();
-  const names = useServerNames();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [step, setStep] = useState<"look" | "setup">("look");
+  // With more than one computer, which one comes first: it shapes what's on offer later.
+  const choosing = servers.systems.length > 1;
+  const [step, setStep] = useState<"computer" | "look" | "setup">("look");
   const [look, setLook] = useState<HamsterLook>(() => randomHamsterLook());
   const [name, setName] = useState("");
   const [server, setServer] = useState(() => servers.all[0]?.id ?? "local");
@@ -59,7 +60,7 @@ export function CreateNibbletDialog({
 
   useEffect(() => {
     if (!open) return;
-    setStep("look");
+    setStep(choosing ? "computer" : "look");
     setLook(randomHamsterLook());
     const taken = qc
       .getQueriesData<Nibblet[]>({ queryKey: ["nibblets"] })
@@ -110,9 +111,24 @@ export function CreateNibbletDialog({
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title={step === "look" ? "Make a nibblet" : `Set up ${name || "your nibblet"}`}
+      title={
+        step === "computer"
+          ? "Which computer should it live on?"
+          : step === "look"
+            ? "Make a nibblet"
+            : `Set up ${name || "your nibblet"}`
+      }
     >
-      {step === "look" ? (
+      {step === "computer" ? (
+        <ComputerList
+          systems={servers.systems}
+          chosen={server}
+          onChoose={(id) => {
+            setServer(id);
+            setStep("look");
+          }}
+        />
+      ) : step === "look" ? (
         <div className="p-4">
           <HamsterEditor look={look} onChange={setLook} name={name} onNameChange={setName} />
         </div>
@@ -125,13 +141,16 @@ export function CreateNibbletDialog({
               wakes on a heartbeat, and keeps its memory on the server.
             </div>
           </div>
-          {servers.all.length > 1 ? (
+          {choosing ? (
             <FieldRow label="Runs on">
-              <Select
-                value={server}
-                onChange={setServer}
-                options={servers.all.map((c) => ({ value: c.id, label: names.get(c.id) ?? c.id }))}
-              />
+              <button
+                type="button"
+                onClick={() => setStep("computer")}
+                className="flex items-center gap-1.5 text-sm text-dim hover:text-text"
+              >
+                <Laptop className="size-3.5" />
+                {servers.system(server)?.name ?? server}
+              </button>
             </FieldRow>
           ) : null}
           <FieldRow label="Model">
@@ -178,15 +197,15 @@ export function CreateNibbletDialog({
         </div>
       )}
       <div className="sticky bottom-0 flex items-center justify-between gap-1.5 border-t border-line bg-panel px-4 py-2.5">
-        {step === "setup" ? (
-          <Button variant="ghost" onClick={() => setStep("look")}>
+        {step === "setup" || (step === "look" && choosing) ? (
+          <Button variant="ghost" onClick={() => setStep(step === "setup" ? "look" : "computer")}>
             <ArrowLeft />
             Back
           </Button>
         ) : (
           <span />
         )}
-        {step === "look" ? (
+        {step === "computer" ? null : step === "look" ? (
           <Button variant="primary" disabled={!name.trim()} onClick={() => setStep("setup")}>
             Next
             <ArrowRight />
@@ -200,4 +219,57 @@ export function CreateNibbletDialog({
       </div>
     </Modal>
   );
+}
+
+/** The computers a nibblet could live on; ones that can't be reached are shown but can't be picked. */
+function ComputerList({
+  systems,
+  chosen,
+  onChoose,
+}: {
+  systems: System[];
+  chosen: string;
+  onChoose: (id: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1 p-3">
+      {systems.map((system) => {
+        const reachable = system.connection !== null;
+        return (
+          <button
+            key={system.id}
+            type="button"
+            disabled={!reachable}
+            onClick={() => onChoose(system.id)}
+            className={cn(
+              "flex items-center gap-3 rounded-lg border border-edge px-3 py-2.5 text-left hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent",
+              system.id === chosen && reachable && "border-accent",
+            )}
+          >
+            <Laptop className="size-5 shrink-0 text-dim" />
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-sm font-medium">{system.name}</span>
+              <span className="text-2xs text-faint">
+                {reachable ? (platformName(system.platform) ?? "Ready") : "Offline"}
+              </span>
+            </span>
+            {reachable ? <ChevronRight className="size-4 text-faint" /> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function platformName(platform: string | null): string | null {
+  switch (platform) {
+    case "darwin":
+      return "Mac";
+    case "linux":
+      return "Linux";
+    case "win32":
+      return "Windows";
+    default:
+      return null;
+  }
 }
