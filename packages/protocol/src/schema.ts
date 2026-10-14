@@ -57,11 +57,6 @@ export const NosePiercing = z.enum(["none", "left-stud", "right-stud", "left-hoo
 export const PiercingMetal = z.enum(["silver", "gold", "rose", "black"]);
 export const Earrings = z.enum(["none", "drop", "star", "heart", "pearl", "charm"]);
 
-/**
- * What a nibblet's hamster looks like. Each field is a choice among a small
- * set, the way a Mii is, so any combination draws well and a random one is
- * always valid.
- */
 /** Plain backdrops, drawn as a coloured circle. */
 export const ColourBackground = z.enum([
   "sky",
@@ -93,6 +88,11 @@ export function isCityBackground(value: string): value is CityBackground {
   return CityBackground.options.some((city) => city === value);
 }
 
+/**
+ * What a nibblet's hamster looks like. Each field is a choice among a small
+ * set, the way a Mii is, so any combination draws well and a random one is
+ * always valid.
+ */
 export const HamsterLook = z.object({
   fur: z.enum(["golden", "cream", "cinnamon", "grey", "chocolate", "black", "white", "lilac"]),
   pattern: z.enum(["solid", "banded", "patches", "roan", "masked"]),
