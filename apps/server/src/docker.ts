@@ -8,6 +8,9 @@ const ROLE = "nibblet.role";
 const NIBBLET = "nibblet.id";
 
 export const runnerName = (nibbletId: string): string => `nibblet-${nibbletId}`;
+export const homeVolume = (nibbletId: string): string => `nibblet-home-${nibbletId}`;
+/** The runner image's user home, which holds its working folder. */
+const RUNNER_HOME = "/home/nibblet";
 
 /**
  * The server's handle on Docker: runner containers for nibblets and the
@@ -50,6 +53,8 @@ export class Orchestrator {
     env: RunnerEnv,
     opts: { sshAgent: boolean } = { sshAgent: false },
   ): Promise<string> {
+    const home = await this.ensureHome(nibbletId);
+    await this.carryOverHome(nibbletId, home);
     await this.removeContainer(runnerName(nibbletId));
     const container = await this.docker.createContainer({
       name: runnerName(nibbletId),
@@ -64,6 +69,10 @@ export class Orchestrator {
         RestartPolicy: { Name: "no" },
         // Docker Desktop provides this itself; Linux engines need it spelt out.
         ExtraHosts: ["host.docker.internal:host-gateway"],
+        // Its home folder (files, browser profile, git and CLI config, agent
+        // sessions) lives on a volume of its own, so restarts and image
+        // updates never wipe it. Only deleting the nibblet removes it.
+        Mounts: [{ Type: "volume", Source: home, Target: RUNNER_HOME }],
         // The host's agent, never its keys: the container can sign, not copy.
         ...(opts.sshAgent && this.config.HOST_SSH_AUTH_SOCK
           ? {
@@ -158,7 +167,62 @@ export class Orchestrator {
     }
   }
 
+  /** The nibblet's home volume, created on first use. */
+  private async ensureHome(nibbletId: string): Promise<string> {
+    const name = homeVolume(nibbletId);
+    try {
+      await this.docker.getVolume(name).inspect();
+    } catch (err) {
+      if (!isNotFound(err)) throw err;
+      await this.docker.createVolume({
+        Name: name,
+        Labels: { [MANAGED]: "true", [ROLE]: "home", [NIBBLET]: nibbletId },
+      });
+    }
+    return name;
+  }
+
+  /**
+   * Containers made before homes were volumes kept their files inside the
+   * container. Before one of those is replaced, its home folder is copied
+   * into the new volume, so nothing it had is lost on the way.
+   */
+  private async carryOverHome(nibbletId: string, volume: string): Promise<void> {
+    const old = this.docker.getContainer(runnerName(nibbletId));
+    let mounts: { Destination?: string }[];
+    try {
+      mounts = (await old.inspect()).Mounts ?? [];
+    } catch (err) {
+      if (isNotFound(err)) return;
+      throw err;
+    }
+    if (mounts.some((m) => m.Destination === RUNNER_HOME)) return;
+    const archive = await old.getArchive({ path: RUNNER_HOME });
+    // A stopped helper with the volume mounted is enough to unpack into it.
+    const helper = await this.docker.createContainer({
+      Image: this.config.NIBBLET_RUNNER_IMAGE,
+      Entrypoint: ["true"],
+      Labels: { [MANAGED]: "true", [ROLE]: "home-copy", [NIBBLET]: nibbletId },
+      HostConfig: { Mounts: [{ Type: "volume", Source: volume, Target: RUNNER_HOME }] },
+    });
+    try {
+      await helper.putArchive(archive, { path: "/home" });
+    } finally {
+      await helper.remove({ force: true }).catch(() => undefined);
+    }
+  }
+
+  /** Deletes a nibblet's home volume; only for when the nibblet itself is deleted. */
+  async removeHome(nibbletId: string): Promise<void> {
+    try {
+      await this.docker.getVolume(homeVolume(nibbletId)).remove();
+    } catch (err) {
+      if (!isNotFound(err)) throw err;
+    }
+  }
+
   async stopRunner(nibbletId: string): Promise<void> {
+    await this.carryOverHome(nibbletId, await this.ensureHome(nibbletId));
     await this.removeContainer(runnerName(nibbletId));
   }
 

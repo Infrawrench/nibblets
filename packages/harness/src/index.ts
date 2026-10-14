@@ -35,7 +35,7 @@ export type McpServerSpec =
 
 export interface HarnessContext {
   config: RunnerConfig;
-  /** The nibblet's scratch directory. Not durable; durable data goes through tools. */
+  /** The nibblet's working folder, on its home volume: kept across restarts. */
   workdir: string;
   mcpServers: Record<string, McpServerSpec>;
   /** Base URL of the credential proxy; `/anthropic` and `/openai` hang off it. */

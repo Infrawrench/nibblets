@@ -22,7 +22,7 @@ import {
 import { dropOverlaps, hostTools } from "./hostmcp.ts";
 import { onePasswordLogin } from "./onepassword.ts";
 import { opencodeLogin } from "./opencode.ts";
-import type { Orchestrator } from "./docker.ts";
+import { runnerName, type Orchestrator } from "./docker.ts";
 import { hashToken, newId, viewToken, type Store } from "./store.ts";
 
 export interface RunnerLink {
@@ -101,8 +101,11 @@ export class Conductor {
       }
     }
     for (const id of runners.keys()) {
-      if (!(await this.store.listNibblets()).some((n) => n.id === id))
-        await this.docker.stopRunner(id);
+      // A container left from a nibblet that's since been deleted: nothing to keep.
+      if (!(await this.store.listNibblets()).some((n) => n.id === id)) {
+        await this.docker.removeContainer(runnerName(id));
+        await this.docker.removeHome(id);
+      }
     }
     await this.docker.watchRunnerExits((id, code) => void this.onContainerExit(id, code));
   }
@@ -164,6 +167,9 @@ export class Conductor {
     await this.stop(nibbletId).catch(() => undefined);
     this.queues.delete(nibbletId);
     await this.store.deleteNibblet(nibbletId);
+    await this.docker
+      .removeHome(nibbletId)
+      .catch((err: unknown) => console.warn(`couldn't remove ${nibbletId}'s home`, err));
   }
 
   /**
