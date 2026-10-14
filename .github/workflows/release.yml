@@ -114,7 +114,7 @@ jobs:
     if: needs.check.outputs.version != ''
     runs-on: ${{ matrix.runner }}
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - { os: mac, arch: arm64, runner: macos-15 }
@@ -130,7 +130,8 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      # Only what the app needs: Connect's workerd has no Windows Arm build.
+      - run: pnpm install --frozen-lockfile --filter "@nibblet/desktop..."
       - name: Build, sign and notarise (Mac)
         if: matrix.os == 'mac'
         run: pnpm --filter @nibblet/desktop dist:mac
