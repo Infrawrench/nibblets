@@ -433,14 +433,25 @@ export class Orchestrator {
         const line = buffer.slice(0, nl);
         buffer = buffer.slice(nl + 1);
         const event = parseDockerEvent(line);
-        if (event?.nibbletId) onExit(event.nibbletId, event.exitCode);
+        if (!event?.nibbletId) continue;
+        // Ours to remove: its death is expected, whatever the nibblet's status says by now.
+        if (event.containerId && this.removing.has(event.containerId)) continue;
+        onExit(event.nibbletId, event.exitCode);
       }
     });
   }
 
+  /** Containers this server is removing on purpose, so their exit events can be ignored. */
+  private readonly removing = new Set<string>();
+
   async removeContainer(name: string): Promise<void> {
+    const container = this.docker.getContainer(name);
     try {
-      await this.docker.getContainer(name).remove({ force: true });
+      const { Id } = await container.inspect();
+      this.removing.add(Id);
+      // The die event arrives within moments; this only keeps the set small.
+      setTimeout(() => this.removing.delete(Id), 5 * 60_000).unref();
+      await container.remove({ force: true });
     } catch (err) {
       if (!isNotFound(err)) throw err;
     }
@@ -451,14 +462,21 @@ export function isNotFound(err: unknown): boolean {
   return typeof err === "object" && err !== null && "statusCode" in err && err.statusCode === 404;
 }
 
-function parseDockerEvent(
-  line: string,
-): { nibbletId: string | undefined; exitCode: number | null } | null {
+export function parseDockerEvent(line: string): {
+  nibbletId: string | undefined;
+  containerId: string | undefined;
+  exitCode: number | null;
+} | null {
   try {
-    const parsed: { Actor?: { Attributes?: Record<string, string> } } = JSON.parse(line);
+    const parsed: { id?: string; Actor?: { ID?: string; Attributes?: Record<string, string> } } =
+      JSON.parse(line);
     const attrs = parsed.Actor?.Attributes ?? {};
     const code = attrs.exitCode === undefined ? null : Number(attrs.exitCode);
-    return { nibbletId: attrs[NIBBLET], exitCode: code };
+    return {
+      nibbletId: attrs[NIBBLET],
+      containerId: parsed.Actor?.ID ?? parsed.id,
+      exitCode: code,
+    };
   } catch {
     return null;
   }

@@ -126,24 +126,31 @@ export function NibbletMenu({
         title={`${nibblet.name}'s look`}
         onSave={(look) => void client.update({ id: nibblet.id, look })}
       />
-      <Modal open={deleting} onOpenChange={setDeleting} title={`Delete ${nibblet.name}?`}>
-        <p className="text-sm text-dim">
-          Its container, thread, schedules and memories go with it. This can't be undone.
-        </p>
-        <div className="mt-4 flex justify-end gap-1.5">
-          <Button variant="ghost" onClick={() => setDeleting(false)}>
-            Cancel
-          </Button>
-          <Button
-            variant="danger"
-            onClick={async () => {
-              setDeleting(false);
-              await client.delete({ id: nibblet.id });
-              if (params.id === nibblet.id) void navigate({ to: "/" });
-            }}
-          >
-            Delete
-          </Button>
+      <Modal
+        open={deleting}
+        onOpenChange={setDeleting}
+        title={`Delete ${nibblet.name}?`}
+        className="w-[min(92vw,440px)]"
+      >
+        <div className="p-4">
+          <p className="text-sm text-dim">
+            Its container, thread, schedules and memories go with it. This can't be undone.
+          </p>
+          <div className="mt-4 flex justify-end gap-1.5">
+            <Button variant="ghost" onClick={() => setDeleting(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={async () => {
+                setDeleting(false);
+                await client.delete({ id: nibblet.id });
+                if (params.id === nibblet.id) void navigate({ to: "/" });
+              }}
+            >
+              Delete
+            </Button>
+          </div>
         </div>
       </Modal>
     </>
@@ -173,8 +180,9 @@ function RenameDialog({
     onOpenChange(false);
   };
   return (
-    <Modal open={open} onOpenChange={onOpenChange} title="Rename">
+    <Modal open={open} onOpenChange={onOpenChange} title="Rename" className="w-[min(92vw,440px)]">
       <form
+        className="p-4"
         onSubmit={(e) => {
           e.preventDefault();
           save();
