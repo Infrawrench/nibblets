@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { useQueries } from "@tanstack/react-query";
-import { Plus, Settings } from "lucide-react";
+import { Laptop, Plus, Settings } from "lucide-react";
 import { defaultHamsterLook, type Nibblet, type NibbletStatus } from "@nibblet/protocol";
 import { Hamster } from "./hamster/Hamster.tsx";
 import { CreateNibbletDialog } from "./CreateNibbletDialog.tsx";
@@ -89,7 +89,7 @@ export function Sidebar() {
               className="flex items-center gap-1.5 px-2 py-1 text-2xs text-faint"
               title={lists[i]?.isError ? "Couldn't reach this computer" : "Not checking in"}
             >
-              <span aria-hidden>💻</span>
+              <Laptop aria-hidden className="size-3 shrink-0" />
               <span className="truncate">{system.name}</span>
               <span className="shrink-0">· Offline</span>
             </div>
@@ -198,12 +198,12 @@ function NibbletRow({
 
 const linkText = { open: "", connecting: "Connecting…", closed: "Disconnected" } as const;
 
-/** "💻 PogAir-4", and whether it's still connecting. */
+/** A laptop icon and "PogAir-4", and whether it's still connecting. */
 function SystemLine({ connection, name }: { connection: ServerConnection; name: string }) {
   const state = useLiveState(connection);
   return (
     <span className="flex min-w-0 items-center gap-1 text-2xs leading-tight text-faint">
-      <span aria-hidden>💻</span>
+      <Laptop aria-hidden className="size-3 shrink-0" />
       <span className="truncate">{name}</span>
       {linkText[state] ? (
         <span className={cn("shrink-0", state === "closed" ? "text-danger" : "text-warning")}>
