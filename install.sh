@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sets up Nibblets on a Linux server or VM: Docker, the agents your nibblets
+# Sets up Nibblets on a Linux server or VM: Docker or Podman, the agents your nibblets
 # run on (Claude Code, Codex, OpenCode), this repo, the stack, and a link to
 # Nibblets Connect so you can reach it from anywhere.
 #
@@ -26,7 +26,7 @@ CENTRAL="https://app.nibblets.dev"
 BRIDGE_PORT=8789
 LOG="$TOOLS/install.log"
 
-export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$TOOLS/node/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$TOOLS/node/bin:$TOOLS/bin:$PATH"
 
 # Looks
 
@@ -186,11 +186,34 @@ check_machine() {
   ok "git and curl are here"
 }
 
-# Docker
+env_set() {
+  local file="$DIR/docker/.env"
+  touch "$file" && chmod 600 "$file"
+  if grep -q "^$1=" "$file"; then
+    sed -i "s|^$1=.*|$1=$2|" "$file"
+  else
+    echo "$1=$2" >>"$file"
+  fi
+}
+env_get() { { grep "^$1=" "$DIR/docker/.env" 2>/dev/null || true; } | head -n1 | cut -d= -f2-; }
 
+# The container engine: Docker, or Podman through its Docker-compatible socket.
+
+ENGINE=""
+PODMAN_SOCK=/run/podman/podman.sock
 DOCKER=(docker)
-docker_access() {
-  if docker info >/dev/null 2>&1; then
+
+engine_access() {
+  if [ "$ENGINE" = podman ]; then
+    # Rootful Podman, like Docker Engine; its socket belongs to root.
+    if [ "$(id -u)" = 0 ]; then
+      DOCKER=(env)
+    else
+      need_root
+      DOCKER=(sudo env "HOME=$HOME" "PATH=$PATH")
+    fi
+    DOCKER+=("DOCKER_HOST=unix://$PODMAN_SOCK" "DOCKER_SOCKET=$PODMAN_SOCK")
+  elif docker info >/dev/null 2>&1; then
     DOCKER=(docker)
   elif command -v sg >/dev/null && sg docker -c "docker info" >/dev/null 2>&1; then
     # Just added to the group; this shell doesn't know yet.
@@ -201,7 +224,7 @@ docker_access() {
   fi
 }
 
-# Runs a command line with whatever Docker access this shell has.
+# Runs a command line with whatever access to the engine this shell has.
 with_docker() {
   if [ "${DOCKER[0]}" = sg ]; then
     sg docker -c "$*"
@@ -212,16 +235,79 @@ with_docker() {
   fi
 }
 
-setup_docker() {
-  step "🐳 Docker"
-  say "Each nibblet lives in its own little container."
-  if ! command -v docker >/dev/null; then
-    say "Docker isn't installed yet."
-    ask "Install Docker Engine now, with Docker's official script?" ||
-      fail "Nibblets needs Docker. Install it (https://docs.docker.com/engine/install/), then run this again."
-    need_root
+# How to run the engine's own CLI by hand, for the hints at the end.
+engine_cli() {
+  if [ "$ENGINE" = podman ] && [ "$(id -u)" != 0 ]; then echo "sudo podman"; else echo "$ENGINE"; fi
+}
+
+choose_engine() {
+  if command -v docker >/dev/null && ! docker --version 2>/dev/null | grep -qi podman; then
+    ENGINE=docker
+    return
+  fi
+  if command -v podman >/dev/null; then
+    ENGINE=podman
+    return
+  fi
+  ENGINE=docker
+  if [ "$INTERACTIVE" = 1 ]; then
+    say "Neither is installed yet. Which would you like?"
+    printf '\n   %s  🐳 Docker Engine %s\n' "${B}${PINK}[1]${R}" "${D}(the usual choice)${R}"
+    printf '   %s  🦭 Podman %s\n\n' "${B}${PINK}[2]${R}" "${D}(daemonless, from your distro)${R}"
+    local k
+    while true; do
+      k=$(key)
+      case "$k" in
+        1 | "") break ;;
+        2) ENGINE=podman && break ;;
+        q | Q) exit 0 ;;
+      esac
+    done
+  fi
+  need_root
+  if [ "$ENGINE" = docker ]; then
     spin "Downloading Docker's installer" curl -fsSL https://get.docker.com -o "$TOOLS/get-docker.sh"
     spin "Installing Docker Engine" $SUDO sh "$TOOLS/get-docker.sh"
+  else
+    [ -n "$PM" ] || fail "Please install Podman, then run this again."
+    spin "Installing Podman" pkg_install podman
+  fi
+}
+
+# Podman brings no compose of its own that handles everything here, so this
+# fetches Docker's, which works against Podman's socket.
+compose_for_podman() {
+  if command -v docker-compose >/dev/null || docker compose version >/dev/null 2>&1; then return; fi
+  local arch file url want
+  arch=$(uname -m)
+  [ "$arch" = arm64 ] && arch=aarch64
+  file="docker-compose-linux-$arch"
+  url="https://github.com/docker/compose/releases/latest/download/$file"
+  mkdir -p "$TOOLS/bin"
+  spin "Downloading Docker Compose" curl -fsSL "$url" -o "$TOOLS/bin/$file"
+  want=$(curl -fsSL "$url.sha256" | cut -d' ' -f1)
+  [ "$(sha256sum "$TOOLS/bin/$file" | cut -d' ' -f1)" = "$want" ] || fail "Docker Compose didn't match its checksum."
+  mv "$TOOLS/bin/$file" "$TOOLS/bin/docker-compose"
+  chmod +x "$TOOLS/bin/docker-compose"
+  hash -r
+}
+
+setup_engine() {
+  step "🐳 Containers"
+  say "Each nibblet lives in its own little container. Docker and Podman both work."
+  choose_engine
+  local version
+  if [ "$ENGINE" = podman ]; then
+    command -v systemctl >/dev/null && [ -d /run/systemd/system ] ||
+      fail "Podman needs systemd here for its API socket. Start 'podman system service --time=0 unix://$PODMAN_SOCK' and set DOCKER_HOST yourself."
+    need_root
+    $SUDO systemctl is-active --quiet podman.socket || spin "Starting Podman's API socket" $SUDO systemctl enable --now podman.socket
+    compose_for_podman
+    engine_access
+    version=$(with_docker "podman --version" | awk '{print $NF}')
+    env_set DOCKER_SOCKET "$PODMAN_SOCK"
+    ok "Podman $version is ready 🦭"
+    return
   fi
   if command -v systemctl >/dev/null && ! $SUDO systemctl is-active --quiet docker 2>/dev/null; then
     need_root
@@ -232,8 +318,7 @@ setup_docker() {
     $SUDO usermod -aG docker "$(id -un)"
     ok "Added you to the docker group ${D}(new logins pick it up)${R}"
   fi
-  docker_access
-  local version
+  engine_access
   version=$(with_docker "docker version --format '{{.Server.Version}}'" 2>/dev/null) ||
     fail "Docker is installed but isn't answering. Try 'sudo systemctl start docker'."
   if ! with_docker "docker compose version" >/dev/null 2>&1; then
@@ -420,37 +505,28 @@ setup_repo() {
   ok "At $(git -C "$DIR" log -1 --format='%h, %cr')"
 }
 
-env_set() {
-  local file="$DIR/docker/.env"
-  touch "$file" && chmod 600 "$file"
-  if grep -q "^$1=" "$file"; then
-    sed -i "s|^$1=.*|$1=$2|" "$file"
-  else
-    echo "$1=$2" >>"$file"
-  fi
-}
-env_get() { { grep "^$1=" "$DIR/docker/.env" 2>/dev/null || true; } | head -n1 | cut -d= -f2-; }
-
-setup_bridge() {
+prepare_bridge() {
   setup_node
   spin "Installing the host bridge's packages" bash -c "cd '$DIR' && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile --filter '@nibblet/host-mcp...'"
-  local token ip
+  local token
   token=$(env_get HOST_MCP_TOKEN)
   [ -n "$token" ] || token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
   env_set HOST_MCP_TOKEN "$token"
   env_set HOST_MCP_URL "http://host.docker.internal:$BRIDGE_PORT"
-  # Containers reach the host through Docker's bridge, so it listens there and nowhere else.
-  ip=$(with_docker "docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'" 2>/dev/null || true)
-  ip=${ip:-172.17.0.1}
-  local cmd="$TOOLS/node/bin/node $DIR/packages/host-mcp/src/cli.ts --host $ip --port $BRIDGE_PORT"
-  node_ok && cmd="$(command -v node) $DIR/packages/host-mcp/src/cli.ts --host $ip --port $BRIDGE_PORT"
+}
+
+start_bridge() {
+  # Listens only where the containers see the host, which Docker and Podman put in different places.
+  local ip cmd
+  ip=$(with_docker "$ENGINE exec nibblet-server-1 node -e \"require('dns').lookup('host.docker.internal',(e,a)=>console.log(a??''))\"" 2>/dev/null | tr -d '\r' || true)
+  [ -n "$ip" ] || ip=172.17.0.1
+  cmd="$(command -v node) $DIR/packages/host-mcp/src/cli.ts --host $ip --port $BRIDGE_PORT"
   if command -v systemctl >/dev/null && [ -d /run/systemd/system ]; then
     need_root
     $SUDO tee /etc/systemd/system/nibblets-bridge.service >/dev/null <<UNIT
 [Unit]
 Description=Nibblets host bridge (shares this machine's logins and MCP servers with nibblets)
-After=docker.service network-online.target
-Wants=docker.service
+After=network-online.target docker.service podman.socket
 
 [Service]
 User=$(id -un)
@@ -465,8 +541,8 @@ RestartSec=3
 WantedBy=multi-user.target
 UNIT
     $SUDO systemctl daemon-reload
-    spin "Starting the host bridge" $SUDO systemctl enable --now nibblets-bridge
-    $SUDO systemctl restart nibblets-bridge
+    $SUDO systemctl enable nibblets-bridge >/dev/null 2>&1
+    spin "Starting the host bridge on $ip" $SUDO systemctl restart nibblets-bridge
   else
     warn "No systemd here, so start the host bridge yourself:"
     hint "HOST_MCP_TOKEN=\$(grep ^HOST_MCP_TOKEN= $DIR/docker/.env | cut -d= -f2) $cmd"
@@ -477,11 +553,11 @@ PAIR_LINK=""
 start_stack() {
   step "🏗️  Building your hamsters' home"
   say "The first build takes a few minutes. Good time for a cup of tea ☕"
-  mkdir -p "$DIR/docker"
-  setup_bridge
+  prepare_bridge
   local start_log=$((0 + $(wc -l <"$LOG")))
   spin "Building and starting the stack" with_docker "cd '$DIR' && sh docker/up.sh"
   PAIR_LINK=$(tail -n +"$start_log" "$LOG" | grep -o 'http[^ ]*#pair=[A-Za-z0-9_-]*' | tail -n1 || true)
+  start_bridge
   ok "Nibblets is running on this machine"
 }
 
@@ -541,18 +617,18 @@ finish() {
     say "📱 It works on your phone too: add it to your Home Screen for notifications."
   else
     say "🐹 To open it from your own computer, forward the port:"
-    hint "ssh -L 8420:127.0.0.1:8420 $(id -un)@$(hostname)"
+    hint "ssh -L 8420:127.0.0.1:8420 $(id -un)@$(uname -n)"
     if [ -n "$PAIR_LINK" ]; then
       say "   then open this within 15 minutes to sign in:"
       hint "$PAIR_LINK"
     else
       say "   then get a sign-in link with:"
-      hint "cd $DIR/docker && docker compose exec server node apps/server/src/cli.ts pair"
+      hint "$(engine_cli) exec nibblet-server-1 node apps/server/src/cli.ts pair"
     fi
   fi
   printf '\n'
   say "${D}🔁 Update or add agents: run this installer again${R}"
-  say "${D}📜 Logs: cd $DIR/docker && docker compose logs -f server${R}"
+  say "${D}📜 Logs: $(engine_cli) logs -f nibblet-server-1${R}"
   printf '\n'
 }
 
@@ -561,9 +637,9 @@ main() {
   : >"$LOG"
   banner
   check_machine
-  setup_docker
-  setup_agents
   setup_repo
+  setup_engine
+  setup_agents
   start_stack
   setup_connect
   finish

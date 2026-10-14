@@ -6,7 +6,7 @@ A nibblet is a thread that never really ends. It runs in its own Docker containe
 
 ## Running it
 
-On a Linux server or VM, one command sets up Docker, your agents, and the stack, then links it to Nibblets Connect:
+On a Linux server or VM, one command sets up Docker or Podman, your agents, and the stack, then links it to Nibblets Connect:
 
 ```sh
 curl -fsSL https://nibblets.dev/install.sh | bash
