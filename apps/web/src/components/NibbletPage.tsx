@@ -28,7 +28,6 @@ import { SnapshotsPanel } from "./panels/SnapshotsPanel.tsx";
 import { NibbletSettings } from "./panels/NibbletSettings.tsx";
 import { Segmented } from "./ui/Segmented.tsx";
 import { Button } from "./ui/Button.tsx";
-import { cn } from "../lib/cn.ts";
 
 function initialPanel(): PanelTab | null {
   const saved = storage.get(PANEL_KEY);
