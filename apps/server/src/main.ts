@@ -117,6 +117,17 @@ async function main(): Promise<void> {
   await scheduler.start();
   snapshots.start();
   harnessUpdates.start();
+  // An update leaves the last release's images behind; reconcile has just
+  // moved running nibblets off them. Again daily, for those that were stopped.
+  const prune = () =>
+    void docker.pruneImages().then(
+      (removed) => {
+        if (removed.length) console.log(`removed old images: ${removed.join(", ")}`);
+      },
+      (err: unknown) => console.error("couldn't remove old images", err),
+    );
+  prune();
+  const pruning = setInterval(prune, 24 * 60 * 60_000);
   // The tunnel follows the Connect link: on with it, off without.
   await central.restore();
 
@@ -124,6 +135,7 @@ async function main(): Promise<void> {
     scheduler.stop();
     snapshots.stop();
     harnessUpdates.stop();
+    clearInterval(pruning);
     central.stop();
     process.exit(0);
   };

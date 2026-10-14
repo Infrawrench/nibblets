@@ -13,6 +13,8 @@ RUN pnpm --filter @nibblet/web build
 # The server runs its TypeScript directly (Node strips the types), so the
 # image carries sources and production dependencies, and no build output.
 FROM base
+# Lets the server find this image's old builds to tidy up (Orchestrator.pruneImages).
+LABEL nibblet.image=server
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages ./packages
 COPY apps/server ./apps/server

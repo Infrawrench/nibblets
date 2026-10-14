@@ -2,6 +2,8 @@
 # that OpenComputerUse drives on a headless display.
 # Trixie rather than bookworm: the OpenComputerUse release needs glibc 2.39.
 FROM node:24-trixie-slim
+# Lets the server find this image's old builds to tidy up (Orchestrator.pruneImages).
+LABEL nibblet.image=runner
 
 # Chromium and what it needs to draw text without a desktop; xkb-data,
 # libxkbcommon and pixman for OpenComputerUse's headless Wayland compositor;
