@@ -30,7 +30,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md). In short:
 - **tunnel**: `cloudflared`, run when the server is linked to Nibblets Connect
 - **Nibblets Connect** (`apps/connect`): the central service on Cloudflare Workers where you sign in and see every server
 
-To see nibblets from several machines in one place, open "Pair a device" on one server and paste the link into "Add a server" on another.
+To see nibblets from several machines in one place, connect each server to your account and sign in to Nibblets Connect. The desktop app can also skip running a server and just show Nibblets Connect.
 
 ## Developing
 
