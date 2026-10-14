@@ -77,20 +77,21 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
           <MobileBack />
           <Hamster look={nibblet.look} size={26} status={nibblet.status} />
           <div className="flex min-w-0 flex-1 flex-col leading-tight">
-            <span className="flex items-center gap-1.5 truncate text-sm font-semibold">
+            <span className="flex min-w-0 items-center gap-1.5 text-sm font-semibold">
               {parent ? (
                 <>
                   <Link
                     to="/n/$server/$id"
                     params={{ server: connection.id, id: parent.id }}
-                    className="font-normal text-dim hover:underline"
+                    className="shrink-0 font-normal text-dim hover:underline"
                   >
                     {parent.name}
                   </Link>
                   <span className="font-normal text-faint">/</span>
                 </>
               ) : null}
-              {nibblet.name}
+              {/* The name gives way first, so a "Needs approval" after it always shows. */}
+              <span className="min-w-0 truncate">{nibblet.name}</span>
               {nibblet.statusText ? (
                 <span
                   className="min-w-0 truncate text-xs font-normal text-dim max-sm:hidden"
@@ -104,14 +105,18 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
                 <span className="shrink-0 text-xs font-normal text-warning">· Needs approval</span>
               ) : null}
             </span>
-            <span className="flex items-center gap-1 truncate text-2xs text-faint">
-              <HarnessIcon harness={nibblet.harness} className="size-3" />
+            {/* A line of text with inline icons, not a flexbox: only text ellipsises. */}
+            <span className="truncate text-2xs text-faint">
+              <HarnessIcon
+                harness={nibblet.harness}
+                className="mr-1 inline-block size-3 align-[-2px]"
+              />
               {systemName ? <>{systemName} · </> : null}
               {harnesses[nibblet.harness].label} · {modelLabel(model, nibblet.model)}
               {nibblet.heartbeats.length > 0 ? (
                 <>
                   {" · "}
-                  <HeartPulse className="size-3" />{" "}
+                  <HeartPulse className="inline-block size-3 align-[-2px]" />{" "}
                   {nibblet.heartbeats.length === 1
                     ? `${nibblet.heartbeats[0]?.name}, every ${nibblet.heartbeats[0]?.everyMinutes} min`
                     : `${nibblet.heartbeats.length} heartbeats`}
