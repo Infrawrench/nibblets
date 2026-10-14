@@ -26,6 +26,9 @@ allowBuilds:
   electron: true
   onnxruntime-node: true
   protobufjs: true
+  # The desktop app's setup terminal, and Wrangler's local runtime.
+  node-pty: true
+  workerd: true
   cpu-features: false
   ssh2: false
   electron-winstaller: false
