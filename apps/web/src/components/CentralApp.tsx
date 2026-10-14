@@ -50,7 +50,12 @@ function ClerkSignedIn({ children }: { children: ReactNode }) {
             Sign in to see the nibblets on every computer you've connected.
           </p>
         </div>
-        <SignIn routing="hash" />
+        {/* Come back to the page that asked, so a /link?code= approval survives sign-in. */}
+        <SignIn
+          routing="hash"
+          forceRedirectUrl={window.location.pathname + window.location.search}
+          signUpForceRedirectUrl={window.location.pathname + window.location.search}
+        />
       </div>
     );
   }

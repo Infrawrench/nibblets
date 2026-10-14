@@ -2,7 +2,7 @@
 
 The central service, like T3 Connect: sign in, see every server you run, and
 use each one from anywhere. It's a Cloudflare Worker (Hono, D1), deployed at
-<https://nibblets-connect.astrid-906.workers.dev>. It isn't in the data path:
+<https://app.nibblets.dev>. It isn't in the data path:
 it hands out addresses and five-minute tokens, and the browser then talks to
 each server directly.
 

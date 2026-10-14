@@ -91,6 +91,11 @@ export type HeartbeatRequest = z.infer<typeof HeartbeatRequest>;
 export const HeartbeatResponse = z.object({
   /** False once the account has removed this server: it should forget its link. */
   linked: z.boolean(),
+  /**
+   * The service's canonical address. When it moves (a custom domain, say),
+   * linked servers follow, since tokens name it as their issuer.
+   */
+  centralUrl: z.url().optional(),
 });
 
 /** A server as the central service lists it to its owner. */

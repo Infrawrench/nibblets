@@ -17,7 +17,7 @@ docker compose -f docker/compose.yaml -p nibblet up -d --build
 docker compose -p nibblet exec server node apps/server/src/cli.ts pair
 ```
 
-Open the link it prints. To reach it from anywhere, press Connect in Settings → Remote access and approve the code on [Nibblets Connect](https://nibblets-connect.astrid-906.workers.dev), signed in to your account: every server you connect shows up there.
+Open the link it prints. To reach it from anywhere, press Connect in Settings → Remote access and approve the code on [Nibblets Connect](https://app.nibblets.dev), signed in to your account: every server you connect shows up there.
 
 ## How it fits together
 

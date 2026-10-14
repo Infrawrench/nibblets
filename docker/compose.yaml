@@ -73,7 +73,7 @@ services:
       HOST_MCP_TOKEN: ${HOST_MCP_TOKEN:-}
       HOST_SSH_AUTH_SOCK: ${HOST_SSH_AUTH_SOCK:-}
       # Nibblets Connect, and who this machine is (the container can't tell).
-      NIBBLET_CENTRAL_URL: ${NIBBLET_CENTRAL_URL:-https://nibblets-connect.astrid-906.workers.dev}
+      NIBBLET_CENTRAL_URL: ${NIBBLET_CENTRAL_URL:-https://app.nibblets.dev}
       NIBBLET_HOST_NAME: ${NIBBLET_HOST_NAME:-}
       NIBBLET_HOST_PLATFORM: ${NIBBLET_HOST_PLATFORM:-other}
       NIBBLET_LAN_URLS: ${NIBBLET_LAN_URLS:-}

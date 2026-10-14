@@ -5,7 +5,7 @@ import { CentralServer, LinkPollResponse, LinkStartResponse, ServerToken } from 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Connect } from "../../server/src/connect.ts";
-import { createApp, type ConnectEnv } from "../src/app.ts";
+import { createApp, sweepLinks, type ConnectEnv } from "../src/app.ts";
 
 /*
  * The whole Nibblets Connect flow against a real D1 database (Miniflare),
@@ -123,7 +123,7 @@ describe("linking a server", () => {
         routes: { lan: [], tailscale: null, tunnel: "https://a-b.trycloudflare.com" },
       }),
     });
-    expect(await beat.json()).toEqual({ linked: true });
+    expect(await beat.json()).toMatchObject({ linked: true, centralUrl: expect.any(String) });
     const wrongSecret = await call(`/v1/servers/${approved.serverId}/heartbeat`, {
       method: "POST",
       headers: { authorization: "Bearer nope" },
@@ -177,7 +177,7 @@ describe("linking a server", () => {
 describe("a server's Connect against the central service", () => {
   it("links, beats, and accepts a token the central service minted, and nothing else", async () => {
     const settings = new Map<string, unknown>();
-    let tunnelMode = "off";
+    const tunnel = { mode: "off" };
     const realFetch = globalThis.fetch;
     // jose fetches the JWKS with the global fetch; route it to the Worker app.
     globalThis.fetch = (input, init) =>
@@ -185,48 +185,7 @@ describe("a server's Connect against the central service", () => {
         ? centralFetch(input, init)
         : realFetch(input, init);
     try {
-      const connect = new Connect({
-        store: {
-          getSetting: async <T>(key: string, parse: (v: unknown) => T, fallback: T) =>
-            settings.has(key) ? parse(settings.get(key)) : fallback,
-          setSetting: async (key: string, value: unknown) => {
-            // Like the real table: a setting is a value, never null.
-            if (value === null || value === undefined) throw new Error("settings can't be null");
-            settings.set(key, value);
-          },
-          deleteSetting: async (key: string) => {
-            settings.delete(key);
-          },
-        },
-        tunnel: {
-          configure: async (config) => {
-            tunnelMode = config.mode;
-            return {
-              mode: config.mode,
-              state: "up",
-              url: "https://q.trycloudflare.com",
-              detail: null,
-            };
-          },
-          current: () => ({
-            mode: "quick",
-            state: "up",
-            url: "https://q.trycloudflare.com",
-            detail: null,
-          }),
-        },
-        config: {
-          NIBBLET_CENTRAL_URL: LOCAL,
-          NIBBLET_HOST_NAME: "pogair",
-          NIBBLET_HOST_PLATFORM: "darwin",
-          NIBBLET_LAN_URLS: [],
-        },
-        version: "0.1.0",
-        serverName: async () => "Astrid's Mac",
-        nibbletCount: async () => 1,
-        tailscaleUrl: async () => null,
-        fetch: centralFetch,
-      });
+      const connect = serverConnect(settings, tunnel);
 
       const linking = await connect.start();
       if (linking.state !== "linking") throw new Error("expected linking");
@@ -235,7 +194,7 @@ describe("a server's Connect against the central service", () => {
       for (let i = 0; i < 50 && connect.status().state !== "linked"; i++) await sleep(100);
       const linked = connect.status();
       if (linked.state !== "linked") throw new Error(`expected linked, got ${linked.state}`);
-      expect(tunnelMode).toBe("quick");
+      expect(tunnel.mode).toBe("quick");
       for (let i = 0; i < 50; i++) {
         const s = connect.status();
         if (s.state === "linked" && s.lastHeartbeatAt) break;
@@ -269,13 +228,98 @@ describe("a server's Connect against the central service", () => {
       await connect.unlink();
       expect(connect.status().state).toBe("unlinked");
       expect(settings.has("connect")).toBe(false);
-      expect(tunnelMode).toBe("off");
+      expect(tunnel.mode).toBe("off");
       connect.stop();
     } finally {
       globalThis.fetch = realFetch;
     }
   });
+
+  it("collects an approval that lands while it's restarting", async () => {
+    const settings = new Map<string, unknown>();
+    const before = serverConnect(settings, { mode: "off" });
+    const linking = await before.start();
+    if (linking.state !== "linking") throw new Error("expected linking");
+    // Asking again while the code is live keeps the same code.
+    expect(await before.start()).toMatchObject({ code: linking.code });
+    before.stop();
+
+    await call(`/v1/link/${linking.code}/approve`, { method: "POST" });
+    const after = serverConnect(settings, { mode: "off" });
+    await after.restore();
+    for (let i = 0; i < 50 && after.status().state !== "linked"; i++) await sleep(100);
+    expect(after.status().state).toBe("linked");
+    expect(settings.has("connect.pending")).toBe(false);
+    await after.unlink();
+    after.stop();
+  });
 });
+
+describe("sweeping links that went nowhere", () => {
+  it("removes servers whose approval was never collected", async () => {
+    const started = LinkStartResponse.parse(
+      await (
+        await call("/v1/link/start", {
+          method: "POST",
+          body: JSON.stringify({ name: "Ghost", hostname: "ghost.local", platform: "darwin" }),
+        })
+      ).json(),
+    );
+    await call(`/v1/link/${started.code}/approve`, { method: "POST" });
+    const names = async () =>
+      z
+        .object({ servers: z.array(CentralServer) })
+        .parse(await (await call("/v1/servers")).json())
+        .servers.map((s) => s.name);
+    expect(await names()).toContain("Ghost");
+
+    // Not yet: the server might still be on its way.
+    expect(await sweepLinks(env)).toBe(0);
+    expect(await sweepLinks(env, Date.now() + 60 * 60_000)).toBe(1);
+    expect(await names()).not.toContain("Ghost");
+  });
+});
+
+/** The server's own Connect, with an in-memory settings table, talking to the Worker app. */
+function serverConnect(settings: Map<string, unknown>, tunnel: { mode: string }): Connect {
+  return new Connect({
+    store: {
+      getSetting: async <T>(key: string, parse: (v: unknown) => T, fallback: T) =>
+        settings.has(key) ? parse(settings.get(key)) : fallback,
+      setSetting: async (key: string, value: unknown) => {
+        // Like the real table: a setting is a value, never null.
+        if (value === null || value === undefined) throw new Error("settings can't be null");
+        settings.set(key, value);
+      },
+      deleteSetting: async (key: string) => {
+        settings.delete(key);
+      },
+    },
+    tunnel: {
+      configure: async (config) => {
+        tunnel.mode = config.mode;
+        return { mode: config.mode, state: "up", url: "https://q.trycloudflare.com", detail: null };
+      },
+      current: () => ({
+        mode: "quick",
+        state: "up",
+        url: "https://q.trycloudflare.com",
+        detail: null,
+      }),
+    },
+    config: {
+      NIBBLET_CENTRAL_URL: LOCAL,
+      NIBBLET_HOST_NAME: "pogair",
+      NIBBLET_HOST_PLATFORM: "darwin",
+      NIBBLET_LAN_URLS: [],
+    },
+    version: "0.1.0",
+    serverName: async () => "Astrid's Mac",
+    nibbletCount: async () => 1,
+    tailscaleUrl: async () => null,
+    fetch: centralFetch,
+  });
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));

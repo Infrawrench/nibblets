@@ -7,7 +7,12 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-06",
   "compatibility_flags": ["nodejs_compat"],
+  // workers.dev stays on so servers linked before the custom domain keep
+  // reaching it; their next heartbeat moves them to PUBLIC_URL.
   "workers_dev": true,
+  "routes": [{ "pattern": "app.nibblets.dev", "custom_domain": true }],
+  // Sweeps away links that were approved but never collected.
+  "triggers": { "crons": ["*/15 * * * *"] },
   "observability": { "enabled": true, "head_sampling_rate": 1 },
   "d1_databases": [
     {
@@ -28,10 +33,10 @@
   "vars": {
     // The address servers and tokens use for this service. Empty: whatever
     // address the request came in on. Set it when adding a custom domain.
-    "PUBLIC_URL": "",
+    "PUBLIC_URL": "https://app.nibblets.dev",
     // Where managed tunnels go. Empty: servers use quick tunnels instead.
     "CF_ACCOUNT_ID": "906034adfe1c457d2388331e220efcc7",
-    "CF_ZONE_ID": "",
-    "CF_ZONE_NAME": "",
+    "CF_ZONE_ID": "1a13924531207540ca5002c03f5a965a",
+    "CF_ZONE_NAME": "nibblets.dev",
   },
 }

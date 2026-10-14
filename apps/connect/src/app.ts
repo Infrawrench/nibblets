@@ -104,6 +104,32 @@ function toServer(row: ServerRow, now = Date.now()): CentralServer {
   };
 }
 
+async function removeServer(env: ConnectEnv, row: ServerRow): Promise<void> {
+  await env.DB.prepare("DELETE FROM servers WHERE id = ?").bind(row.id).run();
+  await deleteTunnel(env, row.tunnel_id, row.dns_record_id);
+}
+
+/** How long an approved link waits for its server to collect it before it's undone. */
+const UNCLAIMED_AFTER_MS = 15 * 60_000;
+
+/**
+ * Tidies up links that went nowhere. An approval makes the server (and its
+ * tunnel) straight away, so if the server never collects it, say because it
+ * restarted mid-link, the person would be left with a server that never
+ * comes online. Those are removed, along with stale codes.
+ */
+export async function sweepLinks(env: ConnectEnv, now = Date.now()): Promise<number> {
+  const cutoff = new Date(now - UNCLAIMED_AFTER_MS).toISOString();
+  const { results } = await env.DB.prepare(
+    "SELECT s.* FROM link_requests l JOIN servers s ON s.id = l.server_id WHERE l.status = 'approved' AND l.expires_at < ? AND s.last_seen_at IS NULL",
+  )
+    .bind(cutoff)
+    .all();
+  for (const raw of results) await removeServer(env, ServerRow.parse(raw));
+  await env.DB.prepare("DELETE FROM link_requests WHERE expires_at < ?").bind(cutoff).run();
+  return results.length;
+}
+
 export function createApp() {
   const app = new Hono<App>();
 
@@ -160,11 +186,6 @@ export function createApp() {
       .bind(c.req.param("id") ?? "", c.get("user").id)
       .first();
     return row ? ServerRow.parse(row) : null;
-  };
-
-  const removeServer = async (env: ConnectEnv, row: ServerRow) => {
-    await env.DB.prepare("DELETE FROM servers WHERE id = ?").bind(row.id).run();
-    await deleteTunnel(env, row.tunnel_id, row.dns_record_id);
   };
 
   // Public
@@ -350,7 +371,7 @@ export function createApp() {
         c.get("serverId"),
       )
       .run();
-    return c.json({ linked: true });
+    return c.json({ linked: true, centralUrl: publicUrl(c) });
   });
 
   app.post("/v1/servers/:id/unlink", requireServer, async (c) => {

@@ -28,11 +28,20 @@ type Link = z.infer<typeof Link>;
 
 const SETTING = "connect";
 
-interface Pending {
-  code: string;
-  approveUrl: string;
-  pollToken: string;
-  expiresAt: string;
+/**
+ * A link code waiting for approval. It's kept so a restart mid-link (say the
+ * app updating) still collects the approval, rather than leaving the account
+ * with a server that never comes online.
+ */
+const SavedPending = z.object({
+  code: z.string(),
+  approveUrl: z.string(),
+  pollToken: z.string(),
+  expiresAt: z.iso.datetime(),
+});
+const PENDING_SETTING = "connect.pending";
+
+interface Pending extends z.infer<typeof SavedPending> {
   timer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -103,14 +112,30 @@ export class Connect {
     return { state: "unlinked", centralUrl: this.centralUrl };
   }
 
-  /** Picks up an earlier link after a restart. */
+  /** Picks up an earlier link, or a code still waiting for approval, after a restart. */
   async restore(): Promise<void> {
     const saved = await this.deps.store.getSetting(SETTING, (v) => Link.parse(v), null);
-    if (saved) await this.activate(saved);
+    if (saved) {
+      await this.activate(saved);
+      return;
+    }
+    const pending = await this.deps.store.getSetting(
+      PENDING_SETTING,
+      (v) => SavedPending.parse(v),
+      null,
+    );
+    if (pending && Date.parse(pending.expiresAt) > Date.now()) {
+      this.pending = { ...pending, timer: null };
+      this.schedulePoll(0);
+    } else if (pending) {
+      await this.deps.store.deleteSetting(PENDING_SETTING);
+    }
   }
 
   async start(): Promise<ConnectStatus> {
     if (this.link) return this.status();
+    // A code that's still live may already be approved; starting over would orphan it.
+    if (this.pending && Date.parse(this.pending.expiresAt) > Date.now()) return this.status();
     this.cancelPending();
     const res = await this.fetch(`${this.centralUrl}/v1/link/start`, {
       method: "POST",
@@ -124,19 +149,26 @@ export class Connect {
     });
     if (!res.ok) throw new Error(`Nibblets Connect refused to start linking (${res.status})`);
     const started = LinkStartResponse.parse(await res.json());
-    this.pending = { ...started, timer: null };
+    const saved = {
+      code: started.code,
+      approveUrl: started.approveUrl,
+      pollToken: started.pollToken,
+      expiresAt: started.expiresAt,
+    };
+    await this.deps.store.setSetting(PENDING_SETTING, saved);
+    this.pending = { ...saved, timer: null };
     this.schedulePoll(started.intervalSeconds * 1000);
     return this.status();
   }
 
-  cancel(): ConnectStatus {
-    this.cancelPending();
+  async cancel(): Promise<ConnectStatus> {
+    await this.dropPending();
     return this.status();
   }
 
   async unlink(): Promise<ConnectStatus> {
     const link = this.link;
-    this.cancelPending();
+    await this.dropPending();
     if (link) {
       // Best effort: the central side also forgets servers that stop beating.
       await this.fetch(`${link.centralUrl}/v1/servers/${link.serverId}/unlink`, {
@@ -183,6 +215,11 @@ export class Connect {
     this.pending = null;
   }
 
+  private async dropPending(): Promise<void> {
+    this.cancelPending();
+    await this.deps.store.deleteSetting(PENDING_SETTING);
+  }
+
   private schedulePoll(ms: number): void {
     const pending = this.pending;
     if (!pending) return;
@@ -192,7 +229,7 @@ export class Connect {
   private async poll(pending: Pending): Promise<void> {
     if (this.pending !== pending) return;
     if (Date.parse(pending.expiresAt) <= Date.now()) {
-      this.pending = null;
+      await this.dropPending();
       return;
     }
     try {
@@ -209,7 +246,7 @@ export class Connect {
           return;
         case "expired":
         case "denied":
-          this.pending = null;
+          await this.dropPending();
           return;
         case "approved": {
           this.pending = null;
@@ -222,6 +259,7 @@ export class Connect {
             linkedAt: new Date().toISOString(),
           };
           await this.deps.store.setSetting(SETTING, link);
+          await this.deps.store.deleteSetting(PENDING_SETTING);
           await this.activate(link);
           return;
         }
@@ -300,9 +338,17 @@ export class Connect {
         return;
       }
       if (!res.ok) throw new Error(`heartbeat answered ${res.status}`);
-      if (!HeartbeatResponse.parse(await res.json()).linked) {
+      const answer = HeartbeatResponse.parse(await res.json());
+      if (!answer.linked) {
         await this.forget();
         return;
+      }
+      // The service moved address; tokens it issues now name the new one.
+      const moved = answer.centralUrl?.replace(/\/+$/, "");
+      const safe = moved && /^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)[:/])/.test(`${moved}/`);
+      if (moved && safe && moved !== link.centralUrl && this.link === link) {
+        this.link = { ...link, centralUrl: moved };
+        await this.deps.store.setSetting(SETTING, this.link);
       }
       this.lastHeartbeatAt = new Date().toISOString();
       this.lastError = null;

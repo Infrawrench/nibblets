@@ -24,7 +24,7 @@ import type { SetupStep } from "./preload.ts";
 import { HOST_MCP_PORT, Stack } from "./stack.ts";
 
 const SERVER_URL = "http://127.0.0.1:8420/";
-const DEFAULT_CENTRAL_URL = "https://nibblets-connect.astrid-906.workers.dev/";
+const DEFAULT_CENTRAL_URL = "https://app.nibblets.dev/";
 
 interface Settings {
   paired: boolean;
