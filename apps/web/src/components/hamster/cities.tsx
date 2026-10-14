@@ -381,4 +381,81 @@ export const cities: Record<CityBackground, CityScene> = {
       </>
     ),
   },
+
+  brighton: {
+    label: "Brighton",
+    sky: ["#86CFEF", "#E6F6FB"],
+    draw: (detailed) => (
+      <>
+        <circle cx="30" cy="16" r="6" fill="#FFF3C4" />
+        {/* A gull, overhead. */}
+        <path
+          d="M56 14 Q60 10 64 14 Q68 10 72 14"
+          stroke="#4A5560"
+          strokeWidth="1.2"
+          strokeLinecap="round"
+          fill="none"
+        />
+        {/* The sea. */}
+        <rect x="0" y="64" width="100" height="36" fill="#3FA2C6" />
+        {detailed ? (
+          <path d="M30 72 H40 M62 70 H72 M84 76 H94" stroke="#A8DDEE" strokeWidth="0.6" />
+        ) : null}
+        {/* The Palace Pier: its deck on legs, and the white pavilion with onion domes. */}
+        <g fill="#F6F2EA" stroke="#B9AE9C" strokeWidth="0.5">
+          <rect x="-4" y="58" width="30" height="2.4" />
+          <rect x="0" y="48" width="18" height="10" />
+          <path d="M3 48 Q3 42 6 40 Q9 42 9 48Z" />
+          <path d="M11 48 Q11 41 14.5 38 Q18 41 18 48Z" />
+          <path d="M-2 48 Q-2 44 0.5 42 Q3 44 3 48Z" />
+        </g>
+        <g fill="#C9A86A">
+          <rect x="5.7" y="37.4" width="0.6" height="2.8" />
+          <rect x="14.2" y="35.2" width="0.6" height="3" />
+        </g>
+        {detailed ? (
+          <g fill="#7FB8D6">
+            <rect x="2" y="51" width="2.4" height="3" />
+            <rect x="7" y="51" width="2.4" height="3" />
+            <rect x="12" y="51" width="2.4" height="3" />
+          </g>
+        ) : null}
+        <g fill="#8C7F6E">
+          {[-2, 3, 8, 13, 18, 23].map((x) => (
+            <rect key={x} x={x} y="60.4" width="1" height="9" />
+          ))}
+        </g>
+        {/* The i360, with its glass pod partway up. */}
+        <rect
+          x="88.6"
+          y="8"
+          width="2.8"
+          height="80"
+          fill="#EEF2F5"
+          stroke="#AEB9C2"
+          strokeWidth="0.5"
+        />
+        <ellipse
+          cx="90"
+          cy="40"
+          rx="8"
+          ry="3.4"
+          fill="#BFE6F4"
+          stroke="#7FA8BA"
+          strokeWidth="0.6"
+        />
+        {detailed ? <ellipse cx="90" cy="38.8" rx="6.4" ry="1.4" fill="#E8F7FC" /> : null}
+        {/* The pebble beach. */}
+        <path d="M0 84 Q30 80 60 84 Q80 86 100 82 V100 H0Z" fill="#CDBFA8" />
+        {detailed ? (
+          <g fill="#B3A48B">
+            <ellipse cx="14" cy="90" rx="1.6" ry="1" />
+            <ellipse cx="34" cy="94" rx="1.4" ry="0.9" />
+            <ellipse cx="72" cy="91" rx="1.6" ry="1" />
+            <ellipse cx="88" cy="95" rx="1.3" ry="0.8" />
+          </g>
+        ) : null}
+      </>
+    ),
+  },
 };

@@ -32,3 +32,6 @@ allowBuilds:
   cpu-features: false
   ssh2: false
   electron-winstaller: false
+permissions:
+  "@tanstack/router-plugin":
+    skills: true
