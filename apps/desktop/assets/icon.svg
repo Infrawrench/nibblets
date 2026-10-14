@@ -43,12 +43,5 @@
       <circle cx="542" cy="660" r="11"/>
     </g>
     <rect x="212" y="858" width="600" height="30" rx="15" fill="#8F9EB0"/>
-    <!-- A mug on the desk, steaming. -->
-    <g transform="translate(838 810)">
-      <path d="M-12 -82 q-14 -20 0 -40 q14 -20 0 -40" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round" fill="none" opacity=".85"/>
-      <path d="M18 -82 q-14 -20 0 -40" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round" fill="none" opacity=".85"/>
-      <rect x="-42" y="-66" width="72" height="114" rx="16" fill="#E86F5A" stroke="#B9503E" stroke-width="10"/>
-      <path d="M30 -40 h14 a20 20 0 0 1 0 40 h-14" stroke="#B9503E" stroke-width="12" fill="none"/>
-    </g>
   </g>
 </svg>
