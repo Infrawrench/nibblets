@@ -26,8 +26,19 @@ mac:
     LSUIElement: false
 win:
   target: nsis
+  # Nibblets-setup-x64.exe and Nibblets-setup-arm64.exe. Not code-signed yet,
+  # so Windows' SmartScreen asks before running it.
+  artifactName: ${productName}-setup-${arch}.${ext}
 linux:
   target:
     - AppImage
     - deb
   category: Development
+  # Otherwise the package's name, which has a slash in it.
+  executableName: nibblets
+  # Nibblets-x64.AppImage, Nibblets-x64.deb, and the arm64 ones.
+  artifactName: ${productName}-${arch}.${ext}
+  maintainer: Infrawrench <astrid@infrawrench.com>
+deb:
+  # Docker is what it needs; it's set up from the app's own walkthrough.
+  depends: []

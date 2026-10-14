@@ -108,8 +108,8 @@ jobs:
               "$base:$VERSION-amd64" "$base:$VERSION-arm64"
           done
 
-  mac:
-    name: Mac app (${{ matrix.arch }})
+  desktop:
+    name: Desktop app (${{ matrix.os }} ${{ matrix.arch }})
     needs: check
     if: needs.check.outputs.version != ''
     runs-on: ${{ matrix.runner }}
@@ -117,10 +117,12 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - arch: arm64
-            runner: macos-15
-          - arch: x64
-            runner: macos-15-intel
+          - { os: mac, arch: arm64, runner: macos-15 }
+          - { os: mac, arch: x64, runner: macos-15-intel }
+          - { os: linux, arch: x64, runner: ubuntu-24.04 }
+          - { os: linux, arch: arm64, runner: ubuntu-24.04-arm }
+          - { os: win, arch: x64, runner: windows-2025 }
+          - { os: win, arch: arm64, runner: windows-11-arm }
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -129,29 +131,40 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Build, sign and notarise
-        run: pnpm --filter @nibblet/desktop dist
+      - name: Build, sign and notarise (Mac)
+        if: matrix.os == 'mac'
+        run: pnpm --filter @nibblet/desktop dist:mac
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      - name: Check it's signed and notarised
+      - name: Check it's signed and notarised (Mac)
+        if: matrix.os == 'mac'
         run: |
           app=$(ls -d apps/desktop/dist/mac*/Nibblets.app | head -n1)
           codesign --verify --deep --strict "$app"
           spctl --assess --type execute -vv "$app"
-          xcrun stapler validate "apps/desktop/dist/Nibblets-${{ matrix.arch }}.dmg" || true
+      - name: Build (Linux)
+        if: matrix.os == 'linux'
+        run: pnpm --filter @nibblet/desktop dist:linux
+      - name: Build (Windows)
+        if: matrix.os == 'win'
+        run: pnpm --filter @nibblet/desktop dist:win
       - uses: actions/upload-artifact@v4
         with:
-          name: mac-${{ matrix.arch }}
-          path: apps/desktop/dist/Nibblets-${{ matrix.arch }}.dmg
+          name: desktop-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            apps/desktop/dist/Nibblets-*.dmg
+            apps/desktop/dist/Nibblets-*.AppImage
+            apps/desktop/dist/Nibblets-*.deb
+            apps/desktop/dist/Nibblets-setup-*.exe
           if-no-files-found: error
 
   publish:
     name: Publish v${{ needs.check.outputs.version }}
-    needs: [check, manifests, mac]
+    needs: [check, manifests, desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -175,8 +188,12 @@ jobs:
             echo
             echo "## Install"
             echo
-            echo "- **Mac:** download Nibblets-arm64.dmg (Apple Silicon) or Nibblets-x64.dmg (Intel), or get it from https://nibblets.dev"
-            echo '- **Linux:** `curl -fsSL https://nibblets.dev/install.sh | bash`'
+            echo "- **Mac:** Nibblets-arm64.dmg (Apple Silicon) or Nibblets-x64.dmg (Intel)"
+            echo "- **Windows:** Nibblets-setup-x64.exe (or arm64)"
+            echo "- **Linux desktop:** the AppImage or .deb for your machine"
+            echo '- **Linux server or VM:** `curl -fsSL https://nibblets.dev/install.sh | bash`'
+            echo
+            echo "Or get it from https://nibblets.dev"
           } > notes.md
           cat notes.md
       - name: Tag and release
@@ -184,7 +201,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.check.outputs.version }}
         run: |
-          gh release create "v$VERSION" dist/*.dmg \
+          gh release create "v$VERSION" dist/* \
             --target "$GITHUB_SHA" \
             --title "Nibblets $VERSION" \
             --notes-file notes.md

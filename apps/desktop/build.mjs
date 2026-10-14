@@ -35,13 +35,13 @@ await cp("node_modules/@xterm/xterm/css/xterm.css", "out/xterm.css");
 const pty = "out/node_modules/node-pty";
 await rm(pty, { recursive: true, force: true });
 await mkdir(pty, { recursive: true });
-for (const part of ["package.json", "lib", "prebuilds", "LICENSE"]) {
-  await cp(join("node_modules/node-pty", part), join(pty, part), {
-    recursive: true,
-    dereference: true,
-  });
+// `prebuilds` covers macOS and Windows; on Linux it's compiled at install, into `build`.
+for (const part of ["package.json", "lib", "prebuilds", "build/Release", "LICENSE"]) {
+  const from = join("node_modules/node-pty", part);
+  if (!existsSync(from)) continue;
+  await cp(from, join(pty, part), { recursive: true, dereference: true });
 }
-for (const dir of await readdir(join(pty, "prebuilds"))) {
+for (const dir of existsSync(join(pty, "prebuilds")) ? await readdir(join(pty, "prebuilds")) : []) {
   const helper = join(pty, "prebuilds", dir, "spawn-helper");
   if (existsSync(helper)) await chmod(helper, 0o755);
 }
