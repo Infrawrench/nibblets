@@ -27,17 +27,21 @@ describe("signing in through the browser", () => {
     expect(page.pathname).toBe("/desktop-sign-in");
     challenge = page.searchParams.get("challenge") ?? "";
     const state = page.searchParams.get("state") ?? "";
-    expect(await signIn.finish(CENTRAL, { state, handle: "h" })).toBe("the-ticket");
+    expect(await signIn.finish(CENTRAL, { state, handle: "h" })).toEqual({ ticket: "the-ticket" });
     // Once only.
-    expect(await signIn.finish(CENTRAL, { state, handle: "h" })).toBeNull();
+    expect(await signIn.finish(CENTRAL, { state, handle: "h" })).toEqual({ failed: "unknown" });
   });
 
   it("ignores a sign-in it didn't start", async () => {
     const { fetcher, calls } = connect(() => "");
     const signIn = new BrowserSignIn({ fetch: fetcher });
-    expect(await signIn.finish(CENTRAL, { state: "s", handle: "h" })).toBeNull();
+    expect(await signIn.finish(CENTRAL, { state: "s", handle: "h" })).toEqual({
+      failed: "unknown",
+    });
     signIn.start(CENTRAL);
-    expect(await signIn.finish(CENTRAL, { state: "someone-elses", handle: "h" })).toBeNull();
+    expect(await signIn.finish(CENTRAL, { state: "someone-elses", handle: "h" })).toEqual({
+      failed: "unknown",
+    });
     expect(calls).toEqual([]);
   });
 
@@ -47,7 +51,29 @@ describe("signing in through the browser", () => {
     const signIn = new BrowserSignIn({ fetch: fetcher, now: () => now });
     const state = new URL(signIn.start(CENTRAL)).searchParams.get("state") ?? "";
     now = 60 * 60_000;
-    expect(await signIn.finish(CENTRAL, { state, handle: "h" })).toBeNull();
+    expect(await signIn.finish(CENTRAL, { state, handle: "h" })).toEqual({ failed: "expired" });
     expect(calls).toEqual([]);
+  });
+
+  it("finishes whichever of several browser tabs comes back", async () => {
+    const challenges: string[] = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      const body: { verifier: string } = JSON.parse(String(init?.body));
+      const ok = challenges.includes(createHash("sha256").update(body.verifier).digest("hex"));
+      return new Response(JSON.stringify({ ticket: "t" }), { status: ok ? 200 : 400 });
+    };
+    const signIn = new BrowserSignIn({ fetch: fetcher });
+    const first = new URL(signIn.start(CENTRAL));
+    const second = new URL(signIn.start(CENTRAL));
+    for (const page of [first, second]) challenges.push(page.searchParams.get("challenge") ?? "");
+    const state = first.searchParams.get("state") ?? "";
+    expect(await signIn.finish(CENTRAL, { state, handle: "h" })).toEqual({ ticket: "t" });
+  });
+
+  it("says when Connect won't hand it over", async () => {
+    const { fetcher } = connect(() => "not-this-one");
+    const signIn = new BrowserSignIn({ fetch: fetcher });
+    const state = new URL(signIn.start(CENTRAL)).searchParams.get("state") ?? "";
+    expect(await signIn.finish(CENTRAL, { state, handle: "h" })).toEqual({ failed: "refused" });
   });
 });

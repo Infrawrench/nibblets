@@ -6,6 +6,9 @@ const PENDING_FOR_MS = 15 * 60_000;
 
 const Redeemed = z.object({ ticket: z.string() });
 
+/** Why a sign-in coming back from the browser didn't go through. */
+export type FinishFailure = "unknown" | "expired" | "refused";
+
 /**
  * Signing in to Nibblets Connect in the person's own browser, for the
  * sign-ins (Google's especially) that won't happen inside the app's window.
@@ -18,7 +21,12 @@ const Redeemed = z.object({ ticket: z.string() });
  * app didn't ask for (someone else's) from being accepted.
  */
 export class BrowserSignIn {
-  private pending: { state: string; verifier: string; startedAt: number } | null = null;
+  /**
+   * Every sign-in still waiting, by state. One click can open the browser
+   * more than once (Clerk may both link and redirect to Google), and any of
+   * those tabs may be the one finished, so none replaces another.
+   */
+  private readonly pending = new Map<string, { verifier: string; startedAt: number }>();
   private readonly fetch: typeof fetch;
   private readonly now: () => number;
 
@@ -27,32 +35,39 @@ export class BrowserSignIn {
     this.now = opts.now ?? Date.now;
   }
 
-  /** The page to open in the browser. Starting again replaces any sign-in still waiting. */
+  /** The page to open in the browser. */
   start(centralUrl: string): string {
     const verifier = randomBytes(32).toString("base64url");
     const state = randomBytes(16).toString("base64url");
-    this.pending = { state, verifier, startedAt: this.now() };
+    const now = this.now();
+    for (const [key, p] of this.pending) {
+      if (now - p.startedAt > PENDING_FOR_MS) this.pending.delete(key);
+    }
+    this.pending.set(state, { verifier, startedAt: now });
     const url = new URL("/desktop-sign-in", centralUrl);
     url.searchParams.set("state", state);
     url.searchParams.set("challenge", createHash("sha256").update(verifier).digest("hex"));
     return url.href;
   }
 
-  /** The Clerk ticket for a sign-in coming back, or null when it isn't the one this app started. */
+  /**
+   * The Clerk ticket for a sign-in coming back, or why there isn't one:
+   * "unknown" when this app didn't start it (or already used it).
+   */
   async finish(
     centralUrl: string,
     back: { state: string; handle: string },
-  ): Promise<string | null> {
-    const pending = this.pending;
-    if (!pending || pending.state !== back.state) return null;
-    this.pending = null;
-    if (this.now() - pending.startedAt > PENDING_FOR_MS) return null;
+  ): Promise<{ ticket: string } | { failed: FinishFailure }> {
+    const pending = this.pending.get(back.state);
+    if (!pending) return { failed: "unknown" };
+    this.pending.delete(back.state);
+    if (this.now() - pending.startedAt > PENDING_FOR_MS) return { failed: "expired" };
     const res = await this.fetch(new URL("/v1/desktop/sign-in/redeem", centralUrl), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ handle: back.handle, verifier: pending.verifier }),
     });
-    if (!res.ok) return null;
-    return Redeemed.parse(await res.json()).ticket;
+    if (!res.ok) return { failed: "refused" };
+    return { ticket: Redeemed.parse(await res.json()).ticket };
   }
 }

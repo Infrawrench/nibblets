@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { appendFile, readFile, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { join, resolve } from "node:path";
 import {
@@ -35,7 +35,7 @@ import {
   openOutside,
   parseSignInLink,
 } from "./links.ts";
-import { BrowserSignIn } from "./browser-sign-in.ts";
+import { BrowserSignIn, type FinishFailure } from "./browser-sign-in.ts";
 import { adoptShellPath } from "./shell-path.ts";
 import { opencodePaths } from "@nibblet/host-mcp";
 
@@ -185,26 +185,61 @@ function rememberUiChoice(target: string): void {
   void saveSettings(settings);
 }
 
+/**
+ * What happened to sign-ins handed back from the browser, in the app's data
+ * folder (main.log), since a packaged app's console goes nowhere. Never the
+ * link's handle or the ticket.
+ */
+function trace(message: string): void {
+  const line = `${new Date().toISOString()} ${message}\n`;
+  void appendFile(join(app.getPath("userData"), "main.log"), line).catch(() => undefined);
+}
+
 const browserSignIn = new BrowserSignIn();
+let lastBrowserSignIn = 0;
 
 /** Google and the like sign in in the browser; it comes back through a `nibblets:` link. */
 function signInInBrowser(): void {
+  // One click can reach here twice (a link, then a redirect): one tab is enough.
+  if (Date.now() - lastBrowserSignIn < 5000) return;
+  lastBrowserSignIn = Date.now();
+  trace("sign-in: opened the browser");
   openOutside(browserSignIn.start(settings.centralUrl));
 }
+
+const signInFailures: Record<FinishFailure, string> = {
+  unknown:
+    "That sign-in wasn't started by this copy of Nibblets, or was already used. Press Continue with Google again.",
+  expired: "That sign-in took too long. Press Continue with Google again.",
+  refused: "Nibblets Connect wouldn't hand over that sign-in. Press Continue with Google again.",
+};
 
 /** A `nibblets:` link: a sign-in coming back from the browser. */
 async function openAppLink(link: string): Promise<void> {
   const back = parseSignInLink(link);
+  trace(`sign-in: link came back${back ? "" : " but couldn't be read"}`);
   if (!back) return;
-  const ticket = await browserSignIn.finish(settings.centralUrl, back).catch(() => null);
-  if (!ticket) return;
+  const result = await browserSignIn.finish(settings.centralUrl, back).catch((err: unknown) => {
+    trace(`sign-in: collecting failed: ${err instanceof Error ? err.message : String(err)}`);
+    return { failed: "refused" as const };
+  });
+  trace(`sign-in: ${"failed" in result ? result.failed : "collected"}`);
+  if ("failed" in result) {
+    openMainWindow();
+    void dialog.showMessageBox({
+      type: "warning",
+      message: "Couldn't finish signing in",
+      detail: signInFailures[result.failed],
+    });
+    return;
+  }
   // Signing in is choosing Connect over this computer's UI on its own.
   if (settings.skippedSignIn) {
     settings.skippedSignIn = false;
     void saveSettings(settings);
   }
   const url = new URL(settings.centralUrl);
-  url.hash = `sign-in-ticket=${ticket}`;
+  url.hash = `sign-in-ticket=${result.ticket}`;
   openMainWindow(url.href);
 }
 
