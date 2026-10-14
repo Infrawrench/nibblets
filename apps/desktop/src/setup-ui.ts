@@ -143,6 +143,8 @@ setup.onTermExit((code) => {
   running = false;
   button("term-stop").hidden = true;
   el("term-title").textContent = code === 0 ? "Done" : `Stopped (exit code ${code})`;
+  // A finished sign-in has no more use for its link.
+  if (code === 0) el("link").hidden = true;
   term.write(`\r\n\x1b[2m${code === 0 ? "Done." : "That didn't finish."}\x1b[0m\r\n`);
   setup.refreshTools();
 });
