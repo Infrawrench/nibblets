@@ -63,6 +63,7 @@ export function toNibblet(row: NibbletRow): Nibblet {
     status: row.status,
     statusDetail: row.statusDetail,
     heartbeats: row.heartbeats,
+    resources: row.resources,
     browser: row.browser,
     hostTools: row.hostTools,
     cliCredentials: row.cliCredentials,

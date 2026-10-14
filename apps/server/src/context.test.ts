@@ -14,6 +14,7 @@ const nibblet: Nibblet = {
   parentId: null,
   status: "idle",
   statusDetail: null,
+  resources: { cpus: null, memoryMb: null },
   heartbeats: [
     {
       name: "inbox",

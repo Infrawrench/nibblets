@@ -1,0 +1,1 @@
+ALTER TABLE "nibblets" ADD COLUMN "resources" jsonb DEFAULT '{"cpus":null,"memoryMb":null}'::jsonb NOT NULL;

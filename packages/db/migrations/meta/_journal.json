@@ -43,6 +43,13 @@
       "when": 1791936997474,
       "tag": "0005_files",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791940885081,
+      "tag": "0006_resources",
+      "breakpoints": true
     }
   ]
 }

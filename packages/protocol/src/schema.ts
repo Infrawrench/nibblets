@@ -143,6 +143,18 @@ export function randomHamsterLook(random: () => number = Math.random): HamsterLo
 export const NibbletStatus = z.enum(["stopped", "starting", "idle", "working", "waiting", "error"]);
 export type NibbletStatus = z.infer<typeof NibbletStatus>;
 
+/**
+ * How much of the machine a nibblet may use. Null means the default: no CPU
+ * cap, and DEFAULT_MEMORY_MB of memory.
+ */
+export const Resources = z.object({
+  cpus: z.number().min(0.25).max(256).nullable(),
+  memoryMb: z.int().min(512).max(1024 * 1024).nullable(),
+});
+export type Resources = z.infer<typeof Resources>;
+export const DEFAULT_MEMORY_MB = 4096;
+export const defaultResources: Resources = { cpus: null, memoryMb: null };
+
 export const Nibblet = z.object({
   id: z.string(),
   name: z.string(),
@@ -157,6 +169,7 @@ export const Nibblet = z.object({
   status: NibbletStatus,
   statusDetail: z.string().nullable(),
   heartbeats: z.array(Heartbeat),
+  resources: Resources,
   /** Whether the container gets a browser it and the user can drive. */
   browser: z.boolean(),
   /** Host MCP servers this nibblet may use, by name. None unless ticked. */
@@ -197,6 +210,7 @@ export const CreateNibblet = z.object({
 });
 export type CreateNibblet = z.input<typeof CreateNibblet>;
 
+
 export const UpdateNibblet = z.object({
   id: z.string(),
   name: z.string().min(1).max(80).optional(),
@@ -212,6 +226,7 @@ export const UpdateNibblet = z.object({
   mcpServers: McpServerList.optional(),
   toolApprovals: ToolRules.optional(),
   // No heartbeats: the nibblet sets its own with the `heartbeat_*` tools.
+  resources: Resources.optional(),
 });
 
 /** What started a turn. Anything but `user` is the nibblet acting on its own. */
@@ -407,5 +422,7 @@ export const ServerInfo = z.object({
   name: z.string(),
   version: z.string(),
   credentials: z.array(CredentialStatus),
+  /** What the machine running the nibblets has, for sizing their limits. */
+  host: z.object({ cpus: z.int(), memoryMb: z.int() }).nullable(),
 });
 export type ServerInfo = z.infer<typeof ServerInfo>;

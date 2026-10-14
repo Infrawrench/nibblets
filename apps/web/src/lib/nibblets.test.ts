@@ -21,6 +21,7 @@ const nibblet = (id: string, parentId: string | null, active: string): Nibblet =
   status: "idle",
   statusDetail: null,
   heartbeats: [],
+  resources: { cpus: null, memoryMb: null },
   toolApprovals: [],
   statusText: null,
   statusEmoji: null,

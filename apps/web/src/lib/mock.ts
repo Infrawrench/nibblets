@@ -109,6 +109,7 @@ export function createMockServer(): ServerConnection {
     parentId: null,
     status: "idle",
     statusDetail: null,
+    resources: { cpus: null, memoryMb: null },
     heartbeats: [
       {
         name: "inbox",
@@ -598,6 +599,7 @@ export function createMockServer(): ServerConnection {
             expiresAt: ago(-60 * 24),
           },
         ],
+        host: { cpus: 10, memoryMb: 16384 },
       }),
       rename: async ({ name }) => {
         serverName = name;
@@ -624,6 +626,7 @@ export function createMockServer(): ServerConnection {
             mcpServers: keepSecrets(id, input.mcpServers),
             toolApprovals: input.toolApprovals,
             heartbeats: [],
+            resources: { cpus: null, memoryMb: null },
             status: "idle",
             createdAt: now(),
             lastActivityAt: now(),
@@ -649,6 +652,7 @@ export function createMockServer(): ServerConnection {
             ? keepSecrets(id, mergeMcpServers(patch.mcpServers, secrets.get(id) ?? []))
             : current.mcpServers,
           toolApprovals: patch.toolApprovals ?? current.toolApprovals,
+          resources: patch.resources ?? current.resources,
           updatedAt: now(),
         });
       },

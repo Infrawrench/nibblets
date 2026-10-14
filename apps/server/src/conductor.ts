@@ -7,6 +7,7 @@ import {
   type ServerToRunner,
   type ThreadItem,
   type TurnSource,
+  type Resources,
 } from "@nibblet/protocol";
 import { cliLogins } from "./clilogins.ts";
 import type { Config } from "./config.ts";
@@ -135,7 +136,7 @@ export class Conductor {
             hashToken(token),
           ),
         },
-        { sshAgent: nibblet.cliCredentials.includes("ssh") },
+        { sshAgent: nibblet.cliCredentials.includes("ssh"), resources: nibblet.resources },
       );
       return await this.store.updateNibblet(nibbletId, { containerId });
     } catch (err) {
@@ -239,6 +240,15 @@ export class Conductor {
       );
     }
     await this.enqueue(nibbletId, "heartbeat", heartbeatInput(beat));
+  }
+
+  /** New CPU and memory limits, applied to a running container straight away. */
+  applyResources(nibbletId: string, resources: Resources): Promise<void> {
+    return this.docker.applyResources(nibbletId, resources);
+  }
+
+  hostCapacity(): Promise<{ cpus: number; memoryMb: number } | null> {
+    return this.docker.hostCapacity();
   }
 
   busy(nibbletId: string): boolean {

@@ -3,6 +3,7 @@ import type {
   HamsterLook,
   HarnessId,
   Heartbeat,
+  Resources,
   McpServerDef,
   ToolRule,
   NibbletStatus,
@@ -44,6 +45,10 @@ export const nibblets = pgTable("nibblets", {
   statusDetail: text("status_detail"),
   /** Stored in the column that held the single heartbeat before there were several. */
   heartbeats: jsonb("heartbeat").$type<Heartbeat[]>().notNull().default([]),
+  resources: jsonb("resources")
+    .$type<Resources>()
+    .notNull()
+    .default({ cpus: null, memoryMb: null }),
   browser: boolean("browser").notNull().default(true),
   hostTools: text("host_tools").array().notNull().default([]),
   cliCredentials: text("cli_credentials").array().notNull().default([]),

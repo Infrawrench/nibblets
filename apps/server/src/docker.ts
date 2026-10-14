@@ -1,6 +1,12 @@
 import { Writable } from "node:stream";
 import Docker from "dockerode";
-import { CONTAINER_SSH_AUTH_SOCK, type RunnerEnv } from "@nibblet/protocol";
+import {
+  CONTAINER_SSH_AUTH_SOCK,
+  DEFAULT_MEMORY_MB,
+  defaultResources,
+  type Resources,
+  type RunnerEnv,
+} from "@nibblet/protocol";
 import type { Config } from "./config.ts";
 
 const MANAGED = "nibblet.managed";
@@ -9,6 +15,16 @@ const NIBBLET = "nibblet.id";
 
 export const runnerName = (nibbletId: string): string => `nibblet-${nibbletId}`;
 export const homeVolume = (nibbletId: string): string => `nibblet-home-${nibbletId}`;
+/** Docker's limit fields for a nibblet's resources. Swap is capped at the memory limit. */
+export function limits(r: Resources): { Memory: number; MemorySwap: number; NanoCpus: number } {
+  const memory = (r.memoryMb ?? DEFAULT_MEMORY_MB) * 1024 * 1024;
+  return {
+    Memory: memory,
+    MemorySwap: memory,
+    NanoCpus: r.cpus === null ? 0 : Math.round(r.cpus * 1e9),
+  };
+}
+
 /** The runner image's user home, which holds its working folder. */
 const RUNNER_HOME = "/home/nibblet";
 
@@ -51,7 +67,10 @@ export class Orchestrator {
   async startRunner(
     nibbletId: string,
     env: RunnerEnv,
-    opts: { sshAgent: boolean } = { sshAgent: false },
+    opts: { sshAgent: boolean; resources: Resources } = {
+      sshAgent: false,
+      resources: defaultResources,
+    },
   ): Promise<string> {
     const home = await this.ensureHome(nibbletId);
     await this.carryOverHome(nibbletId, home);
@@ -65,7 +84,7 @@ export class Orchestrator {
         NetworkMode: this.config.NIBBLET_NETWORK,
         // Chromium wants more shared memory than Docker's 64 MB default.
         ShmSize: 1024 * 1024 * 1024,
-        Memory: 4 * 1024 * 1024 * 1024,
+        ...limits(opts.resources),
         RestartPolicy: { Name: "no" },
         // Docker Desktop provides this itself; Linux engines need it spelt out.
         ExtraHosts: ["host.docker.internal:host-gateway"],
@@ -164,6 +183,32 @@ export class Orchestrator {
       return container.Image !== image.Id;
     } catch {
       return false;
+    }
+  }
+
+  /** Changes a running nibblet's limits in place; Docker applies them without a restart. */
+  async applyResources(nibbletId: string, resources: Resources): Promise<void> {
+    // Docker ignores "0 CPUs" on a running container, so lifting a cap means
+    // setting it to every CPU there is.
+    const fields = limits(resources);
+    if (resources.cpus === null) {
+      const host = await this.hostCapacity();
+      if (host) fields.NanoCpus = host.cpus * 1e9;
+    }
+    try {
+      await this.docker.getContainer(runnerName(nibbletId)).update(fields);
+    } catch (err) {
+      if (!isNotFound(err)) throw err;
+    }
+  }
+
+  /** The CPUs and memory Docker can hand out, for sizing limits in the UI. */
+  async hostCapacity(): Promise<{ cpus: number; memoryMb: number } | null> {
+    try {
+      const info = await this.docker.info();
+      return { cpus: info.NCPU, memoryMb: Math.floor(info.MemTotal / 1024 / 1024) };
+    } catch {
+      return null;
     }
   }
 

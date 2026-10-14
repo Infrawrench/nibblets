@@ -84,6 +84,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
           name: await serverName(store),
           version: s.version,
           credentials: await credentialStatus(s.config),
+          host: await s.conductor.hostCapacity(),
         }),
       rename: async ({ name }) => {
         await store.setSetting("name", name);
@@ -138,6 +139,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
           (patch.browser !== undefined && patch.browser !== before.browser) ||
           sshBefore !== sshAfter;
         if (needsRestart && before.status !== "stopped") return conductor.start(id);
+        if (patch.resources) await conductor.applyResources(id, patch.resources);
         await conductor.reconfigure(id);
         return updated;
       },
