@@ -316,11 +316,17 @@ setup_engine() {
       fail "Podman needs systemd here for its API socket. Start 'podman system service --time=0 unix://$PODMAN_SOCK' and set DOCKER_HOST yourself."
     fi
     need_root
-    $SUDO systemctl is-active --quiet podman.socket || spin "Starting Podman's API socket" $SUDO systemctl enable --now podman.socket
+    # Enabled even when it's already running, so it's there after a restart too.
+    spin "Starting Podman's API socket" $SUDO systemctl enable --now podman.socket
+    # Podman has no daemon to start containers when the machine boots; this
+    # does, for those whose restart policy is "always" (only, on older Podman).
+    $SUDO systemctl enable podman-restart.service >/dev/null 2>&1 ||
+      warn "Couldn't turn on podman-restart.service, so Nibblets won't start by itself after a restart."
     compose_for_podman
     engine_access
     version=$(with_docker "podman --version" | awk '{print $NF}')
     env_set DOCKER_SOCKET "$PODMAN_SOCK"
+    env_set NIBBLET_RESTART always
     ok "Podman $version is ready 🦭"
     return
   fi

@@ -69,6 +69,24 @@ env_set() {
   export "$1=$2"
 }
 
+# Podman (when there's no Docker, as the installer chooses) has no daemon to
+# start containers when the machine boots: podman-restart.service does, and
+# on older Podman only those whose restart policy is "always".
+if ! { command -v docker >/dev/null && ! docker --version 2>/dev/null | grep -qi podman; } &&
+  command -v podman >/dev/null; then
+  grep -q '^NIBBLET_RESTART=' .env || env_set NIBBLET_RESTART always
+  if command -v systemctl >/dev/null && [ -d /run/systemd/system ] &&
+    ! { systemctl is-enabled --quiet podman-restart.service && systemctl is-enabled --quiet podman.socket; } 2>/dev/null; then
+    if [ "$(id -u)" = 0 ]; then
+      systemctl enable podman-restart.service podman.socket >/dev/null 2>&1 ||
+        echo "Couldn't enable podman-restart.service and podman.socket, so Nibblets won't start by itself after a restart."
+    else
+      echo "To start Nibblets by itself when this machine restarts, run:"
+      echo "  sudo systemctl enable podman-restart.service podman.socket"
+    fi
+  fi
+fi
+
 # A release checkout runs that release's published images; anything else
 # (main, a branch, local changes) is built here. NIBBLET_BUILD=1 always builds.
 release=""

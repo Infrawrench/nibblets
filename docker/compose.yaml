@@ -10,10 +10,14 @@ name: nibblet
 x-image: &image-defaults
   pull_policy: missing
 
+# "always" on Podman, whose podman-restart.service starts only those at boot
+# (the installer sets it); Docker's daemon starts these too.
+x-restart: &restart ${NIBBLET_RESTART:-unless-stopped}
+
 services:
   db:
     image: pgvector/pgvector:0.8.7-pg18
-    restart: unless-stopped
+    restart: *restart
     environment:
       POSTGRES_USER: nibblet
       POSTGRES_DB: nibblet
@@ -33,7 +37,7 @@ services:
     build:
       context: ${NIBBLET_SOURCE_DIR:-..}
       dockerfile: docker/credproxy.Dockerfile
-    restart: unless-stopped
+    restart: *restart
     environment:
       CREDPROXY_KEY: ${CREDPROXY_KEY:?}
       CREDPROXY_ADMIN_KEY: ${CREDPROXY_ADMIN_KEY:?}
@@ -52,7 +56,7 @@ services:
     build:
       context: ${NIBBLET_SOURCE_DIR:-..}
       dockerfile: docker/server.Dockerfile
-    restart: unless-stopped
+    restart: *restart
     depends_on:
       db:
         condition: service_healthy
