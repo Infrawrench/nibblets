@@ -135,18 +135,22 @@ export const opencodeHarness = defineHarness({
   bundledCli: () => cliPackage().version,
   async open(ctx) {
     // createOpencodeServer spawns `opencode` from PATH with the parent's env.
-    const dirs = await prepareHome(path.join(ctx.workdir, ".opencode"));
+    const home = path.join(ctx.workdir, ".opencode");
+    const dirs = await prepareHome(home);
     // The token lives outside the home volume, in the container's own /tmp.
     if (ctx.config.opencodeLogin) {
       await installLogin(dirs, ctx.config.opencodeLogin, OPENCODE_SECRETS);
     }
     await warmModelsCache((m) => ctx.log("warn", m));
 
-    // A newer OpenCode the server installed goes first on PATH. When another
-    // arrives, the next turn starts a fresh server on it; sessions live on disk.
+    // A newer OpenCode the server installed goes first on PATH, then the
+    // bundled one prepareHome linked. When another arrives, the next turn
+    // starts a fresh server on it; sessions live on disk.
     const start = async () => {
       const dir = installedCliDir("opencode");
-      process.env.PATH = dir ? `${dir}${path.delimiter}${BASE_PATH}` : BASE_PATH;
+      process.env.PATH = [...(dir ? [dir] : []), path.join(home, "bin"), BASE_PATH].join(
+        path.delimiter,
+      );
       const server = await createOpencodeServer({
         port: await freePort(),
         timeout: 30_000,
