@@ -33,13 +33,27 @@ export function scheduleInput(name: string, prompt: string): string {
   return `Scheduled task "${name}" is due.\n\n${prompt}\n\nIf there's nothing worth telling the user, reply with exactly ${QUIET_REPLY}.`;
 }
 
-/** Whether a heartbeat or schedule reply means "nothing to report". */
+/**
+ * Whether a reply means "nothing to report". Only turns the user didn't
+ * start can go quiet: heartbeats, schedules, a sub-agent's result, and
+ * carrying on after a restart.
+ */
 export function isQuiet(source: TurnSource, reply: string): boolean {
-  if (source !== "heartbeat" && source !== "schedule") return false;
+  if (source === "user") return false;
   const trimmed = reply.trim();
   return (
     trimmed === QUIET_REPLY || trimmed.startsWith(QUIET_REPLY) || trimmed.endsWith(QUIET_REPLY)
   );
+}
+
+/**
+ * Whether a reply still being written could turn out quiet ("NO", "NO_REP"),
+ * so it isn't shown before it's finished saying so.
+ */
+export function mayBeQuiet(source: TurnSource, partial: string): boolean {
+  if (source === "user") return false;
+  const trimmed = partial.trim();
+  return isQuiet(source, trimmed) || QUIET_REPLY.startsWith(trimmed);
 }
 
 const RECAP_ITEMS = 40;
@@ -108,7 +122,7 @@ export function systemPrompt(input: SystemPromptInput): string {
     "For work that splits into independent pieces, `spawn_subagent` starts a child nibblet; its answer comes back to you as a message.",
     "Files the user attaches are saved under `uploads/` in your working directory. To give the user a file (a report, an export, an image you made), call `share_file` with its path; it appears in the chat for them to open or download, so don't paste its contents too.",
     "For anything that has to keep running after a command returns (a dev server, a game server, a watcher), start it with `task_start` rather than `&`, `nohup` or a shell tool's background mode, and check on it with `task_output`. Tasks end when your container restarts, so start the ones that should still be up again when you wake. The user can open a terminal in your container and run things there too: don't stop or restart processes you didn't start unless they ask.",
-    `On heartbeat and scheduled turns, if there's nothing worth telling the user, reply with exactly ${QUIET_REPLY}.`,
+    `On heartbeat, scheduled and sub-agent result turns, if there's nothing worth telling the user, reply with exactly ${QUIET_REPLY}. Never reply ${QUIET_REPLY} to a message from the user.`,
   ];
   if (nibblet.browser) {
     rules.push(

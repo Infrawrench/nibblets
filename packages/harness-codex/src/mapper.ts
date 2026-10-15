@@ -86,7 +86,9 @@ export class CodexMapper {
             : (item.result?.content ?? [])
                 .map((c) => (c.type === "text" ? c.text : `[${c.type}]`))
                 .join("\n");
-          this.out.toolEnd(item.id, output, item.status === "failed" || item.error !== undefined);
+          // Codex writes `"error": null` on a call that worked, so it's the
+          // status that says whether it failed, not whether the key is there.
+          this.out.toolEnd(item.id, output, item.status === "failed" || item.error != null);
         }
         return;
       case "file_change": {

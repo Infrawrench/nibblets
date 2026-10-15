@@ -90,7 +90,7 @@ Kimi nibblets use the host's own Kimi Code CLI login, like OpenCode ones. The ho
 | `spawn_subagent`                                        | Starts a child nibblet on a task; its final answer comes back as a `subagent` turn                                                                        |
 | `subagent_status`                                       | Lists children and their status                                                                                                                           |
 
-A heartbeat or schedule turn whose reply is `NO_REPLY` is stored with `quiet: true` and collapsed in the UI.
+A turn the user didn't start (a heartbeat, a schedule, a sub-agent's result, carrying on after a restart) whose reply is `NO_REPLY` is stored with `quiet: true` and collapsed in the UI. The reply itself is never shown, not even while it streams in.
 
 ## API
 
