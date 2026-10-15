@@ -49,8 +49,17 @@ describe("TerminalHub", () => {
     expect(events).toEqual([]);
   });
 
+  it("passes the browser's acks on to the runner", () => {
+    const { terminals, sent, sink } = hub(["nib_a"]);
+    const id = terminals.openTerminal("nib_a", { cols: 80, rows: 24 }, null, sink) ?? "";
+    terminals.ack(id, 4096);
+    expect(sent.at(-1)?.message).toEqual({ type: "terminal_ack", terminalId: id, chars: 4096 });
+  });
+
   it("ends its terminals and forgets its tasks when the runner goes", () => {
     const { terminals, events, sink } = hub(["nib_a"]);
+    const told: [string, number][] = [];
+    terminals.onTasks = (id, tasks) => told.push([id, tasks.length]);
     terminals.openTerminal("nib_a", { cols: 80, rows: 24 }, null, sink);
     terminals.fromRunner("nib_a", {
       type: "tasks",
@@ -68,8 +77,14 @@ describe("TerminalHub", () => {
       ],
     });
     expect(terminals.tasksOf("nib_a")).toHaveLength(1);
+    expect(told).toEqual([["nib_a", 1]]);
     terminals.runnerGone("nib_a");
     expect(events).toEqual(["exit:null"]);
     expect(terminals.tasksOf("nib_a")).toEqual([]);
+    // The UI hears both, so it needn't ask.
+    expect(told).toEqual([
+      ["nib_a", 1],
+      ["nib_a", 0],
+    ]);
   });
 });

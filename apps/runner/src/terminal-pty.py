@@ -7,7 +7,9 @@ compiler the runner image doesn't have.
 
 stdin goes to the terminal and the terminal's output comes out on stdout.
 Lines of "<rows> <cols>" on fd 3 resize it. Exits with the command's code
-(128 + the signal, for a signal), and hangs the command up when stdin closes.
+(128 + the signal, for a signal) once it exits, even if something it left
+running in the background still has the terminal open, and hangs the
+command up when stdin closes.
 """
 
 import errno
@@ -31,6 +33,19 @@ def write_all(fd, data):
         data = data[n:]
 
 
+def read_some(fd):
+    """What's there to read, or b"" at the end (or nothing there just now)."""
+    try:
+        return os.read(fd, 65536)
+    except BlockingIOError:
+        return None
+    except OSError as e:
+        # Linux says EIO once nothing holds the terminal open any more.
+        if e.errno != errno.EIO:
+            raise
+        return b""
+
+
 def main():
     rows, cols = int(sys.argv[1]), int(sys.argv[2])
     argv = sys.argv[3:]
@@ -40,31 +55,39 @@ def main():
     # From this side, so a resize that arrives straight away can't be undone
     # by the child getting round to it late.
     set_size(master, rows, cols)
+    # Input waits here rather than blocking: a big paste can fill the
+    # terminal's input queue while the program is busy writing output,
+    # and if this loop stopped to wait, nobody would read that output.
+    os.set_blocking(master, False)
+    pending = b""
 
     inputs = [0, 3, master]
     control = b""
-    while True:
+    status = None
+    while status is None:
         try:
-            ready, _, _ = select.select(inputs, [], [])
+            ready, writable, _ = select.select(inputs, [master] if pending else [], [], 0.25)
         except InterruptedError:
             continue
         if master in ready:
-            try:
-                data = os.read(master, 65536)
-            except OSError as e:
-                if e.errno != errno.EIO:
-                    raise
-                data = b""
-            if not data:
+            data = read_some(master)
+            if data == b"":
                 break
-            write_all(1, data)
+            if data:
+                write_all(1, data)
+        if master in writable:
+            try:
+                n = os.write(master, pending)
+                pending = pending[n:]
+            except BlockingIOError:
+                pass
         if 0 in ready:
             data = os.read(0, 65536)
             if not data:
                 os.kill(pid, signal.SIGHUP)
                 inputs.remove(0)
             else:
-                write_all(master, data)
+                pending += data
         if 3 in ready:
             data = os.read(3, 4096)
             if not data:
@@ -76,8 +99,20 @@ def main():
                 # The kernel tells the foreground program (SIGWINCH) itself.
                 if len(parts) == 2:
                     set_size(master, int(parts[0]), int(parts[1]))
+        # The shell's gone, even if something it started in the background
+        # still holds the terminal open: that's the end of this terminal.
+        done, st = os.waitpid(pid, os.WNOHANG)
+        if done:
+            status = st
 
-    _, status = os.waitpid(pid, 0)
+    # Whatever it printed last.
+    while True:
+        data = read_some(master)
+        if not data:
+            break
+        write_all(1, data)
+    if status is None:
+        _, status = os.waitpid(pid, 0)
     if os.WIFSIGNALED(status):
         sys.exit(128 + os.WTERMSIG(status))
     sys.exit(os.WEXITSTATUS(status))

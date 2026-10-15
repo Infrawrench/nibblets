@@ -288,6 +288,9 @@ export function applyLive(qc: QueryClient, server: string, m: LiveMessage): void
     case "schedules_changed":
       void qc.invalidateQueries({ queryKey: keys.schedules(server, m.nibbletId) });
       return;
+    case "tasks":
+      qc.setQueryData(keys.tasks(server, m.nibbletId), m.tasks);
+      return;
     case "thread_reset":
       // A restore replaced the thread: what's cached can't be patched, only fetched again.
       void qc.resetQueries({ queryKey: keys.thread(server, m.nibbletId) });

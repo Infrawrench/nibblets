@@ -6,11 +6,22 @@ import type { Writable } from "node:stream";
 
 /** More than anyone needs at once; each is a shell and a Python process. */
 const MAX_TERMINALS = 8;
+/**
+ * Output sent but not yet drawn by the browser, past which a terminal stops
+ * reading until it catches up (and below which it starts again). Keeps a
+ * flood (`yes`, a huge `cat`) from piling up here, on the server, and in
+ * front of the turn's own messages on the same socket.
+ */
+const PAUSE_AT = 512 * 1024;
+const RESUME_AT = 128 * 1024;
 const here = path.dirname(new URL(import.meta.url).pathname);
 
 type TerminalMessage = Extract<
   ServerToRunner,
-  { type: "terminal_open" | "terminal_input" | "terminal_resize" | "terminal_close" }
+  {
+    type:
+      "terminal_open" | "terminal_input" | "terminal_resize" | "terminal_close" | "terminal_ack";
+  }
 >;
 
 export interface TerminalsOptions {
@@ -25,6 +36,9 @@ export interface TerminalsOptions {
 interface Terminal {
   child: ChildProcess;
   resize: Writable;
+  /** Output sent that the browser hasn't said it's drawn. */
+  unacked: number;
+  paused: boolean;
 }
 
 /**
@@ -55,6 +69,16 @@ export class Terminals {
       case "terminal_close":
         this.close(msg.terminalId);
         return;
+      case "terminal_ack": {
+        const terminal = this.open.get(msg.terminalId);
+        if (!terminal) return;
+        terminal.unacked = Math.max(0, terminal.unacked - msg.chars);
+        if (terminal.paused && terminal.unacked <= RESUME_AT) {
+          terminal.paused = false;
+          terminal.child.stdout?.resume();
+        }
+        return;
+      }
     }
   }
 
@@ -67,7 +91,12 @@ export class Terminals {
     const terminal = this.open.get(id);
     if (!terminal) return;
     // Closing its input hangs up the shell, as closing a terminal window does.
+    // Nobody's drawing its output any more, so stop holding it back.
     terminal.child.stdin?.end();
+    if (terminal.paused) {
+      terminal.paused = false;
+      terminal.child.stdout?.resume();
+    }
     setTimeout(() => {
       if (terminal.child.exitCode === null) terminal.child.kill("SIGKILL");
     }, 5000).unref();
@@ -99,12 +128,19 @@ export class Terminals {
     const resize = child.stdio[3] as Writable;
     resize.on("error", () => {});
     child.stdin?.on("error", () => {});
-    this.open.set(terminalId, { child, resize });
+    const terminal: Terminal = { child, resize, unacked: 0, paused: false };
+    this.open.set(terminalId, terminal);
     // Output can stop partway through a character; the decoder holds it for the next chunk.
     const decoder = new StringDecoder("utf8");
     child.stdout?.on("data", (chunk: Buffer) => {
       const data = decoder.write(chunk);
-      if (data) this.opts.send({ type: "terminal_output", terminalId, data });
+      if (!data) return;
+      this.opts.send({ type: "terminal_output", terminalId, data });
+      terminal.unacked += data.length;
+      if (!terminal.paused && terminal.unacked > PAUSE_AT) {
+        terminal.paused = true;
+        child.stdout?.pause();
+      }
     });
     let ended = false;
     const end = (code: number | null) => {

@@ -232,6 +232,7 @@ export function createApp(services: Services, bus: Bus) {
           const msg = TerminalInput.safeParse(raw);
           if (!msg.success) return;
           if (msg.data.type === "input") conductor.terminals.input(terminalId, msg.data.data);
+          else if (msg.data.type === "ack") conductor.terminals.ack(terminalId, msg.data.chars);
           else conductor.terminals.resize(terminalId, msg.data);
         },
         onClose() {

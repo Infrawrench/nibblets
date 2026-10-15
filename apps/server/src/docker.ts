@@ -104,7 +104,7 @@ export class Orchestrator {
   ): Promise<string> {
     const home = await this.ensureHome(nibbletId);
     await this.carryOverHome(nibbletId, home);
-    await this.removeContainer(runnerName(nibbletId));
+    await this.removeContainer(runnerName(nibbletId), { graceful: true });
     const container = await this.docker.createContainer({
       name: runnerName(nibbletId),
       Image: this.config.NIBBLET_RUNNER_IMAGE,
@@ -458,7 +458,7 @@ export class Orchestrator {
 
   async stopRunner(nibbletId: string): Promise<void> {
     await this.carryOverHome(nibbletId, await this.ensureHome(nibbletId));
-    await this.removeContainer(runnerName(nibbletId));
+    await this.removeContainer(runnerName(nibbletId), { graceful: true });
   }
 
   /** Nibblet ids with a runner container, and whether it is running. */
@@ -524,19 +524,29 @@ export class Orchestrator {
   /** Containers this server is removing on purpose, so their exit events can be ignored. */
   private readonly removing = new Set<string>();
 
-  async removeContainer(name: string): Promise<void> {
+  /**
+   * `graceful`: stop it first, so what runs inside gets SIGTERM and a few
+   * seconds to finish (a runner's background tasks, saving a game world)
+   * rather than being killed outright.
+   */
+  async removeContainer(name: string, opts: { graceful?: boolean } = {}): Promise<void> {
     const container = this.docker.getContainer(name);
     try {
-      const { Id } = await container.inspect();
+      const { Id, State } = await container.inspect();
       this.removing.add(Id);
       // The die event arrives within moments; this only keeps the set small.
       setTimeout(() => this.removing.delete(Id), 5 * 60_000).unref();
+      if (opts.graceful && State?.Running)
+        await container.stop({ t: RUNNER_STOP_SECONDS }).catch(() => undefined);
       await container.remove({ force: true });
     } catch (err) {
       if (!isNotFound(err)) throw err;
     }
   }
 }
+
+/** What `docker stop` gives a runner: past the entry's own 10-second wait. */
+const RUNNER_STOP_SECONDS = 12;
 
 const STACK_IMAGES = ["server", "runner", "credproxy"];
 /** Where the stack's images come from: local builds, and releases. */

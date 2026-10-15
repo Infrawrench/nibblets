@@ -34,8 +34,8 @@ export function TerminalPanel({
   const tasks = useQuery({
     queryKey: key,
     queryFn: () => connection.client.nibblets.tasks({ id: nibblet.id }),
+    // Kept current by the live socket, which passes on every change.
     enabled: !asleep,
-    refetchInterval: 3000,
   });
   const [view, setView] = useState<View | null>(null);
   const show = (taskId: string | null) =>
@@ -168,7 +168,8 @@ function TerminalView({
     fit.fit();
 
     const socket = new TerminalSocket({
-      output: (data) => term.write(data),
+      // Acknowledged once drawn, so a flood waits for the screen to keep up.
+      output: (data) => term.write(data, () => socket.drawn(data.length)),
       state: (s, detail) => setState({ state: s, detail }),
     });
     void socket.open(connection, nibbletId, { cols: term.cols, rows: term.rows }, taskId);

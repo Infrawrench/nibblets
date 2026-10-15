@@ -9,6 +9,7 @@ import {
   type TurnSource,
   type Resources,
   type GuardConfig,
+  isReservedMcpName,
   type McpServerDef,
 } from "@nibblet/protocol";
 import { z } from "zod";
@@ -514,9 +515,11 @@ export class Conductor {
 
   /** Its own MCP servers, less any the host's tools now cover. */
   private async ownMcpServers(row: { hostTools: string[]; mcpServers: McpServerDef[] }) {
+    // One saved before its name was taken by a built-in would replace the built-in.
+    const own = row.mcpServers.filter((server) => !isReservedMcpName(server.name));
     return row.hostTools.length > 0 && this.config.HOST_MCP_URL
-      ? dropOverlaps(row.mcpServers, row.hostTools, (await hostTools(this.config)).servers)
-      : row.mcpServers;
+      ? dropOverlaps(own, row.hostTools, (await hostTools(this.config)).servers)
+      : own;
   }
 
   /**

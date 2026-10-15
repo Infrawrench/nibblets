@@ -18,6 +18,8 @@ export class TerminalHub {
   private readonly send: (nibbletId: string, message: ServerToRunner) => boolean;
   private readonly open = new Map<string, { nibbletId: string; sink: TerminalSink }>();
   private readonly tasks = new Map<string, BackgroundTask[]>();
+  /** Told whenever a nibblet's tasks change, to pass on to the UI. */
+  onTasks: (nibbletId: string, tasks: BackgroundTask[]) => void = () => {};
 
   /** `send` returns false when the nibblet has no runner connected. */
   constructor(send: (nibbletId: string, message: ServerToRunner) => boolean) {
@@ -45,6 +47,12 @@ export class TerminalHub {
     if (t) this.send(t.nibbletId, { type: "terminal_input", terminalId, data });
   }
 
+  /** The browser has drawn this much of its output. */
+  ack(terminalId: string, chars: number): void {
+    const t = this.open.get(terminalId);
+    if (t) this.send(t.nibbletId, { type: "terminal_ack", terminalId, chars });
+  }
+
   resize(terminalId: string, size: { cols: number; rows: number }): void {
     const t = this.open.get(terminalId);
     if (t) this.send(t.nibbletId, { type: "terminal_resize", terminalId, ...size });
@@ -61,6 +69,7 @@ export class TerminalHub {
   fromRunner(nibbletId: string, message: FromRunner): void {
     if (message.type === "tasks") {
       this.tasks.set(nibbletId, message.tasks);
+      this.onTasks(nibbletId, message.tasks);
       return;
     }
     const t = this.open.get(message.terminalId);
@@ -75,7 +84,7 @@ export class TerminalHub {
 
   /** Its runner disconnected: its terminals are gone, and so may its tasks be. */
   runnerGone(nibbletId: string): void {
-    this.tasks.delete(nibbletId);
+    if (this.tasks.delete(nibbletId)) this.onTasks(nibbletId, []);
     for (const [id, t] of this.open) {
       if (t.nibbletId !== nibbletId) continue;
       this.open.delete(id);

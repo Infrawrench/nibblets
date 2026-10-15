@@ -184,6 +184,8 @@ export const LiveMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("nibblet_deleted"), id: z.string() }),
   z.object({ type: z.literal("item"), item: StoredItem }),
   z.object({ type: z.literal("schedules_changed"), nibbletId: z.string() }),
+  /** Its background tasks, whenever one starts or ends (empty when its container's gone). */
+  z.object({ type: z.literal("tasks"), nibbletId: z.string(), tasks: z.array(BackgroundTask) }),
   /** The thread was replaced (a snapshot was restored): drop it and fetch again from the start. */
   z.object({ type: z.literal("thread_reset"), nibbletId: z.string() }),
   z.object({
@@ -203,6 +205,8 @@ const TerminalSize = { cols: z.int().min(1).max(1000), rows: z.int().min(1).max(
 export const TerminalInput = z.discriminatedUnion("type", [
   z.object({ type: z.literal("input"), data: z.string().max(65_536) }),
   z.object({ type: z.literal("resize"), ...TerminalSize }),
+  /** How much output it has drawn since the last ack, so more can come. */
+  z.object({ type: z.literal("ack"), chars: z.int().min(0) }),
 ]);
 export type TerminalInput = z.infer<typeof TerminalInput>;
 

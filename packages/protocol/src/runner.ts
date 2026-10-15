@@ -137,6 +137,15 @@ export const ServerToRunner = z.discriminatedUnion("type", [
     rows: z.int().min(1).max(1000),
   }),
   z.object({ type: z.literal("terminal_close"), terminalId: z.string() }),
+  /**
+   * How much of its output (in UTF-16 code units, as sent) the browser has
+   * drawn. A terminal stops reading once too much is still on its way.
+   */
+  z.object({
+    type: z.literal("terminal_ack"),
+    terminalId: z.string(),
+    chars: z.int().min(0),
+  }),
   /** The user stopping one of its background tasks. */
   z.object({ type: z.literal("task_stop"), taskId: z.string() }),
 ]);

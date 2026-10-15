@@ -4,7 +4,7 @@ import type { McpServerSpec } from "@nibblet/harness";
 import type { BackgroundTask } from "@nibblet/protocol";
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { mkdir, open, rm } from "node:fs/promises";
+import { appendFile, mkdir, open, rm } from "node:fs/promises";
 import { createServer, type Server as HttpServer } from "node:http";
 import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
@@ -13,8 +13,19 @@ import { z } from "zod";
 const KEEP_FINISHED = 20;
 /** How long a stopped task gets to exit before it's killed. */
 const STOP_GRACE_MS = 10_000;
+/**
+ * How long tasks get to exit when the container stops, before they're
+ * killed: enough for a game server to save. Fits inside the entry's wait
+ * and the server's `docker stop` timeout.
+ */
+export const SHUTDOWN_GRACE_MS = 8_000;
 /** How much of a log's end `output` reads, at most. */
 const TAIL_BYTES = 256 * 1024;
+/** A log longer than this is cut back to its last KEEP_LOG_BYTES. */
+const MAX_LOG_BYTES = 16 * 1024 * 1024;
+const KEEP_LOG_BYTES = 1024 * 1024;
+/** How often logs are measured, and a finished leader's group is checked on. */
+const CHECK_EVERY_MS = 1_000;
 
 export interface BackgroundTasksOptions {
   workdir: string;
@@ -24,12 +35,17 @@ export interface BackgroundTasksOptions {
   onChange?: (tasks: BackgroundTask[]) => void;
   /** Overrides STOP_GRACE_MS, for tests. */
   stopGraceMs?: number;
+  /** Overrides MAX_LOG_BYTES and KEEP_LOG_BYTES, for tests. */
+  maxLogBytes?: number;
+  keepLogBytes?: number;
 }
 
 interface Running {
   task: BackgroundTask;
   child: ChildProcess | null;
   log: string;
+  /** The command's own exit code, once it's exited; what it started may still be running. */
+  leaderCode?: number | null;
 }
 
 /** The last `lines` lines of some text, without a trailing empty one. */
@@ -52,12 +68,16 @@ export class BackgroundTasks {
   private next = 1;
   private http: HttpServer | null = null;
   private ready: Promise<void>;
+  private readonly checks: NodeJS.Timeout;
+  private checking = false;
 
   constructor(opts: BackgroundTasksOptions) {
     this.opts = opts;
     this.ready = rm(opts.logDir, { recursive: true, force: true }).then(() =>
       mkdir(opts.logDir, { recursive: true, mode: 0o700 }).then(() => undefined),
     );
+    this.checks = setInterval(() => void this.check(), CHECK_EVERY_MS);
+    this.checks.unref();
   }
 
   list(): BackgroundTask[] {
@@ -103,13 +123,19 @@ export class BackgroundTasks {
       });
       running.child = child;
       child.on("error", (err) => {
-        this.ended(running, null);
+        running.leaderCode = null;
+        this.ended(running);
         void open(log, "a").then(async (h) => {
           await h.write(`\n[couldn't start: ${err.message}]\n`);
           await h.close();
         });
       });
-      child.on("exit", (code) => this.ended(running, code));
+      // It's over when its whole group is, not just the command: a script that
+      // starts a server with `&` and returns leaves the server running.
+      child.on("exit", (code) => {
+        running.leaderCode = code;
+        if (!groupAlive(child.pid)) this.ended(running);
+      });
     } finally {
       closeSync(fd);
     }
@@ -148,23 +174,76 @@ export class BackgroundTasks {
     return running.task;
   }
 
-  /** Stops everything, for when the runner shuts down. */
-  stopAll(): void {
-    for (const running of this.tasks.values()) {
-      const pid = running.child?.pid;
-      if (running.task.status === "running" && pid) signalGroup(pid, "SIGKILL");
-    }
+  /**
+   * Stops everything, for when the runner shuts down: SIGTERM first, so a
+   * server can save what it has, then SIGKILL for whatever's left after
+   * `graceMs`.
+   */
+  async stopAll(graceMs = SHUTDOWN_GRACE_MS): Promise<void> {
+    const groups = [...this.tasks.values()]
+      .filter((r) => r.task.status === "running" && r.child?.pid)
+      .map((r) => r.child?.pid as number);
+    for (const pid of groups) signalGroup(pid, "SIGTERM");
+    const deadline = Date.now() + graceMs;
+    while (groups.some(groupAlive) && Date.now() < deadline)
+      await new Promise((done) => setTimeout(done, 100));
+    for (const pid of groups) if (groupAlive(pid)) signalGroup(pid, "SIGKILL");
   }
 
-  private ended(running: Running, code: number | null): void {
+  private ended(running: Running): void {
     if (running.task.status === "exited") return;
     running.task = {
       ...running.task,
       status: "exited",
-      exitCode: code,
+      exitCode: running.leaderCode ?? null,
       endedAt: new Date().toISOString(),
     };
     this.changed();
+  }
+
+  /**
+   * Once a second: ends tasks whose command exited and whose group has now
+   * gone too, and cuts back logs that have grown too long.
+   */
+  private async check(): Promise<void> {
+    if (this.checking) return;
+    this.checking = true;
+    try {
+      for (const running of this.tasks.values()) {
+        if (running.task.status !== "running") continue;
+        if (running.leaderCode !== undefined && !groupAlive(running.child?.pid))
+          this.ended(running);
+        await this.trimLog(running.log).catch(() => undefined);
+      }
+    } finally {
+      this.checking = false;
+    }
+  }
+
+  /**
+   * Keeps a log to its last KEEP_LOG_BYTES once it's past MAX_LOG_BYTES. The
+   * task appends to it as it goes, so a line or two written while it's cut
+   * back may land before the kept part rather than after it.
+   */
+  async trimLog(log: string): Promise<void> {
+    const max = this.opts.maxLogBytes ?? MAX_LOG_BYTES;
+    const keep = this.opts.keepLogBytes ?? KEEP_LOG_BYTES;
+    const handle = await open(log, "r+");
+    try {
+      const { size } = await handle.stat();
+      if (size <= max) return;
+      const tail = Buffer.alloc(keep);
+      await handle.read(tail, 0, keep, size - keep);
+      // From the first whole line.
+      const start = tail.indexOf(10) + 1;
+      await handle.truncate(0);
+      await appendFile(
+        log,
+        Buffer.concat([Buffer.from("[earlier output trimmed]\n"), tail.subarray(start)]),
+      );
+    } finally {
+      await handle.close();
+    }
   }
 
   private prune(): void {
@@ -281,8 +360,20 @@ export class BackgroundTasks {
   }
 
   async close(): Promise<void> {
-    this.stopAll();
+    clearInterval(this.checks);
+    await this.stopAll();
     await new Promise<void>((done) => (this.http ? this.http.close(() => done()) : done()));
+  }
+}
+
+/** Whether anything in a task's process group is still running. */
+function groupAlive(pid: number | undefined): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 

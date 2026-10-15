@@ -30,14 +30,26 @@ export interface TerminalEvents {
   state(state: TerminalState, detail?: string): void;
 }
 
+/** Output drawn is acknowledged in batches this big, or after ACK_AFTER_MS. */
+const ACK_EVERY_CHARS = 32 * 1024;
+const ACK_AFTER_MS = 100;
+/** Typing that waits for the socket to open, at most. */
+const MAX_EARLY_INPUT = 64 * 1024;
+
 /**
  * One terminal's socket. Opens with a fresh ticket, and says when the
- * shell (or the task's output) has ended, or why it couldn't start.
+ * shell (or the task's output) has ended, or why it couldn't start. Tell it
+ * when output has been drawn (`drawn`), or the container stops sending more.
  */
 export class TerminalSocket {
   private readonly events: TerminalEvents;
   private ws: WebSocket | null = null;
   private closed = false;
+  /** The latest size, sent once the socket opens in case it changed on the way. */
+  private size = { cols: 80, rows: 24 };
+  private early = "";
+  private toAck = 0;
+  private ackTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(events: TerminalEvents) {
     this.events = events;
@@ -50,6 +62,7 @@ export class TerminalSocket {
     taskId: string | null,
   ): Promise<void> {
     this.events.state("connecting");
+    this.size = size;
     let url: string;
     try {
       url = await connection.socketUrl(terminalPath(nibbletId, size, taskId));
@@ -61,7 +74,12 @@ export class TerminalSocket {
     const ws = new WebSocket(url);
     this.ws = ws;
     let ended = false;
-    ws.onopen = () => this.events.state("open");
+    ws.onopen = () => {
+      this.events.state("open");
+      this.send({ type: "resize", ...this.size });
+      if (this.early) this.send({ type: "input", data: this.early });
+      this.early = "";
+    };
     ws.onmessage = (e) => {
       const event = parseTerminalEvent(e.data);
       if (!event) return;
@@ -87,16 +105,37 @@ export class TerminalSocket {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(message));
   }
 
+  private get isOpen(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
   input(data: string): void {
-    this.send({ type: "input", data });
+    if (this.isOpen) this.send({ type: "input", data });
+    else if (!this.closed) this.early = (this.early + data).slice(-MAX_EARLY_INPUT);
   }
 
   resize(cols: number, rows: number): void {
+    this.size = { cols, rows };
     this.send({ type: "resize", cols, rows });
+  }
+
+  /** This much output (as it arrived, in string length) has been drawn. */
+  drawn(chars: number): void {
+    this.toAck += chars;
+    if (this.toAck >= ACK_EVERY_CHARS) this.flushAck();
+    else this.ackTimer ??= setTimeout(() => this.flushAck(), ACK_AFTER_MS);
+  }
+
+  private flushAck(): void {
+    if (this.ackTimer) clearTimeout(this.ackTimer);
+    this.ackTimer = null;
+    if (this.toAck > 0) this.send({ type: "ack", chars: this.toAck });
+    this.toAck = 0;
   }
 
   close(): void {
     this.closed = true;
+    if (this.ackTimer) clearTimeout(this.ackTimer);
     this.ws?.close();
   }
 }

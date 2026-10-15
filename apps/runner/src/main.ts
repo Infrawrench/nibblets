@@ -87,6 +87,7 @@ connection = new Connection({
       case "terminal_input":
       case "terminal_resize":
       case "terminal_close":
+      case "terminal_ack":
         terminals.handle(msg);
         return;
       case "task_stop":
