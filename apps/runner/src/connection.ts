@@ -3,6 +3,11 @@ import { RunnerToServer, ServerToRunner } from "@nibblet/protocol";
 
 const PING_MS = 20_000;
 const MAX_BACKLOG = 5_000;
+/**
+ * Of no use later, so never kept for a reconnect: a terminal's output is
+ * for whoever's watching now, and the task list is sent afresh on connect.
+ */
+const NOT_KEPT = new Set<RunnerToServer["type"]>(["terminal_output", "terminal_exit", "tasks"]);
 
 /**
  * A WebSocket to the server that survives the server restarting. Messages
@@ -14,6 +19,7 @@ export class Connection {
   private readonly token: string;
   private readonly onMessage: (msg: ServerToRunner) => void;
   private readonly onOpen: () => void;
+  private readonly onClose: () => void;
   private ws: WebSocket | null = null;
   private backlog: string[] = [];
   private attempt = 0;
@@ -24,11 +30,14 @@ export class Connection {
     token: string;
     onMessage: (msg: ServerToRunner) => void;
     onOpen: () => void;
+    /** Each time the socket drops, before it reconnects. */
+    onClose?: () => void;
   }) {
     this.url = opts.url;
     this.token = opts.token;
     this.onMessage = opts.onMessage;
     this.onOpen = opts.onOpen;
+    this.onClose = opts.onClose ?? (() => {});
   }
 
   connect(): void {
@@ -73,6 +82,7 @@ export class Connection {
     ws.on("close", () => {
       if (ping) clearInterval(ping);
       this.ws = null;
+      this.onClose();
       if (this.closed) return;
       const delay = Math.min(30_000, 500 * 2 ** this.attempt++) * (0.5 + Math.random() / 2);
       setTimeout(() => this.connect(), delay);
@@ -88,6 +98,7 @@ export class Connection {
       this.ws.send(raw);
       return;
     }
+    if (NOT_KEPT.has(msg.type)) return;
     this.backlog.push(raw);
     if (this.backlog.length > MAX_BACKLOG)
       this.backlog.splice(0, this.backlog.length - MAX_BACKLOG);

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { Effort, HarnessId } from "./models.ts";
 import { CliLogin, McpServerDef, ToolRule } from "./mcp.ts";
 import { SharedVault } from "./onepassword.ts";
-import { FileRef, JsonValue, ThreadItem, TurnSource, Usage } from "./schema.ts";
+import { BackgroundTask, FileRef, JsonValue, ThreadItem, TurnSource, Usage } from "./schema.ts";
 
 /**
  * The WebSocket between the server and the runner inside each nibblet's
@@ -118,6 +118,27 @@ export const ServerToRunner = z.discriminatedUnion("type", [
     approved: z.boolean(),
     reason: z.string().nullable(),
   }),
+  /**
+   * The user's terminal in the container: a login shell as the agent's user,
+   * or, given a task, that task's output followed live.
+   */
+  z.object({
+    type: z.literal("terminal_open"),
+    terminalId: z.string(),
+    cols: z.int().min(1).max(1000),
+    rows: z.int().min(1).max(1000),
+    taskId: z.string().nullable().default(null),
+  }),
+  z.object({ type: z.literal("terminal_input"), terminalId: z.string(), data: z.string() }),
+  z.object({
+    type: z.literal("terminal_resize"),
+    terminalId: z.string(),
+    cols: z.int().min(1).max(1000),
+    rows: z.int().min(1).max(1000),
+  }),
+  z.object({ type: z.literal("terminal_close"), terminalId: z.string() }),
+  /** The user stopping one of its background tasks. */
+  z.object({ type: z.literal("task_stop"), taskId: z.string() }),
 ]);
 export type ServerToRunner = z.infer<typeof ServerToRunner>;
 
@@ -146,6 +167,14 @@ export const RunnerToServer = z.discriminatedUnion("type", [
     tool: z.string(),
     input: JsonValue,
   }),
+  z.object({ type: z.literal("terminal_output"), terminalId: z.string(), data: z.string() }),
+  z.object({
+    type: z.literal("terminal_exit"),
+    terminalId: z.string(),
+    code: z.int().nullable(),
+  }),
+  /** Its background tasks, whenever they change and on every connect. */
+  z.object({ type: z.literal("tasks"), tasks: z.array(BackgroundTask) }),
   z.object({
     type: z.literal("log"),
     level: z.enum(["debug", "info", "warn", "error"]),

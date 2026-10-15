@@ -26,6 +26,7 @@ export const keys = {
   thread: (server: string, id: string) => ["thread", server, id] as const,
   schedules: (server: string, id: string) => ["schedules", server, id] as const,
   snapshots: (server: string, id: string) => ["snapshots", server, id] as const,
+  tasks: (server: string, id: string) => ["tasks", server, id] as const,
   memories: (server: string, id: string | null, query: string) =>
     ["memories", server, id, query] as const,
   hostTools: (server: string) => ["hostTools", server] as const,

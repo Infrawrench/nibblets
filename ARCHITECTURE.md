@@ -51,6 +51,11 @@ Neither keeps any capability, and the server sets no-new-privileges, drops every
 
 Harness plugins live in `packages/harness-*` and implement `HarnessPlugin` from `@nibblet/harness`, using `TurnWriter` to turn deltas into thread items.
 
+### Background tasks and terminals
+
+- **Background tasks:** the runner serves a local `tasks` MCP server (`apps/runner/src/tasks.ts`), as it does `files`: `task_start`, `task_list`, `task_output` and `task_stop`. Each task is `bash -lc <command>` in its own process group, as the agent's user, with its output in a log under `/tmp`. It outlives the turn that started it, but not the container. The runner sends the list to the server (a `tasks` message) whenever it changes and on every connect, and the UI reads it with `nibblets.tasks`. The user stops one with `nibblets.stopTask`, which the server passes on as `task_stop`.
+- **Terminals:** the UI opens a WebSocket at `/api/nibblets/:id/terminal?cols=&rows=[&task=]`, with a ticket like the live socket. The server carries it over the runner's socket (`terminal_open`, `terminal_input`, `terminal_resize` and `terminal_close` down; `terminal_output` and `terminal_exit` up), so there's no new port in the container. The runner starts a login shell, or `tail -F` of a task's log, in a pseudo-terminal through `terminal-pty.py`, since node-pty would need a compiler the image doesn't have. It runs as the agent's user, so it reaches what the agent reaches and nothing of the guard's. A runner can only answer terminals opened on it, and terminal output is never kept for a reconnect: when the socket drops, the runner hangs up every shell.
+
 ### OpenCode
 
 OpenCode nibblets use the host's own OpenCode account, not the credential proxy. The host bridge reports whether OpenCode is set up (`GET /harness/opencode`: the CLI, OpenCode.app, or a config or login in its XDG directories) and hands over the config and `auth.json` (`GET /harness/opencode/login`, bridge token only).

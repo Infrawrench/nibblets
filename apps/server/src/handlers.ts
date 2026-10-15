@@ -176,6 +176,12 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         await conductor.resumeNow(id);
         return ok;
       },
+      tasks: async ({ id }) => conductor.terminals.tasksOf(id),
+      stopTask: async ({ id, taskId }) => {
+        if (!conductor.terminals.stopTask(id, taskId))
+          throw new RpcError("bad_request", "It isn't running");
+        return ok;
+      },
       decide: async ({ id, approvalId, approve, reason }) => {
         await conductor.approvals.decide(id, approvalId, approve, reason);
         return ok;
