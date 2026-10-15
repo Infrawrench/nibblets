@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { HarnessId, harnesses, type ModelOption } from "@nibblet/protocol";
 import type { ServerConnection } from "./connection.ts";
 import { keys } from "./servers.tsx";
@@ -25,21 +25,28 @@ const subscription: Partial<Record<HarnessId, "anthropic" | "openai">> = {
   codex: "openai",
 };
 
+/** Harnesses whose models depend on the host's own setup, so the server is asked. */
+const fromHost: readonly HarnessId[] = ["kimi", "opencode"];
+
 /**
  * Every harness's models on one server: the fixed lists for Claude and
- * Codex, and OpenCode's live list, which depends on what the server's host
- * is signed in to.
+ * Codex, and for Kimi and OpenCode what the server says, which depends on
+ * what the server's host is signed in to.
  */
 export function useModels(connection: ServerConnection | null | undefined): ModelCatalogue {
-  const opencode = useQuery({
-    queryKey: ["harness-models", connection?.id ?? "none", "opencode"],
-    queryFn: () => {
-      if (!connection) throw new Error("No server");
-      return connection.client.harnesses.models({ harness: "opencode" });
-    },
-    enabled: Boolean(connection),
-    staleTime: 60_000,
+  const hostQueries = useQueries({
+    queries: fromHost.map((harness) => ({
+      queryKey: ["harness-models", connection?.id ?? "none", harness],
+      queryFn: () => {
+        if (!connection) throw new Error("No server");
+        return connection.client.harnesses.models({ harness });
+      },
+      enabled: Boolean(connection),
+      staleTime: 60_000,
+    })),
   });
+  /** The server's answer for a harness in `fromHost`; undefined for the rest. */
+  const hosted = (harness: HarnessId) => hostQueries[fromHost.indexOf(harness)];
   const info = useQuery({
     queryKey: keys.info(connection?.id ?? "none"),
     queryFn: () => {
@@ -51,12 +58,11 @@ export function useModels(connection: ServerConnection | null | undefined): Mode
   });
 
   const forHarness = (harness: HarnessId): HarnessModelState => {
-    if (!harnesses[harness].dynamicModels) {
-      return { models: harnesses[harness].models, loading: false, unavailable: null };
-    }
-    if (opencode.isPending) return { models: [], loading: true, unavailable: null };
-    if (opencode.error) return { models: [], loading: false, unavailable: opencode.error.message };
-    const data = opencode.data;
+    const query = hosted(harness);
+    if (!query) return { models: harnesses[harness].models, loading: false, unavailable: null };
+    if (query.isPending) return { models: [], loading: true, unavailable: null };
+    if (query.error) return { models: [], loading: false, unavailable: query.error.message };
+    const data = query.data;
     return {
       models: data?.models ?? [],
       loading: false,
@@ -67,7 +73,7 @@ export function useModels(connection: ServerConnection | null | undefined): Mode
   // Until the server says otherwise, everything is on offer.
   const signedIn = (harness: HarnessId) => {
     const provider = subscription[harness];
-    if (!provider) return opencode.isPending || forHarness(harness).models.length > 0;
+    if (!provider) return hosted(harness)?.isPending || forHarness(harness).models.length > 0;
     const credential = info.data?.credentials.find((c) => c.provider === provider);
     return !info.data || (credential !== undefined && credential.source !== "none");
   };

@@ -1,0 +1,19 @@
+{
+  "name": "@nibblet/harness-kimi",
+  "version": "0.1.12",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@moonshot-ai/kimi-code": "^2.2.0",
+    "@nibblet/harness": "workspace:*",
+    "@nibblet/protocol": "workspace:*",
+    "smol-toml": "^1.9.1"
+  },
+  "devDependencies": {}
+}

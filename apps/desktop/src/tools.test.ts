@@ -26,7 +26,7 @@ describe("setup on a Mac without Homebrew", () => {
   });
 
   it("can install every agent in the window", () => {
-    for (const id of ["claude", "codex", "opencode"]) {
+    for (const id of ["claude", "codex", "kimi", "opencode"]) {
       expect(actionsFor(id, bareMac).some((a) => "run" in a)).toBe(true);
     }
   });

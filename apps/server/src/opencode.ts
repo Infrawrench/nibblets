@@ -7,8 +7,10 @@ import {
 } from "@nibblet/protocol";
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { bridgeGet, type Bridge } from "./bridge.ts";
 import type { Config } from "./config.ts";
 import type { Orchestrator } from "./docker.ts";
+import { kimiUnavailable } from "./kimi.ts";
 
 const CACHE_MS = 60_000;
 
@@ -25,17 +27,6 @@ const ListedModels = z.object({
 
 /** `provider/model`, which is all the server can check when the live list is out of reach. */
 export const OPENCODE_MODEL_ID = /^[^\s/]+\/\S+$/;
-
-type Bridge = Pick<Config, "HOST_MCP_URL" | "HOST_MCP_TOKEN">;
-
-async function bridgeGet(config: Bridge, path: string): Promise<unknown> {
-  const res = await fetch(`${config.HOST_MCP_URL}${path}`, {
-    headers: { authorization: `Bearer ${config.HOST_MCP_TOKEN}` },
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
 
 /**
  * The part of the host's OpenCode logins (auth.json) a nibblet needs: only
@@ -86,9 +77,10 @@ export async function opencodeLogin(
 }
 
 /**
- * Model lists for the picker. Claude and Codex have fixed lists; OpenCode's
- * is whatever `opencode models` gives for the host's login, run in a
- * throwaway runner container so it matches what a nibblet will see.
+ * Model lists for the picker. Claude and Codex have fixed lists; Kimi's is
+ * fixed too, but only on offer once the host is signed in to Kimi Code.
+ * OpenCode's is whatever `opencode models` gives for the host's login, run in
+ * a throwaway runner container so it matches what a nibblet will see.
  */
 export class HarnessModelLists {
   private cache: { key: string; at: number; result: Promise<HarnessModels> } | null = null;
@@ -101,10 +93,10 @@ export class HarnessModelLists {
   }
 
   async list(harness: HarnessId): Promise<HarnessModels> {
-    if (harness !== "opencode") {
-      return { harness, state: "ready", detail: null, models: [...harnesses[harness].models] };
-    }
-    return this.opencode();
+    if (harness === "opencode") return this.opencode();
+    const detail = harness === "kimi" ? await kimiUnavailable(this.config) : null;
+    if (detail) return { harness, state: "unavailable", detail, models: [] };
+    return { harness, state: "ready", detail: null, models: [...harnesses[harness].models] };
   }
 
   /** Whether `model` can be used with `harness`. */

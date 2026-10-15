@@ -43,5 +43,19 @@ export function HarnessIcon({ harness, className }: { harness: HarnessId; classN
           />
         </svg>
       );
+    default:
+      // Harnesses without an official mark yet get their initial, so the
+      // picker never shows a gap. Swap in the real logo when there is one.
+      return (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "flex size-4 items-center justify-center rounded-sm bg-text/15 text-[10px] font-semibold leading-none text-text uppercase",
+            className,
+          )}
+        >
+          {harness.slice(0, 1)}
+        </span>
+      );
   }
 }

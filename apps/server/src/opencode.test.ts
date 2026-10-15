@@ -31,6 +31,13 @@ describe("HarnessModelLists", () => {
     expect(await lists.accepts("opencode", "big-pickle")).toBe(false);
   });
 
+  it("offers Kimi only once the host is signed in, but still knows its models", async () => {
+    const kimi = await lists.list("kimi");
+    expect(kimi).toMatchObject({ state: "unavailable", models: [] });
+    expect(kimi.detail).toBeTruthy();
+    expect(await lists.accepts("kimi", "kimi-code/k3")).toBe(true);
+  });
+
   it("never puts the host's OpenCode login in a nibblet the API returns", () => {
     expect(Object.keys(Nibblet.shape)).not.toContain("opencodeLogin");
   });

@@ -90,11 +90,17 @@ COPY packages/protocol ./packages/protocol
 COPY packages/harness ./packages/harness
 COPY packages/harness-claude ./packages/harness-claude
 COPY packages/harness-codex ./packages/harness-codex
+COPY packages/harness-kimi ./packages/harness-kimi
 COPY packages/harness-opencode ./packages/harness-opencode
 COPY apps/runner ./apps/runner
 # Installing here, on Linux, pulls the Linux builds of the Claude Code,
-# Codex and OpenCode binaries the SDKs spawn.
-RUN pnpm install --prod --frozen-lockfile --filter @nibblet/runner...
+# Codex and OpenCode binaries the SDKs spawn, and Kimi Code's own. Kimi
+# brings node-pty along for its interactive terminal, which print mode never
+# opens; it has no Linux prebuild, and this image has no compiler, so its
+# build is turned off here (the desktop app still builds it).
+RUN sed -i 's/^  node-pty: true$/  node-pty: false/' pnpm-workspace.yaml \
+ && grep -q '^  node-pty: false$' pnpm-workspace.yaml \
+ && pnpm install --prod --frozen-lockfile --filter @nibblet/runner...
 
 # Two users (see apps/runner/src/entry.ts): the agent, which runs the
 # harness and whatever it does, and the guard, which holds the secrets and

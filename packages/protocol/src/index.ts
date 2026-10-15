@@ -4,6 +4,7 @@ export * from "./rpc.ts";
 export * from "./contract.ts";
 export * from "./runner.ts";
 export * from "./codex.ts";
+export * from "./kimi.ts";
 export * from "./mcp.ts";
 export * from "./connect.ts";
 export * from "./onepassword.ts";

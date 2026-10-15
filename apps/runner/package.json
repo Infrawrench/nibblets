@@ -12,6 +12,7 @@
     "@nibblet/harness": "workspace:*",
     "@nibblet/harness-claude": "workspace:*",
     "@nibblet/harness-codex": "workspace:*",
+    "@nibblet/harness-kimi": "workspace:*",
     "@nibblet/harness-opencode": "workspace:*",
     "@nibblet/protocol": "workspace:*",
     "ws": "^8.22.0",
