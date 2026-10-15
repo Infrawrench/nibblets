@@ -129,6 +129,36 @@ describe("CodexMapper", () => {
     expect(items).toEqual([expect.objectContaining({ id: "t1:c2", status: "error" })]);
     expect(mapper.state.error).toBe("usage limit");
   });
+
+  it("reads an MCP call with a null error as done, and one with an error as failed", () => {
+    // What `codex exec --json` writes: the absent side is null, not left out.
+    const call = (id: string, rest: object) =>
+      JSON.parse(
+        JSON.stringify({
+          type: "item.completed",
+          item: {
+            id,
+            type: "mcp_tool_call",
+            server: "computer",
+            tool: "press_key",
+            arguments: {},
+            ...rest,
+          },
+        }),
+      ) as ThreadEvent;
+    const { items } = run([
+      call("ok", {
+        result: { content: [{ type: "text", text: "pressed" }], structured_content: null },
+        error: null,
+        status: "completed",
+      }),
+      call("bad", { result: null, error: { message: "no session" }, status: "failed" }),
+    ]);
+    expect(items).toEqual([
+      expect.objectContaining({ id: "t1:ok", output: "pressed", status: "done" }),
+      expect.objectContaining({ id: "t1:bad", output: "no session", status: "error" }),
+    ]);
+  });
 });
 
 describe("placeholderAuth", () => {
