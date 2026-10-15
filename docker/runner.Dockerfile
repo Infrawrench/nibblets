@@ -90,10 +90,11 @@ COPY packages/protocol ./packages/protocol
 COPY packages/harness ./packages/harness
 COPY packages/harness-claude ./packages/harness-claude
 COPY packages/harness-codex ./packages/harness-codex
+COPY packages/harness-kimi ./packages/harness-kimi
 COPY packages/harness-opencode ./packages/harness-opencode
 COPY apps/runner ./apps/runner
 # Installing here, on Linux, pulls the Linux builds of the Claude Code,
-# Codex and OpenCode binaries the SDKs spawn.
+# Codex and OpenCode binaries the SDKs spawn, and Kimi Code's own.
 RUN pnpm install --prod --frozen-lockfile --filter @nibblet/runner...
 
 # Two users (see apps/runner/src/entry.ts): the agent, which runs the

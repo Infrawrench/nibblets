@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const HarnessId = z.enum(["claude", "codex", "opencode"]);
+export const HarnessId = z.enum(["claude", "codex", "kimi", "opencode"]);
 export type HarnessId = z.infer<typeof HarnessId>;
 
 export const Effort = z.enum(["low", "medium", "high", "xhigh", "max", "ultra"]);
@@ -116,6 +116,36 @@ const codexModels = [
   },
 ] as const satisfies readonly ModelOption[];
 
+// The aliases Kimi Code's `/login` provisions on a managed account, as its
+// config reference lists them. Only the K3 family declares effort levels.
+const kimiModels = [
+  {
+    id: "kimi-code/k3",
+    label: "K3",
+    description: "Strongest Kimi model",
+    provider: "kimi",
+    efforts: ["low", "high", "max"],
+    defaultEffort: "high",
+    isNew: true,
+  },
+  {
+    id: "kimi-code/kimi-for-coding",
+    label: "Kimi for Coding",
+    description: "Balanced coding workhorse",
+    provider: "kimi",
+    efforts: [],
+    defaultEffort: "medium",
+  },
+  {
+    id: "kimi-code/kimi-for-coding-highspeed",
+    label: "Kimi for Coding Highspeed",
+    description: "Fast, and priced higher",
+    provider: "kimi",
+    efforts: [],
+    defaultEffort: "medium",
+  },
+] as const satisfies readonly ModelOption[];
+
 export const harnesses: Record<HarnessId, HarnessInfo> = {
   claude: {
     id: "claude",
@@ -134,6 +164,15 @@ export const harnesses: Record<HarnessId, HarnessInfo> = {
     models: codexModels,
     dynamicModels: false,
     cli: { name: "Codex", package: "@openai/codex", bin: "codex" },
+  },
+  kimi: {
+    id: "kimi",
+    label: "Kimi Code",
+    description: "Kimi Code CLI, on your Kimi subscription",
+    defaultModel: "kimi-code/k3",
+    models: kimiModels,
+    dynamicModels: false,
+    cli: { name: "Kimi Code", package: "@moonshot-ai/kimi-code", bin: "kimi" },
   },
   opencode: {
     id: "opencode",

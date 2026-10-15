@@ -60,6 +60,15 @@ OpenCode nibblets use the host's own OpenCode account, not the credential proxy.
 - **What changes in the container:** the host config's `mcp` section is dropped, because the nibblet brings its own servers. Provider URLs on the host's `localhost` or `127.0.0.1` are pointed at `host.docker.internal`, so a local Ollama still resolves.
 - **Not written back:** a provider whose OAuth token refreshes inside the container doesn't write it back to the host.
 - **Without a bridge or a login:** OpenCode falls back to Anthropic and OpenAI through the credential proxy.
+
+### Kimi Code
+
+Kimi nibblets use the host's own Kimi Code CLI login, like OpenCode ones. The host bridge reports whether Kimi Code is set up (`GET /harness/kimi`: the `kimi` CLI on PATH, or a `config.toml` or token under `$KIMI_CODE_HOME`) and hands over the config and the OAuth token (`GET /harness/kimi/login`, bridge token only).
+
+- **On each configure:** the server fetches the login fresh and sends it only over the runner socket. The runner writes the config into `<workdir>/.kimi-code/config.toml`, and the token to `/tmp/nibblet-secrets/kimi-code.json`, with `credentials/kimi-code.json` a link to it, so it never lands in the home volume or its snapshots.
+- **What the CLI is asked for:** one process per turn, `kimi -p <prompt> --output-format stream-json`, which never asks for approval, so nothing waits on a person who isn't in the container. The stream is OpenAI chat shaped, which `KimiMapper` turns into thread items; sessions live on disk and the next turn resumes with `--session`.
+- **What changes in the container:** the nibblet's own MCP servers go in `<workdir>/.kimi-code/mcp.json`. Because that path is also where Kimi looks for a project's servers, the turn runs with `KIMI_CODE_TRUST_WORKSPACE=1`, the same trust the other harnesses give their workdir.
+- **Without a bridge or a login:** the harness says so rather than guessing at credentials. Kimi Code has no credential proxy to fall back to.
 - **Effort:** OpenCode has no effort setting, so its models carry none and the effort menu is hidden.
 
 ## Tools (`/mcp` on the server)

@@ -21,6 +21,17 @@ export const OpencodeLogin = z.object({
 });
 export type OpencodeLogin = z.infer<typeof OpencodeLogin>;
 
+/**
+ * The host's Kimi Code CLI `config.toml` and OAuth token, as text, for Kimi
+ * nibblets to run on the user's own Kimi subscription. Sent only over the
+ * runner socket; never stored.
+ */
+export const KimiLogin = z.object({
+  config: z.string().nullable(),
+  token: z.string().nullable(),
+});
+export type KimiLogin = z.infer<typeof KimiLogin>;
+
 export const RunnerConfig = z.object({
   nibbletId: z.string(),
   name: z.string(),
@@ -41,6 +52,8 @@ export const RunnerConfig = z.object({
   cli: z.array(CliLogin).default([]),
   /** For OpenCode nibblets: the host's OpenCode login, or null to use the credential proxy. */
   opencodeLogin: OpencodeLogin.nullable().default(null),
+  /** For Kimi nibblets: the host's Kimi Code login, or null when there's none to share. */
+  kimiLogin: KimiLogin.nullable().default(null),
 });
 export type RunnerConfig = z.infer<typeof RunnerConfig>;
 

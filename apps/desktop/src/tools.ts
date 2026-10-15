@@ -1,6 +1,6 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { opencodePaths } from "@nibblet/host-mcp";
+import { kimiPaths, opencodePaths } from "@nibblet/host-mcp";
 import { codexFile, detectCredentials } from "./credentials.ts";
 import { checkDocker } from "./docker.ts";
 import { installDirs, loginShell, mergePaths, shellPath } from "./shell-path.ts";
@@ -251,7 +251,45 @@ const opencode: SetupTool = {
   },
 };
 
-export const setupTools: readonly SetupTool[] = [docker, claude, codex, opencode];
+const kimi: SetupTool = {
+  id: "kimi",
+  name: "Kimi Code",
+  kind: "agent",
+  blurb: "Uses your Kimi subscription.",
+  async check(env) {
+    const bin = env.which("kimi");
+    const paths = kimiPaths();
+    const ready = existsSync(paths.token);
+    return {
+      installed: bin !== null || existsSync(paths.config),
+      ready,
+      detail: ready ? "Signed in" : bin ? "Installed, not signed in" : "Not installed",
+    };
+  },
+  actions(env, state) {
+    if (state.ready) return [];
+    const bin = env.which("kimi");
+    if (bin) return [{ id: "login", label: "Sign in", primary: true, run: `${quote(bin)} login` }];
+    return unix(env)
+      ? [
+          {
+            id: "install",
+            label: "Install",
+            primary: true,
+            run: "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+          },
+        ]
+      : [
+          {
+            id: "install",
+            label: "How to install",
+            open: "https://moonshotai.github.io/kimi-code/en/guides/getting-started",
+          },
+        ];
+  },
+};
+
+export const setupTools: readonly SetupTool[] = [docker, claude, codex, opencode, kimi];
 
 export interface ToolReport {
   id: string;

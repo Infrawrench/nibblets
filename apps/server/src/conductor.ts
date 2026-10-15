@@ -27,6 +27,7 @@ import {
 import { dropOverlaps, hostTools } from "./hostmcp.ts";
 import { onePasswordLogin } from "./onepassword.ts";
 import { opencodeLogin } from "./opencode.ts";
+import { kimiLogin } from "./kimi.ts";
 import { runnerName, type Orchestrator } from "./docker.ts";
 import { guardToken, hashToken, newId, viewToken, type Store } from "./store.ts";
 
@@ -469,6 +470,10 @@ export class Conductor {
             ? await opencodeLogin(this.config, row.model, (m) =>
                 console.warn(`[${nibbletId}] ${m}`),
               )
+            : null,
+        kimiLogin:
+          row.harness === "kimi"
+            ? await kimiLogin(this.config, (m) => console.warn(`[${nibbletId}] ${m}`))
             : null,
       },
     });

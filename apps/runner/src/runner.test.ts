@@ -15,6 +15,7 @@ const config: RunnerConfig = {
   gated: [],
   cli: [],
   opencodeLogin: null,
+  kimiLogin: null,
 };
 
 /** A harness that echoes its input, or waits for an abort when told to. */
@@ -49,7 +50,7 @@ function setup() {
   const opened: string[] = [];
   const plugin = fakeHarness(opened);
   const runner = new Runner({
-    plugins: { claude: plugin, codex: plugin, opencode: plugin },
+    plugins: { claude: plugin, codex: plugin, kimi: plugin, opencode: plugin },
     send: (msg) => sent.push(msg),
     workdir: "/tmp",
     mcpServers: {},

@@ -20,6 +20,7 @@ function setup(installed: Record<string, string | null> = {}) {
   const state: Record<string, { bundled: string; installed: string | null }> = {
     claude: { bundled: "2.1.296", installed: installed.claude ?? null },
     codex: { bundled: "0.162.1", installed: installed.codex ?? null },
+    kimi: { bundled: "2.2.0", installed: installed.kimi ?? null },
     opencode: { bundled: "1.19.0", installed: installed.opencode ?? null },
   };
   const settings = new Map<string, unknown>();
@@ -42,6 +43,7 @@ function setup(installed: Record<string, string | null> = {}) {
     fetch: npm({
       "@anthropic-ai/claude-code": "2.1.299",
       "@openai/codex": "0.162.1",
+      "@moonshot-ai/kimi-code": "2.2.0",
       "opencode-ai": "1.19.0",
     }),
   });

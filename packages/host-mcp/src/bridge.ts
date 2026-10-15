@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { mcpTarget } from "@nibblet/protocol";
 import { detectOpencode, readOpencodeLogin } from "./opencode.ts";
+import { detectKimi, readKimiLogin } from "./kimi.ts";
 import { setTailscaleServe, tailscaleLogin, tailscaleState } from "./tailscale.ts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
@@ -346,6 +347,12 @@ export async function startHostMcpBridge(opts: BridgeOptions): Promise<HostMcpBr
       }
       if (req.method === "GET" && url.pathname === "/harness/opencode/login") {
         return json(res, 200, await readOpencodeLogin());
+      }
+      if (req.method === "GET" && url.pathname === "/harness/kimi") {
+        return json(res, 200, await detectKimi(run));
+      }
+      if (req.method === "GET" && url.pathname === "/harness/kimi/login") {
+        return json(res, 200, await readKimiLogin());
       }
       if (req.method === "GET" && url.pathname === "/1password") {
         return json(res, 200, await onePasswordStatus(run));

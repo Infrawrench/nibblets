@@ -21,6 +21,7 @@ minimumReleaseAgeExclude:
   - wrangler@4.150.0
 
 allowBuilds:
+  "@moonshot-ai/kimi-code": true
   opencode-ai: true
   esbuild: true
   electron: true
