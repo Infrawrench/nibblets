@@ -540,7 +540,8 @@ export class Orchestrator {
 
 const STACK_IMAGES = ["server", "runner", "credproxy"];
 /** Where the stack's images come from: local builds, and releases. */
-const IMAGE_PREFIXES = ["nibblet/", "ghcr.io/infrawrench/nibblets-"];
+const BUILT_PREFIX = "nibblet/";
+const IMAGE_PREFIXES = [BUILT_PREFIX, "ghcr.io/infrawrench/nibblets-"];
 
 /**
  * The images this release runs, worked out from the runner's, which the
@@ -556,9 +557,11 @@ export function currentImages(runnerImage: string): Set<string> | null {
 
 /**
  * What to remove: tags of our images other than the current ones, and
- * untagged builds of ours. Only images made before the current runner image
- * (`since`, in seconds), so a newer release being pulled for an update in
- * the meantime is left alone.
+ * untagged builds of ours. Pulled images only when made before the current
+ * runner image (`since`, in seconds), so a newer release being pulled for an
+ * update in the meantime is left alone. Local builds whatever their age: a
+ * checkout that built its images before switching to a release's has builds
+ * newer than the release, and nothing pulls them.
  */
 export function staleImages(
   images: Pick<Docker.ImageInfo, "Id" | "RepoTags" | "Labels" | "Created">[],
@@ -574,13 +577,15 @@ export function staleImages(
   };
   const out: string[] = [];
   for (const image of images) {
-    if (image.Created >= since) continue;
     const tags = (image.RepoTags ?? []).filter((t) => t !== "<none>:<none>");
     if (tags.length === 0) {
       if (image.Labels?.["nibblet.image"]) out.push(image.Id);
       continue;
     }
-    out.push(...tags.filter((t) => ours(t) && !current.has(t)));
+    const recent = image.Created >= since;
+    out.push(
+      ...tags.filter((t) => ours(t) && !current.has(t) && (!recent || t.startsWith(BUILT_PREFIX))),
+    );
   }
   return out;
 }

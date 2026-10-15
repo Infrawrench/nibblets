@@ -89,6 +89,14 @@ describe("staleImages", () => {
     expect(staleImages(images, current, 200)).toEqual([]);
   });
 
+  it("removes local builds newer than the current runner, left from before a release was installed", () => {
+    const images = [
+      image("a", ["nibblet/runner:dev"], 300),
+      image("b", ["<none>:<none>"], 300, { "nibblet.image": "server" }),
+    ];
+    expect(staleImages(images, current, 200)).toEqual(["nibblet/runner:dev", "b"]);
+  });
+
   it("does nothing for a runner image named some other way", () => {
     expect(currentImages("example.com/custom:latest")).toBeNull();
   });
