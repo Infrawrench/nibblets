@@ -179,7 +179,7 @@ function SourceIcon({ source }: { source: TurnSource }) {
   }
 }
 
-/** A heartbeat or schedule turn with nothing to report; expands to what it did. */
+/** A turn the user didn't start that had nothing to report; expands to what it did. */
 function Quiet({
   entry,
   children,

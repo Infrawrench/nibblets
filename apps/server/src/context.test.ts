@@ -1,6 +1,6 @@
 import { defaultHamsterLook, type ActiveHours, type Nibblet } from "@nibblet/protocol";
 import { describe, expect, it } from "vitest";
-import { heartbeatInput, isQuiet, recap, systemPrompt } from "./context.ts";
+import { heartbeatInput, isQuiet, mayBeQuiet, recap, systemPrompt } from "./context.ts";
 import { dueHeartbeat, withinActiveHours } from "./scheduler.ts";
 
 const nibblet: Nibblet = {
@@ -45,6 +45,22 @@ describe("isQuiet", () => {
     expect(isQuiet("schedule", "Checked everything. NO_REPLY")).toBe(true);
     expect(isQuiet("user", "NO_REPLY")).toBe(false);
     expect(isQuiet("heartbeat", "The deploy failed!")).toBe(false);
+  });
+
+  it("applies to a sub-agent's result and to carrying on after a restart", () => {
+    expect(isQuiet("subagent", "NO_REPLY")).toBe(true);
+    expect(isQuiet("system", "NO_REPLY")).toBe(true);
+    expect(isQuiet("subagent", "5 of 8 mockups are done.")).toBe(false);
+  });
+});
+
+describe("mayBeQuiet", () => {
+  it("holds back a reply that's still spelling out NO_REPLY", () => {
+    expect(mayBeQuiet("subagent", "NO")).toBe(true);
+    expect(mayBeQuiet("heartbeat", "NO_REP")).toBe(true);
+    expect(mayBeQuiet("heartbeat", "NO_REPLY")).toBe(true);
+    expect(mayBeQuiet("heartbeat", "Nothing urgent, but")).toBe(false);
+    expect(mayBeQuiet("user", "NO")).toBe(false);
   });
 });
 

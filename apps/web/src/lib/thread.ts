@@ -57,7 +57,7 @@ export type TimelineEntry =
   | { kind: "trigger"; key: string; item: ThreadItemOf<"user_message"> };
 
 /**
- * What the thread view draws. Quiet heartbeat and schedule turns collapse
+ * What the thread view draws. Quiet turns (heartbeats, schedules, sub-agent results) collapse
  * to one faint line, holding what the turn did so it can be expanded; turn
  * markers themselves aren't drawn; a message the nibblet got from its
  * heartbeat, a schedule or a sub-agent is a trigger line rather than a chat
