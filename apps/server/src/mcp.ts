@@ -10,6 +10,9 @@ import type { Notifier } from "./notifier.ts";
 import { describeHeartbeat } from "./context.ts";
 import type { Scheduler } from "./scheduler.ts";
 import { toNibblet, type Store } from "./store.ts";
+import { formatMoney } from "@nibblet/protocol";
+import { MAX_VALID_DAYS, type Payments } from "./payments/payments.ts";
+import { PaymentError } from "./payments/provider.ts";
 
 interface ToolDeps {
   store: Store;
@@ -17,7 +20,25 @@ interface ToolDeps {
   scheduler: Scheduler;
   notifier: Pick<Notifier, "askForHelp">;
   connect: Pick<Connect, "status">;
+  payments: Pick<Payments, "describeFor" | "requestCard" | "deleteCard">;
 }
+
+/** A payment tool's answer: what happened, or why not in words the nibblet can act on. */
+async function paymentTool(fn: () => Promise<string>) {
+  try {
+    return text(await fn());
+  } catch (err) {
+    if (err instanceof PaymentError) return { ...text(err.message), isError: true };
+    throw err;
+  }
+}
+
+/** Dollars and cents from a model, as whole cents. */
+const Money = z
+  .number()
+  .positive()
+  .max(1_000_000)
+  .transform((v) => Math.round(v * 100));
 
 const text = (value: string) => ({ content: [{ type: "text" as const, text: value }] });
 const json = (value: object) => text(JSON.stringify(value, null, 2));
@@ -33,7 +54,7 @@ function validCron(pattern: string, timezone: string): string | null {
 
 /** The nibblet tools, scoped to the nibblet whose token made the call. */
 function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
-  const { store, conductor, scheduler, notifier, connect } = deps;
+  const { store, conductor, scheduler, notifier, connect, payments } = deps;
   const server = new McpServer({ name: "nibblet", version: "0.1.0" });
 
   server.registerTool(
@@ -313,6 +334,107 @@ function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
       const { heartbeats } = await store.getNibblet(nibblet.id);
       return heartbeats.length ? json(heartbeats) : text("You have no heartbeats.");
     },
+  );
+
+  server.registerTool(
+    "payment_methods",
+    {
+      description:
+        "Your payment methods (accounts you may use, and whether your person approves each card), your spending limit and what's left of it, and the cards you have, with where each live card's details are.",
+      inputSchema: {},
+    },
+    async () =>
+      paymentTool(async () => JSON.stringify(await payments.describeFor(nibblet.id), null, 2)),
+  );
+
+  server.registerTool(
+    "card_once",
+    {
+      description:
+        "Get a card for one purchase, right before you check out. It works up to the amount (taken from your spending limit while it's open) and is closed shortly after it's charged, or after a few days unused. Its details are written to a file; the answer says where.",
+      inputSchema: {
+        amount: Money.describe("The total you'll pay, in the account's currency, e.g. 19.99"),
+        for: z
+          .string()
+          .min(3)
+          .max(200)
+          .describe("What you're buying and from whom, e.g. 'Domain renewal at Namecheap'"),
+        method: z
+          .string()
+          .optional()
+          .describe(
+            "A payment method id from payment_methods; defaults to one you can use without asking",
+          ),
+        validDays: z
+          .int()
+          .min(1)
+          .max(MAX_VALID_DAYS)
+          .optional()
+          .describe("Days before it's closed if unused (default 7)"),
+      },
+    },
+    async ({ amount, for: description, method, validDays }) =>
+      paymentTool(async () => {
+        const { card, path, note } = await payments.requestCard(nibblet.id, {
+          purpose: "once",
+          amountCents: amount,
+          description,
+          accountId: method,
+          validDays,
+        });
+        return [
+          `Card ••${card.lastFour} (${card.id}) is ready for one purchase of up to ${formatMoney(card.limitCents)}.`,
+          `Its number, expiry and CVC are in ${path}. Read them from there when you fill in the checkout, and don't repeat them anywhere.`,
+          note,
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }),
+  );
+
+  server.registerTool(
+    "card_recurring",
+    {
+      description:
+        "Get a card for a subscription or other repeating payment. It gets everything that's left of your spending limit, so nothing else can be bought until it's deleted: ask for it after any one-off purchases. Its details are written to a file; the answer says where.",
+      inputSchema: {
+        for: z
+          .string()
+          .min(3)
+          .max(200)
+          .describe("The subscription, e.g. 'Fly.io hosting, monthly'"),
+        method: z.string().optional().describe("A payment method id from payment_methods"),
+      },
+    },
+    async ({ for: description, method }) =>
+      paymentTool(async () => {
+        const { card, path, note } = await payments.requestCard(nibblet.id, {
+          purpose: "recurring",
+          description,
+          accountId: method,
+        });
+        return [
+          `Recurring card ••${card.lastFour} (${card.id}) is ready, with a limit of ${formatMoney(card.limitCents)}.`,
+          `Its number, expiry and CVC are in ${path}. Read them from there when you fill in the payment form, and don't repeat them anywhere.`,
+          note,
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }),
+  );
+
+  server.registerTool(
+    "card_delete",
+    {
+      description:
+        "Cancel one of your cards for good, when you no longer need it (a subscription you ended, a purchase you didn't make). Its unspent limit comes back to you.",
+      inputSchema: { id: z.string().describe("The card's id, like card_…") },
+    },
+    async ({ id }) =>
+      paymentTool(async () => {
+        const card = await payments.deleteCard(nibblet.id, id);
+        return `Card ••${card.lastFour} is ${card.status === "cancelled" ? "cancelled" : `already closed (${card.closedReason ?? card.status})`}.`;
+      }),
   );
 
   server.registerTool(

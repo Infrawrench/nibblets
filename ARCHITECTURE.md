@@ -75,8 +75,34 @@ OpenCode nibblets use the host's own OpenCode account, not the credential proxy.
 | `heartbeat_set` / `heartbeat_remove` / `heartbeat_list` | The nibblet's own heartbeats: as many as it needs, each named, with its own interval, active hours and checklist. The UI shows them but doesn't edit them |
 | `spawn_subagent`                                        | Starts a child nibblet on a task; its final answer comes back as a `subagent` turn                                                                        |
 | `subagent_status`                                       | Lists children and their status                                                                                                                           |
+| `payment_methods`                                       | The payment accounts it may use, its spending limit and what's left, and its cards                                                                        |
+| `card_once` / `card_recurring`                          | A card for one purchase, or one holding the rest of its limit for a subscription; the details go to a file, and the tool returns the path                 |
+| `card_delete`                                           | Cancels one of its cards                                                                                                                                  |
 
 A heartbeat or schedule turn whose reply is `NO_REPLY` is stored with `quiet: true` and collapsed in the UI.
+
+## Payments (`apps/server/src/payments`)
+
+Payment accounts live on the server, each with its own credentials (a Mercury API token, say) in `payment_accounts`. The API never returns them, and containers never see them. Providers are plugins that implement `CardProvider` or `CryptoProvider` from `provider.ts` and are listed in `registry.ts`. Cards are one kind with any number of vendors. Crypto is a kind with no providers yet, so it's hidden from the UI and the tools.
+
+Each nibblet has a `PaymentPolicy` (the `payments` column): a spending limit, counted per calendar month (UTC) or over all time, and Allow or Ask for each account. An account that isn't listed is None, which is the default. A card request picks an account the nibblet may use and checks the limit. For Ask it waits for an approval in the thread. It then takes a per-nibblet lock, checks the limit again, and issues the card. The ledger counts every live card's whole limit, plus what closed cards spent in the period, from the provider's transactions (`payment_charges`).
+
+The card's number, expiry and CVC are never stored. The server sends them over the runner socket (`secret_file`), and the runner writes them as `0600` to `/tmp/nibblet-secrets/files/<card>.json`, outside the home folder, so snapshots never hold them. When a runner connects on a new socket (a container that may have restarted), the server reveals its live cards again and rewrites the files.
+
+Every five minutes a watcher brings charges up to date and closes cards that are done:
+
+- A one-time card closes 15 minutes after its first charge, which leaves time for a verification hold followed by the real charge, or when it expires unused (7 days by default).
+- A recurring card closes once it has spent its limit, if the nibblet's limit is all time. On a monthly limit, the card's own limit at the bank starts afresh monthly.
+
+If the provider can't cancel a card, it stays open and counted. The exceptions are when its nibblet or account is being deleted.
+
+**Mercury** (`mercury.ts`): Mercury's Vault API only reveals the numbers of agent cards, and agent cards can only be made by a person in the Mercury app. So each account has a card source:
+
+- **create**: `POST /cards` with a Mercury spend limit, then reveal it.
+- **pool**: hand out the smallest free agent card whose limit fits, optionally only ones whose nickname matches.
+- **auto**: create, and if Mercury won't reveal the new card, cancel it and use the pool, remembering the refusal for a day.
+
+A Read and Write token needs the server's IP address allowed in Mercury.
 
 ## API
 

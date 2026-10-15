@@ -8,6 +8,7 @@ import { keys, useServers } from "../lib/servers.tsx";
 import { clockTime, relativeTime } from "../lib/time.ts";
 import { Button } from "./ui/Button.tsx";
 import { OnePasswordSettings } from "./onepassword/OnePasswordSection.tsx";
+import { PaymentsSettings } from "./payments/PaymentsSection.tsx";
 import { FieldRow, Input, SectionHeading } from "./ui/Field.tsx";
 import { Segmented } from "./ui/Segmented.tsx";
 import { MobileBack } from "./MobileBack.tsx";
@@ -52,6 +53,7 @@ export function SettingsPage() {
             <CredentialsSection connection={connection} />
             <HostToolsSection connection={connection} />
             <OnePasswordSettings connection={connection} />
+            <PaymentsSettings connection={connection} />
             <RemoteAccessSection connection={connection} />
             <PairingSection connection={connection} />
           </>

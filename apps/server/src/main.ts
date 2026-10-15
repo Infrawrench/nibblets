@@ -21,6 +21,9 @@ import { Connect } from "./connect.ts";
 import { AppUpdater, HarnessUpdater } from "./updates.ts";
 import { Notifier } from "./notifier.ts";
 import { tailscaleStatus } from "./hostmcp.ts";
+import { Payments } from "./payments/payments.ts";
+import { defaultRegistry } from "./payments/registry.ts";
+import { DbPaymentsRepo } from "./payments/repo.ts";
 
 // The repository's version, which releases are tagged with.
 const VERSION = z
@@ -50,6 +53,14 @@ async function main(): Promise<void> {
 
   const conductor = new Conductor(store, docker, config);
   conductor.serverName = await serverName(store, config.NIBBLET_HOST_NAME);
+  const payments = new Payments(new DbPaymentsRepo(db), defaultRegistry(), {
+    approve: (nibbletId, call) =>
+      conductor.approvals.request(nibbletId, conductor.activeTurnId(nibbletId), call),
+    writeSecret: (nibbletId, name, content) => conductor.writeSecretFile(nibbletId, name, content),
+    notice: (nibbletId, text) => conductor.post(nibbletId, "info", text),
+    publish: (message) => bus.publish(message),
+  });
+  conductor.payments = payments;
   const scheduler = new Scheduler(store, conductor);
   const snapshots = new Snapshots({
     store,
@@ -97,6 +108,7 @@ async function main(): Promise<void> {
       snapshots,
       harnessUpdates,
       appUpdates,
+      payments,
     },
     bus,
   );
@@ -117,6 +129,7 @@ async function main(): Promise<void> {
   await scheduler.start();
   snapshots.start();
   harnessUpdates.start();
+  payments.start();
   // An update leaves the last release's images behind; reconcile has just
   // moved running nibblets off them. Again daily, for those that were stopped.
   const prune = () =>
@@ -135,6 +148,7 @@ async function main(): Promise<void> {
     scheduler.stop();
     snapshots.stop();
     harnessUpdates.stop();
+    payments.stop();
     clearInterval(pruning);
     central.stop();
     process.exit(0);

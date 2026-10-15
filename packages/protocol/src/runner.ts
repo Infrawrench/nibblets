@@ -98,6 +98,18 @@ export const ServerToRunner = z.discriminatedUnion("type", [
     attachments: z.array(FileRef).default([]),
   }),
   z.object({ type: z.literal("interrupt"), turnId: z.string() }),
+  /**
+   * Writes a secret the server hands the nibblet (a card's details) to a
+   * private file outside its home folder, so snapshots never hold it; null
+   * content removes it. The runner answers with `secret_file_done`.
+   */
+  z.object({
+    type: z.literal("secret_file"),
+    requestId: z.string(),
+    /** A bare file name, under SECRET_FILES_DIR. */
+    name: z.string().regex(/^[\w.-]+$/),
+    content: z.string().nullable(),
+  }),
   /** The user's answer to an `approval_request`. */
   z.object({
     type: z.literal("approval_decision"),
@@ -132,6 +144,13 @@ export const RunnerToServer = z.discriminatedUnion("type", [
     server: z.string(),
     tool: z.string(),
     input: JsonValue,
+  }),
+  z.object({
+    type: z.literal("secret_file_done"),
+    requestId: z.string(),
+    /** Where the file is, for the agent to read; null when it was removed or failed. */
+    path: z.string().nullable(),
+    error: z.string().nullable(),
   }),
   z.object({
     type: z.literal("log"),
@@ -172,6 +191,13 @@ export type GuardEnv = z.infer<typeof GuardEnv>;
 
 /** The environment only the guard may see: the container's entry keeps these from the runner. */
 export const GUARD_ONLY_ENV: readonly string[] = ["NIBBLET_GUARD_TOKEN", "NIBBLET_VIEW_TOKEN"];
+
+/**
+ * Where the runner keeps secret files the server hands it (`secret_file`):
+ * outside the home folder, so they're never in a snapshot, and gone when
+ * the container is.
+ */
+export const SECRET_FILES_DIR = "/tmp/nibblet-secrets/files";
 
 /** Where a nibblet that borrows the host's SSH agent finds its socket. */
 export const CONTAINER_SSH_AUTH_SOCK = "/run/nibblet/ssh-agent.sock";

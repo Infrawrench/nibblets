@@ -30,6 +30,15 @@ import { opencodeLogin } from "./opencode.ts";
 import { runnerName, type Orchestrator } from "./docker.ts";
 import { guardToken, hashToken, newId, viewToken, type Store } from "./store.ts";
 
+/** What the conductor asks of payments, set once both exist. */
+export interface ConductorPayments {
+  /** Writes a nibblet's live cards to a container that just connected. */
+  redeliver(nibbletId: string): Promise<void>;
+  promptSection(nibbletId: string): Promise<string | null>;
+}
+
+const SECRET_FILE_TIMEOUT_MS = 15_000;
+
 export interface RunnerLink {
   send(message: ServerToRunner): void;
   close(): void;
@@ -87,7 +96,18 @@ export class Conductor {
   private readonly providerLimits: ProviderLimits;
   /** Vault names last shared with each runner, for its system prompt. */
   private readonly onePasswordVaults = new Map<string, SharedVault[]>();
+  /** `secret_file` requests waiting for the runner to answer. */
+  private readonly secretFiles = new Map<
+    string,
+    {
+      nibbletId: string;
+      resolve: (path: string | null) => void;
+      reject: (err: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
   serverName = "nibblet";
+  payments: ConductorPayments | null = null;
 
   constructor(store: Store, docker: Orchestrator, config: Config) {
     this.store = store;
@@ -436,7 +456,9 @@ export class Conductor {
   // Runner connections
 
   async attach(nibbletId: string, link: RunnerLink): Promise<void> {
-    this.links.get(nibbletId)?.close();
+    // A new connection may be a new container, which has none of its secret files.
+    const fresh = this.links.get(nibbletId) !== link;
+    if (fresh) this.links.get(nibbletId)?.close();
     this.links.set(nibbletId, link);
     const row = await this.store.nibbletRow(nibbletId);
     const onePassword = await onePasswordLogin(this.config, this.store, nibbletId, (m) =>
@@ -472,6 +494,34 @@ export class Conductor {
             : null,
       },
     });
+    if (fresh && this.payments) {
+      void this.payments
+        .redeliver(nibbletId)
+        .catch((err: unknown) => console.warn(`[${nibbletId}] redelivering cards failed`, err));
+    }
+  }
+
+  /**
+   * Writes a secret file in a running nibblet's container, outside its home
+   * folder, and returns where; null content removes it.
+   */
+  writeSecretFile(nibbletId: string, name: string, content: string | null): Promise<string | null> {
+    const link = this.links.get(nibbletId);
+    if (!link) return Promise.reject(new Error("The nibblet isn't running"));
+    const requestId = newId("sec");
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.secretFiles.delete(requestId);
+        reject(new Error("Its container didn't answer"));
+      }, SECRET_FILE_TIMEOUT_MS);
+      this.secretFiles.set(requestId, { nibbletId, resolve, reject, timer });
+      link.send({ type: "secret_file", requestId, name, content });
+    });
+  }
+
+  /** A line in a nibblet's thread, outside any turn's own output. */
+  async post(nibbletId: string, level: "info" | "warning" | "error", text: string): Promise<void> {
+    await this.notice(nibbletId, this.activeTurnId(nibbletId), level, text);
   }
 
   /** Its own MCP servers, less any the host's tools now cover. */
@@ -501,6 +551,12 @@ export class Conductor {
   async detach(nibbletId: string, link: RunnerLink): Promise<void> {
     if (this.links.get(nibbletId) !== link) return;
     this.links.delete(nibbletId);
+    for (const [id, pending] of this.secretFiles) {
+      if (pending.nibbletId !== nibbletId) continue;
+      this.secretFiles.delete(id);
+      clearTimeout(pending.timer);
+      pending.reject(new Error("Lost touch with its container"));
+    }
     this.failActive(nibbletId, "failed", "Lost touch with its container");
   }
 
@@ -555,6 +611,15 @@ export class Conductor {
             }),
           )
           .catch((err: unknown) => console.error(`approval for ${nibbletId} failed`, err));
+        return;
+      }
+      case "secret_file_done": {
+        const pending = this.secretFiles.get(message.requestId);
+        if (!pending || pending.nibbletId !== nibbletId) return;
+        this.secretFiles.delete(message.requestId);
+        clearTimeout(pending.timer);
+        if (message.error) pending.reject(new Error(message.error));
+        else pending.resolve(message.path);
         return;
       }
       case "log": {
@@ -636,6 +701,10 @@ export class Conductor {
       parent,
       now: new Date(),
       onePasswordVaults: this.onePasswordVaults.get(nibbletId),
+      payments: await this.payments?.promptSection(nibbletId).catch((err: unknown) => {
+        console.warn("payments prompt failed", err);
+        return null;
+      }),
     });
   }
 

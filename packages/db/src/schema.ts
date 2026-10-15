@@ -10,6 +10,9 @@ import type {
   ToolRule,
   NibbletStatus,
   ThreadItem,
+  PaymentPolicy,
+  CardPurpose,
+  CardStatus,
 } from "@nibblet/protocol";
 import {
   bigint,
@@ -66,6 +69,11 @@ export const nibblets = pgTable("nibblets", {
   statusEmoji: text("status_emoji"),
   statusUpdatedAt: timestamp("status_updated_at", { withTimezone: true }),
   awaitingApproval: boolean("awaiting_approval").notNull().default(false),
+  /** Its spending limit and which payment accounts it may use; see `PaymentPolicy`. */
+  payments: jsonb("payments")
+    .$type<PaymentPolicy>()
+    .notNull()
+    .default({ limitCents: 0, period: "monthly", access: {} }),
   /** Hash of the token its runner and its tool calls authenticate with. */
   tokenHash: text("token_hash").notNull(),
   containerId: text("container_id"),
@@ -192,4 +200,68 @@ export const snapshots = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("snapshots_nibblet_idx").on(t.nibbletId, t.createdAt)],
+);
+
+/** Payment accounts the person connected, each with its own credentials. */
+export const paymentAccounts = pgTable("payment_accounts", {
+  id: text("id").primaryKey(),
+  /** The provider plugin's id, e.g. "mercury". */
+  provider: text("provider").notNull(),
+  label: text("label").notNull(),
+  /** Secret: never returned by the API. */
+  credentials: jsonb("credentials").$type<Record<string, string>>().notNull(),
+  config: jsonb("config").$type<Record<string, string>>().notNull().default({}),
+  createdAt: createdAt(),
+});
+
+/**
+ * Cards issued to nibblets. The card number is never stored: it's fetched
+ * from the provider when it's written to the nibblet's container.
+ */
+export const paymentCards = pgTable(
+  "payment_cards",
+  {
+    id: text("id").primaryKey(),
+    nibbletId: text("nibblet_id")
+      .notNull()
+      .references(() => nibblets.id, { onDelete: "cascade" }),
+    /** Null once the account is removed; the card's spending still counts. */
+    accountId: text("account_id").references(() => paymentAccounts.id, { onDelete: "set null" }),
+    provider: text("provider").notNull(),
+    /** The provider's id for the card. */
+    providerRef: text("provider_ref").notNull(),
+    purpose: text("purpose").$type<CardPurpose>().notNull(),
+    source: text("source").$type<"created" | "pool">().notNull(),
+    lastFour: text("last_four").notNull(),
+    limitCents: bigint("limit_cents", { mode: "number" }).notNull(),
+    description: text("description").notNull(),
+    status: text("status").$type<CardStatus>().notNull().default("active"),
+    closedReason: text("closed_reason"),
+    /** The details file's name in the container. */
+    fileName: text("file_name").notNull(),
+    createdAt: createdAt(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    firstChargeAt: timestamp("first_charge_at", { withTimezone: true }),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("payment_cards_nibblet_idx").on(t.nibbletId),
+    index("payment_cards_ref_idx").on(t.provider, t.providerRef),
+  ],
+);
+
+/** What each card has been charged, from the provider's transactions; refunds are negative. */
+export const paymentCharges = pgTable(
+  "payment_charges",
+  {
+    cardId: text("card_id")
+      .notNull()
+      .references(() => paymentCards.id, { onDelete: "cascade" }),
+    /** The provider's transaction id. */
+    ref: text("ref").notNull(),
+    amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
+    description: text("description").notNull().default(""),
+    at: timestamp("at", { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.cardId, t.ref] })],
 );

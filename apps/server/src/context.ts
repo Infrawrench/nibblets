@@ -76,6 +76,8 @@ export interface SystemPromptInput {
   now: Date;
   /** 1Password vaults shared with it, if any. */
   onePasswordVaults?: readonly SharedVault[];
+  /** Its payments section, when it may use any payment account. */
+  payments?: string | null;
 }
 
 export function systemPrompt(input: SystemPromptInput): string {
@@ -139,6 +141,8 @@ export function systemPrompt(input: SystemPromptInput): string {
       `## 1Password\n\nYou can use these 1Password vaults, and only these:\n${vaults}\n\nUse the \`onepassword\` tools: \`item_search\`, \`item_get\`, \`read_secret\`, and \`fill_login\` to sign in, which opens the login's own site in the browser and types it there. Never write a password, token or other secret into the chat, your memory, files, or your status; use it where it's needed and nowhere else.`,
     );
   }
+
+  if (input.payments) parts.push(input.payments);
 
   if (input.memories.length > 0) {
     const lines = input.memories.map(

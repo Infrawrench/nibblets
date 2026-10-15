@@ -7,6 +7,7 @@ export * from "./codex.ts";
 export * from "./mcp.ts";
 export * from "./connect.ts";
 export * from "./onepassword.ts";
+export * from "./payments.ts";
 export * from "./snapshots.ts";
 export * from "./updates.ts";
 export * from "./urls.ts";
