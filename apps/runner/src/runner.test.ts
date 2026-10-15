@@ -29,6 +29,10 @@ function fakeHarness(opened: string[]): HarnessPlugin {
       let n = 0;
       return {
         async run(turn, out) {
+          if (turn.input === "hang") {
+            // Ignores the stop, as a wedged harness would.
+            return new Promise(() => {});
+          }
           if (turn.input === "wait") {
             await new Promise((resolve) => turn.signal.addEventListener("abort", resolve));
             out.finish();
@@ -45,7 +49,7 @@ function fakeHarness(opened: string[]): HarnessPlugin {
   });
 }
 
-function setup() {
+function setup(stopGraceMs?: number) {
   const sent: RunnerToServer[] = [];
   const opened: string[] = [];
   const plugin = fakeHarness(opened);
@@ -59,6 +63,7 @@ function setup() {
     credproxyUrl: "http://proxy",
     credproxyKey: "k",
     cliLogins: new CliLogins({}, async () => {}),
+    stopGraceMs,
   });
   return { runner, sent, opened };
 }
@@ -104,6 +109,23 @@ describe("Runner", () => {
     expect(ends.map((m) => [m.turnId, m.status])).toEqual([
       ["t2", "interrupted"],
       ["t1", "interrupted"],
+    ]);
+  });
+
+  it("moves on from a turn that ignores the stop", async () => {
+    const { runner, sent } = setup(10);
+    runner.handle({ type: "configure", config });
+    runner.handle(turn("t1", "hang"));
+    runner.handle(turn("t2", "next"));
+    await settle();
+    expect(sent.filter((m) => m.type === "turn_end")).toEqual([]);
+    runner.handle({ type: "interrupt", turnId: "t1" });
+    await settle();
+    await settle();
+    const ends = sent.filter((m) => m.type === "turn_end");
+    expect(ends.map((m) => [m.turnId, m.status])).toEqual([
+      ["t1", "interrupted"],
+      ["t2", "completed"],
     ]);
   });
 });

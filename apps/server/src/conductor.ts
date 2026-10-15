@@ -51,6 +51,12 @@ interface ActiveTurn extends QueuedTurn {
 
 const now = () => new Date().toISOString();
 
+/**
+ * How long a stopped turn has to end before its container is restarted: the
+ * runner's own grace for a harness that ignores the stop, and then some.
+ */
+const STOP_TIMEOUT_MS = 30_000;
+
 /** Who to pick up again once the server is back from an update or a restart. */
 const RESUME_SETTING = "resumeAfterRestart";
 const Resume = z.record(
@@ -400,8 +406,25 @@ export class Conductor {
     void this.approvals.cancelAll(nibbletId, "The turn was stopped");
     void this.limits.end(nibbletId, "cancelled");
     const turn = this.active.get(nibbletId);
-    if (turn) this.links.get(nibbletId)?.send({ type: "interrupt", turnId: turn.turnId });
+    if (turn) {
+      this.links.get(nibbletId)?.send({ type: "interrupt", turnId: turn.turnId });
+      setTimeout(() => void this.forceStop(nibbletId, turn.turnId), STOP_TIMEOUT_MS).unref();
+    }
     this.queues.set(nibbletId, []);
+  }
+
+  /**
+   * A turn still running well after it was stopped means its container is
+   * wedged, and every message after it would wait behind it: the turn is
+   * closed here and the container started afresh, which picks up what's queued.
+   */
+  private async forceStop(nibbletId: string, turnId: string): Promise<void> {
+    if (this.active.get(nibbletId)?.turnId !== turnId) return;
+    console.warn(`[${nibbletId}] turn ${turnId} didn't stop; restarting its container`);
+    this.failActive(nibbletId, "interrupted", "It didn't stop, so its container was restarted");
+    await this.start(nibbletId).catch((err: unknown) =>
+      console.error(`couldn't restart ${nibbletId}`, err),
+    );
   }
 
   async spawnSubagent(

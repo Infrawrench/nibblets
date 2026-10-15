@@ -16,6 +16,9 @@ import type { RunnerFiles } from "./files.ts";
 
 type TurnMessage = Extract<ServerToRunner, { type: "turn" }>;
 
+/** How long a stopped turn gets to wind down before the runner moves on without it. */
+export const STOP_GRACE_MS = 10_000;
+
 export interface RunnerDeps {
   plugins: Record<HarnessId, HarnessPlugin>;
   send(msg: RunnerToServer): void;
@@ -33,6 +36,8 @@ export interface RunnerDeps {
   refreshGuard?(): Promise<void>;
   /** Fetches a turn's attachments into the workdir. */
   files?: Pick<RunnerFiles, "fetch">;
+  /** Overrides STOP_GRACE_MS, for tests. */
+  stopGraceMs?: number;
 }
 
 /**
@@ -51,12 +56,14 @@ export class Runner {
   private lastSessionId: string | null = null;
 
   private readonly cli: CliLogins;
+  private readonly stopGraceMs: number;
   /** The guard catching up with the latest configure; a session waits for it. */
   private guardReady: Promise<void> = Promise.resolve();
 
   constructor(deps: RunnerDeps) {
     this.deps = deps;
     this.cli = deps.cliLogins ?? new CliLogins();
+    this.stopGraceMs = deps.stopGraceMs ?? STOP_GRACE_MS;
   }
 
   handle(msg: ServerToRunner): void {
@@ -161,11 +168,15 @@ export class Runner {
     if (!config) return;
     const abort = new AbortController();
     this.current = { turnId: turn.turnId, abort };
-    const out = new TurnWriter(turn.turnId, (item) => this.deps.send({ type: "item", item }));
-    try {
+    // Once the turn is given up on, whatever it still says is dropped.
+    let abandoned = false;
+    const out = new TurnWriter(turn.turnId, (item) => {
+      if (!abandoned) this.deps.send({ type: "item", item });
+    });
+    const work = (async () => {
       const session = await this.ensureSession(config);
       const attachments = (await this.deps.files?.fetch(turn.attachments)) ?? [];
-      const result = await session.run(
+      return session.run(
         {
           turnId: turn.turnId,
           source: turn.source,
@@ -176,15 +187,36 @@ export class Runner {
         },
         out,
       );
+    })();
+    // A harness (or anything before it: opening it, fetching attachments) that
+    // ignores the stop would otherwise hold up every turn after it.
+    let giveUp: ReturnType<typeof setTimeout> | null = null;
+    const stopped = new Promise<never>((_, reject) => {
+      abort.signal.addEventListener("abort", () => {
+        giveUp = setTimeout(() => {
+          abandoned = true;
+          reject(new Error("It didn't stop when asked, so it was left behind"));
+        }, this.stopGraceMs);
+      });
+    });
+    work.catch(() => {});
+    stopped.catch(() => {});
+    try {
+      const result = await Promise.race([work, stopped]);
       if (result.sessionId) this.lastSessionId = result.sessionId;
       this.deps.send({ type: "turn_end", turnId: turn.turnId, ...result });
     } catch (err) {
       out.finish();
       const message = err instanceof Error ? err.message : String(err);
-      this.log("error", `turn ${turn.turnId} failed: ${message}`);
+      this.log(abandoned ? "warn" : "error", `turn ${turn.turnId} failed: ${message}`);
       // A harness that threw is in an unknown state; open a fresh one next time.
-      await this.session?.session.close().catch(() => {});
+      // One that's stuck may not close either, so that isn't waited for long.
+      const session = this.session;
       this.session = null;
+      await Promise.race([
+        session?.session.close().catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, this.stopGraceMs).unref?.()),
+      ]);
       this.deps.send({
         type: "turn_end",
         turnId: turn.turnId,
@@ -194,6 +226,7 @@ export class Runner {
         sessionId: this.lastSessionId,
       });
     } finally {
+      if (giveUp) clearTimeout(giveUp);
       this.current = null;
     }
   }
