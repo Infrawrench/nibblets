@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { firewallRules, ownSubnet } from "./entry.ts";
+import { firewallRules, nameservers, ownSubnet } from "./entry.ts";
 
 describe("the container's firewall", () => {
   it("finds the network the container is on", () => {
@@ -37,5 +37,22 @@ describe("the container's firewall", () => {
       ["-A", "OUTPUT", "-d", "10.89.1.3", "-j", "ACCEPT"],
       ["-A", "OUTPUT", "-d", "10.89.1.0/24", "-j", "REJECT"],
     ]);
+  });
+
+  it("lets DNS through to the nameservers, which Podman puts on the gateway", () => {
+    expect(firewallRules("10.89.1.0/24", ["10.89.1.2"], ["10.89.1.1"])).toEqual([
+      ["-A", "OUTPUT", "-d", "169.254.0.0/16", "-j", "REJECT"],
+      ["-A", "OUTPUT", "-d", "10.89.1.1", "-p", "udp", "--dport", "53", "-j", "ACCEPT"],
+      ["-A", "OUTPUT", "-d", "10.89.1.1", "-p", "tcp", "--dport", "53", "-j", "ACCEPT"],
+      ["-A", "OUTPUT", "-d", "10.89.1.2", "-j", "ACCEPT"],
+      ["-A", "OUTPUT", "-d", "10.89.1.0/24", "-j", "REJECT"],
+    ]);
+  });
+
+  it("reads the nameservers from resolv.conf", () => {
+    const conf =
+      "search dns.podman\nnameserver 10.89.1.1\n# nameserver 9.9.9.9\nnameserver ::1\noptions ndots:0\n";
+    expect(nameservers(conf)).toEqual(["10.89.1.1"]);
+    expect(nameservers("nameserver 127.0.0.11\noptions ndots:0")).toEqual(["127.0.0.11"]);
   });
 });

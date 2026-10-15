@@ -14,7 +14,7 @@
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promises as dns } from "node:dns";
-import { chmod, chown, lstat, mkdir, rename, symlink } from "node:fs/promises";
+import { chmod, chown, lstat, mkdir, readFile, rename, symlink } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -47,13 +47,30 @@ export function ownSubnet(
   return null;
 }
 
-/** The iptables rules, in order: what the agent may reach, then what it may not. */
-export function firewallRules(subnet: string | null, allowed: readonly string[]): string[][] {
+/** The IPv4 nameservers in a resolv.conf. */
+export function nameservers(resolvConf: string): string[] {
+  return [...resolvConf.matchAll(/^\s*nameserver\s+(\d+\.\d+\.\d+\.\d+)\s*$/gm)].map((m) => m[1]!);
+}
+
+/**
+ * The iptables rules, in order: what the agent may reach, then what it may
+ * not. DNS is let through to the nameservers: Podman's is on the network's
+ * gateway, inside the subnet, where Docker's is on loopback.
+ */
+export function firewallRules(
+  subnet: string | null,
+  allowed: readonly string[],
+  dnsServers: readonly string[] = [],
+): string[][] {
   const rules: string[][] = [
     // Cloud metadata services (169.254.169.254) hand out a VM's own credentials.
     ["-A", "OUTPUT", "-d", "169.254.0.0/16", "-j", "REJECT"],
   ];
   if (subnet) {
+    for (const ip of dnsServers) {
+      for (const proto of ["udp", "tcp"])
+        rules.push(["-A", "OUTPUT", "-d", ip, "-p", proto, "--dport", "53", "-j", "ACCEPT"]);
+    }
     for (const ip of allowed) rules.push(["-A", "OUTPUT", "-d", ip, "-j", "ACCEPT"]);
     rules.push(["-A", "OUTPUT", "-d", subnet, "-j", "REJECT"]);
   }
@@ -67,9 +84,12 @@ async function firewall(): Promise<void> {
     const found = await dns.lookup(host, { family: 4, all: true }).catch(() => []);
     allowed.push(...found.map((a) => a.address));
   }
+  const dnsServers = nameservers(await readFile("/etc/resolv.conf", "utf8").catch(() => ""));
   try {
-    for (const rule of firewallRules(subnet, allowed)) await run("iptables", rule);
-    log(`firewall up (allowing ${allowed.join(", ") || "nothing"} on ${subnet ?? "no subnet"})`);
+    for (const rule of firewallRules(subnet, allowed, dnsServers)) await run("iptables", rule);
+    log(
+      `firewall up (allowing ${allowed.join(", ") || "nothing"}, and DNS to ${dnsServers.join(", ") || "nothing"}, on ${subnet ?? "no subnet"})`,
+    );
   } catch (err) {
     // Some engines won't let a container set its own rules; carry on without.
     log(`couldn't set the firewall: ${err instanceof Error ? err.message : String(err)}`);
@@ -175,6 +195,8 @@ async function main(): Promise<void> {
   const stop = (code: number) => {
     if (stopping) return;
     stopping = true;
+    // Also once both have exited and nothing's left to wait for, before the timeout.
+    process.exitCode = code;
     for (const child of [guard, runner]) if (child.exitCode === null) child.kill("SIGTERM");
     setTimeout(() => process.exit(code), 3000).unref();
   };
