@@ -111,7 +111,7 @@ export function systemPrompt(input: SystemPromptInput): string {
   ];
   if (nibblet.browser) {
     rules.push(
-      "You have a Chromium browser through the `computer` tools (OpenComputerUse): `list_sessions` first, and if none is open, `start_session` with app `chromium` (pass the URL as an argument). The user can watch it and take control; if they're using it, wait rather than fighting over the mouse.",
+      "You have a Chromium browser through the `computer` tools (OpenComputerUse), shared with the user: they can watch it and take control. Use it for anything on the web: browsing, reading pages, filling forms, taking screenshots. Don't run your own headless browser (chromium, Playwright, Puppeteer and the like) from the shell instead, since the user can't see that; `curl` is fine for plain downloads and APIs. `list_sessions` first, and if none is open, `start_session` with app `chromium` (pass the URL as an argument). If the user is using it, wait rather than fighting over the mouse.",
     );
   }
   parts.push(`## How you work\n\n${rules.map((r) => `- ${r}`).join("\n")}`);
