@@ -5,6 +5,7 @@ import { Connection } from "./connection.ts";
 import { RunnerFiles } from "./files.ts";
 import { plugins } from "./plugins.ts";
 import { Runner } from "./runner.ts";
+import { SecretFiles } from "./secret-files.ts";
 
 const env = RunnerEnv.parse(process.env);
 const workdir = process.env.NIBBLET_WORKDIR ?? process.cwd();
@@ -57,6 +58,7 @@ const runner: Runner = new Runner({
     await fetch(`${gateBase}/refresh`, { method: "POST", signal: AbortSignal.timeout(30_000) });
   },
   files,
+  secrets: new SecretFiles(),
 });
 
 connection = new Connection({

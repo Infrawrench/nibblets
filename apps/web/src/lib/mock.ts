@@ -11,6 +11,11 @@ import {
   randomHamsterLook,
   type Contract,
   type OnePasswordGrants,
+  type IssuedCard,
+  type NibbletPayments,
+  type PaymentAccount,
+  type PaymentPolicy,
+  type SetupField,
   type HostTool,
   type McpServerDef,
   type Handlers,
@@ -691,6 +696,117 @@ export function createMockServer(): ServerConnection {
   const onePasswordGrants: OnePasswordGrants = {
     pip: [{ vaultId: "v-nibblets", access: "read" }],
   };
+  // Payments: one Mercury account, with Pip allowed a monthly limit and two cards out.
+  const mercurySetup: SetupField[] = [
+    {
+      key: "userId",
+      label: "Cardholder",
+      type: "select",
+      options: [{ value: "u1", label: "Astrid Gealer (astrid@infrawrench.com)" }],
+      required: true,
+      help: "New cards are issued in this person's name.",
+      default: "u1",
+    },
+    {
+      key: "funding",
+      label: "Pay from",
+      type: "select",
+      options: [
+        { value: "debit:a1", label: "Debit from Ops Checking ••4821" },
+        { value: "credit:c1", label: "Mercury credit" },
+      ],
+      required: true,
+      help: null,
+      default: "debit:a1",
+    },
+    {
+      key: "cardSource",
+      label: "Cards",
+      type: "select",
+      options: [
+        { value: "auto", label: "New cards, falling back to my agent cards" },
+        { value: "create", label: "Only new cards" },
+        { value: "pool", label: "Only agent cards I made in Mercury" },
+      ],
+      required: true,
+      help: null,
+      default: "auto",
+    },
+  ];
+  const paymentAccounts: PaymentAccount[] = [
+    {
+      id: "pay_ops",
+      provider: "mercury",
+      kind: "card",
+      label: "Ops",
+      currency: "USD",
+      config: { userId: "u1", funding: "debit:a1", cardSource: "auto" },
+      ok: true,
+      detail: null,
+      summary: [
+        "Issues new virtual cards, or hands out your agent cards",
+        "3 agent cards with a limit available",
+      ],
+      createdAt: ago(60 * 24 * 3),
+    },
+  ];
+  const paymentPolicies: Record<string, PaymentPolicy> = {
+    pip: { limitCents: 20_000, period: "monthly", access: { pay_ops: "ask" } },
+  };
+  const issuedCards: IssuedCard[] = [
+    {
+      id: "card_mock1",
+      nibbletId: "pip",
+      accountId: "pay_ops",
+      purpose: "recurring",
+      source: "created",
+      lastFour: "4410",
+      limitCents: 5_000,
+      spentCents: 1_900,
+      description: "Fly.io hosting, monthly",
+      status: "active",
+      closedReason: null,
+      createdAt: ago(60 * 24 * 6),
+      expiresAt: null,
+      closedAt: null,
+    },
+    {
+      id: "card_mock2",
+      nibbletId: "pip",
+      accountId: "pay_ops",
+      purpose: "once",
+      source: "pool",
+      lastFour: "0087",
+      limitCents: 2_500,
+      spentCents: 1_398,
+      description: "Domain renewal at Namecheap",
+      status: "used",
+      closedReason: "Closed after its purchase ($13.98)",
+      createdAt: ago(60 * 26),
+      expiresAt: null,
+      closedAt: ago(60 * 25),
+    },
+  ];
+  const paymentsFor = (nibbletId: string): NibbletPayments => {
+    const policy = paymentPolicies[nibbletId] ?? { limitCents: 0, period: "monthly", access: {} };
+    const cards = issuedCards.filter((c) => c.nibbletId === nibbletId);
+    const committed = cards.reduce(
+      (sum, c) => sum + (c.status === "active" ? c.limitCents : c.spentCents),
+      0,
+    );
+    return {
+      nibbletId,
+      policy,
+      committedCents: committed,
+      remainingCents: Math.max(0, policy.limitCents - committed),
+      periodStart:
+        policy.period === "monthly"
+          ? new Date().toISOString().slice(0, 8) + "01T00:00:00.000Z"
+          : null,
+      cards,
+    };
+  };
+
   const handlers: Handlers<Contract, null> = {
     system: {
       info: async () => ({
@@ -1052,6 +1168,109 @@ export function createMockServer(): ServerConnection {
         if (grants.length > 0) onePasswordGrants[nibbletId] = grants;
         else delete onePasswordGrants[nibbletId];
         return { ...onePasswordGrants };
+      },
+    },
+    payments: {
+      providers: async () => [
+        {
+          id: "mercury",
+          kind: "card",
+          label: "Mercury",
+          description:
+            "Virtual debit or credit cards from a Mercury business account, using an API token.",
+          credentialFields: [
+            {
+              key: "token",
+              label: "API token",
+              type: "secret",
+              options: [],
+              required: true,
+              help: "Settings → API tokens in Mercury.",
+              default: null,
+            },
+            {
+              key: "environment",
+              label: "Environment",
+              type: "select",
+              options: [
+                { value: "production", label: "Production" },
+                { value: "sandbox", label: "Sandbox" },
+              ],
+              required: true,
+              help: null,
+              default: "production",
+            },
+          ],
+        },
+      ],
+      accounts: async () => [...paymentAccounts],
+      setup: async ({ accountId, credentials }) => {
+        if (!accountId && !credentials?.token) {
+          throw new RpcError("bad_request", "API token is needed");
+        }
+        return mercurySetup;
+      },
+      addAccount: async ({ provider, label, config }) => {
+        const account: PaymentAccount = {
+          id: `pay_${crypto.randomUUID().slice(0, 6)}`,
+          provider,
+          kind: "card",
+          label,
+          currency: "USD",
+          config,
+          ok: true,
+          detail: null,
+          summary: ["Issues new virtual cards, or hands out your agent cards"],
+          createdAt: ago(0),
+        };
+        paymentAccounts.push(account);
+        return account;
+      },
+      updateAccount: async ({ id, label, config }) => {
+        const account = paymentAccounts.find((a) => a.id === id);
+        if (!account) throw new RpcError("not_found", "No such payment account");
+        if (label) account.label = label;
+        if (config) account.config = config;
+        return account;
+      },
+      removeAccount: async ({ id }) => {
+        const i = paymentAccounts.findIndex((a) => a.id === id);
+        if (i >= 0) paymentAccounts.splice(i, 1);
+        for (const c of issuedCards) {
+          if (c.accountId === id && c.status === "active") {
+            c.status = "cancelled";
+            c.closedReason = "Its payment account was removed";
+            c.closedAt = ago(0);
+          }
+        }
+        for (const policy of Object.values(paymentPolicies)) delete policy.access[id];
+        return { ok: true };
+      },
+      nibblet: async ({ nibbletId }) => paymentsFor(nibbletId),
+      setPolicy: async ({ nibbletId, limitCents, period, access }) => {
+        const policy = paymentsFor(nibbletId).policy;
+        const next: PaymentPolicy = {
+          limitCents: limitCents ?? policy.limitCents,
+          period: period ?? policy.period,
+          access: { ...policy.access },
+        };
+        for (const [id, permission] of Object.entries(access ?? {})) {
+          if (permission === "none") delete next.access[id];
+          else next.access[id] = permission;
+        }
+        paymentPolicies[nibbletId] = next;
+        return paymentsFor(nibbletId);
+      },
+      cancelCard: async ({ id }) => {
+        const card = issuedCards.find((c) => c.id === id);
+        if (!card) throw new RpcError("not_found", "No such card");
+        if (card.status === "active") {
+          card.status = "cancelled";
+          card.closedReason = "Cancelled by you";
+          card.closedAt = ago(0);
+        }
+        push({ type: "payments_changed", nibbletId: card.nibbletId });
+        return paymentsFor(card.nibbletId);
       },
     },
     auth: {

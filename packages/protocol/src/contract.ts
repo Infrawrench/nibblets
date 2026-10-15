@@ -3,6 +3,14 @@ import { CliStatuses, HostTools } from "./mcp.ts";
 import { HarnessId, HarnessModels } from "./models.ts";
 import { ConnectStatus, TailscaleStatus } from "./connect.ts";
 import { OnePasswordGrants, OnePasswordStatus, VaultGrant } from "./onepassword.ts";
+import {
+  NibbletPayments,
+  PaymentAccount,
+  PaymentPermission,
+  PaymentProviderInfo,
+  SetupField,
+  SpendPeriod,
+} from "./payments.ts";
 import { procedure } from "./rpc.ts";
 import { Snapshot, SnapshotActivity, SnapshotTimeline } from "./snapshots.ts";
 import { AppUpdate, HarnessUpdates } from "./updates.ts";
@@ -147,6 +155,59 @@ export const contract = {
       OnePasswordGrants,
     ),
   },
+  payments: {
+    /** The providers an account can be added with. */
+    providers: procedure(z.object({}), z.array(PaymentProviderInfo)),
+    accounts: procedure(z.object({}), z.array(PaymentAccount)),
+    /**
+     * Checks credentials with the provider and returns the rest of the setup
+     * form: the choices they unlock, like which cardholder cards are for. For
+     * an existing account, leave `credentials` out to use the saved ones.
+     */
+    setup: procedure(
+      z.object({
+        provider: z.string(),
+        accountId: z.string().optional(),
+        credentials: z.record(z.string(), z.string()).optional(),
+      }),
+      z.array(SetupField),
+    ),
+    addAccount: procedure(
+      z.object({
+        provider: z.string(),
+        label: z.string().min(1).max(80),
+        credentials: z.record(z.string(), z.string()),
+        config: z.record(z.string(), z.string()),
+      }),
+      PaymentAccount,
+    ),
+    /** Leave `credentials` out to keep the saved ones. */
+    updateAccount: procedure(
+      z.object({
+        id: z.string(),
+        label: z.string().min(1).max(80).optional(),
+        credentials: z.record(z.string(), z.string()).optional(),
+        config: z.record(z.string(), z.string()).optional(),
+      }),
+      PaymentAccount,
+    ),
+    /** Cancels every live card from it first. */
+    removeAccount: procedure(Id, Ok),
+    /** One nibblet's limit, access, spending and cards. */
+    nibblet: procedure(z.object({ nibbletId: z.string() }), NibbletPayments),
+    setPolicy: procedure(
+      z.object({
+        nibbletId: z.string(),
+        limitCents: z.int().min(0).max(100_000_000).optional(),
+        period: SpendPeriod.optional(),
+        /** Only the accounts given change; `none` takes one away. */
+        access: z.record(z.string(), PaymentPermission).optional(),
+      }),
+      NibbletPayments,
+    ),
+    /** Cancels one of a nibblet's cards. */
+    cancelCard: procedure(Id, NibbletPayments),
+  },
   snapshots: {
     /** A nibblet's snapshots, newest first, and where it stands among them. */
     list: procedure(z.object({ nibbletId: z.string() }), SnapshotTimeline),
@@ -180,6 +241,8 @@ export const LiveMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("nibblet_deleted"), id: z.string() }),
   z.object({ type: z.literal("item"), item: StoredItem }),
   z.object({ type: z.literal("schedules_changed"), nibbletId: z.string() }),
+  /** A nibblet's cards, limit or spending changed. */
+  z.object({ type: z.literal("payments_changed"), nibbletId: z.string() }),
   /** The thread was replaced (a snapshot was restored): drop it and fetch again from the start. */
   z.object({ type: z.literal("thread_reset"), nibbletId: z.string() }),
   z.object({

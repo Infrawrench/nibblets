@@ -55,6 +55,7 @@ describe("toNibblet", () => {
       statusEmoji: null,
       statusUpdatedAt: null,
       awaitingApproval: false,
+      payments: { limitCents: 0, period: "monthly", access: {} },
       browser: false,
       hostTools: ["files"],
       cliCredentials: ["gh"],

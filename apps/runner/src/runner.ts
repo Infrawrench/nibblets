@@ -13,6 +13,7 @@ import {
 } from "@nibblet/protocol";
 import { CliLogins } from "./cli.ts";
 import type { RunnerFiles } from "./files.ts";
+import type { SecretFiles } from "./secret-files.ts";
 
 type TurnMessage = Extract<ServerToRunner, { type: "turn" }>;
 
@@ -33,6 +34,8 @@ export interface RunnerDeps {
   refreshGuard?(): Promise<void>;
   /** Fetches a turn's attachments into the workdir. */
   files?: Pick<RunnerFiles, "fetch">;
+  /** Where secret files the server hands over (cards) are kept. */
+  secrets?: Pick<SecretFiles, "put">;
 }
 
 /**
@@ -72,6 +75,23 @@ export class Runner {
         this.queue.push(msg);
         void this.drain();
         return;
+      case "secret_file": {
+        const { requestId, name, content } = msg;
+        const put =
+          this.deps.secrets?.put(name, content) ??
+          Promise.reject(new Error("No secret files here"));
+        void put.then(
+          (path) => this.deps.send({ type: "secret_file_done", requestId, path, error: null }),
+          (err: unknown) =>
+            this.deps.send({
+              type: "secret_file_done",
+              requestId,
+              path: null,
+              error: err instanceof Error ? err.message : String(err),
+            }),
+        );
+        return;
+      }
       case "approval_decision":
         // The guard asks the server itself now; nothing here waits on these.
         return;

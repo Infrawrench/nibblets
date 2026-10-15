@@ -29,6 +29,8 @@ import type { Store } from "./store.ts";
 import type { Connect } from "./connect.ts";
 import type { Tunnel } from "./tunnel.ts";
 import type { AppUpdater, HarnessUpdater } from "./updates.ts";
+import type { Payments } from "./payments/payments.ts";
+import { PaymentError } from "./payments/provider.ts";
 
 export interface Services {
   config: Config;
@@ -45,6 +47,17 @@ export interface Services {
   notifier: Notifier;
   harnessUpdates: HarnessUpdater;
   appUpdates: AppUpdater;
+  payments: Payments;
+}
+
+/** Payment providers' errors are written for people: pass them on as they are. */
+async function paying<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof PaymentError) throw new RpcError("bad_request", err.message);
+    throw err;
+  }
 }
 
 const ok = { ok: true } as const;
@@ -153,6 +166,8 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         return updated;
       },
       delete: async ({ id }) => {
+        // Its cards are cancelled while the nibblet still exists to own them.
+        await s.payments.forgetNibblet(id);
         await conductor.delete(id);
         await forgetGrants(s.config, store, id);
         return ok;
@@ -293,6 +308,27 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         await conductor.reconfigure(nibbletId);
         return all;
       },
+    },
+
+    payments: {
+      providers: async () => s.payments.providers(),
+      accounts: () => s.payments.accounts(),
+      setup: (input) => paying(() => s.payments.setup(input)),
+      addAccount: (input) => paying(() => s.payments.addAccount(input)),
+      updateAccount: (input) => paying(() => s.payments.updateAccount(input)),
+      removeAccount: async ({ id }) => {
+        await paying(() => s.payments.removeAccount(id));
+        return ok;
+      },
+      nibblet: async ({ nibbletId }) => {
+        await store.getNibblet(nibbletId);
+        return s.payments.overview(nibbletId);
+      },
+      setPolicy: async (input) => {
+        await store.getNibblet(input.nibbletId);
+        return paying(() => s.payments.setPolicy(input));
+      },
+      cancelCard: ({ id }) => paying(() => s.payments.cancelByPerson(id)),
     },
 
     auth: {
