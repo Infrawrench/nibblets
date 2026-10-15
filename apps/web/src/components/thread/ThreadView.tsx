@@ -99,10 +99,18 @@ function Entry({
   switch (entry.kind) {
     case "quiet":
       return (
-        <div className="flex items-center gap-1.5 self-center text-2xs text-faint">
-          <SourceIcon source={entry.source} />
-          {sourceLabels[entry.source]}: nothing to report · {clockTime(entry.at)}
-        </div>
+        <Quiet entry={entry}>
+          {entry.entries.map((inner) => (
+            <Entry
+              key={inner.key}
+              entry={inner}
+              server={server}
+              nibblets={nibblets}
+              onDecide={onDecide}
+              onResume={onResume}
+            />
+          ))}
+        </Quiet>
       );
     case "trigger":
       return <Trigger item={entry.item} />;
@@ -169,6 +177,45 @@ function SourceIcon({ source }: { source: TurnSource }) {
     default:
       return <Info className={cls} />;
   }
+}
+
+/** A heartbeat or schedule turn with nothing to report; expands to what it did. */
+function Quiet({
+  entry,
+  children,
+}: {
+  entry: Extract<TimelineEntry, { kind: "quiet" }>;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const calls = entry.entries.filter(
+    (e) => e.kind === "item" && e.item.type === "tool_call",
+  ).length;
+  const label = (
+    <>
+      <SourceIcon source={entry.source} />
+      {sourceLabels[entry.source]}: nothing to report
+      {calls > 0 ? ` · ${calls} tool ${calls === 1 ? "call" : "calls"}` : ""} ·{" "}
+      {clockTime(entry.at)}
+    </>
+  );
+  if (entry.entries.length === 0)
+    return <div className="flex items-center gap-1.5 self-center text-2xs text-faint">{label}</div>;
+  return (
+    <div className="flex flex-col gap-3">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 self-center rounded-md px-2 py-0.5 text-2xs text-faint hover:bg-hover"
+      >
+        {label}
+        <ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />
+      </button>
+      {open ? (
+        <div className="flex flex-col gap-3 border-l-2 border-line pl-3">{children}</div>
+      ) : null}
+    </div>
+  );
 }
 
 function Trigger({ item }: { item: ThreadItemOf<"user_message"> }) {

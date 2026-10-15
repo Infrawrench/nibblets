@@ -71,6 +71,9 @@ describe("buildTimeline", () => {
     const timeline = buildTimeline(items);
     expect(timeline).toHaveLength(1);
     expect(timeline[0]).toMatchObject({ kind: "quiet", source: "heartbeat" });
+    // What the turn did stays inside the quiet line, to expand.
+    const quiet = timeline[0];
+    expect(quiet?.kind === "quiet" && quiet.entries.map((e) => e.key)).toEqual(["u", "m"]);
   });
 
   it("shows non-user messages as triggers and hides turn markers", () => {

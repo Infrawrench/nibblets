@@ -53,14 +53,15 @@ export function isShareCall(item: ThreadItem): boolean {
 
 export type TimelineEntry =
   | { kind: "item"; key: string; item: ThreadItem }
-  | { kind: "quiet"; key: string; source: TurnSource; at: string }
+  | { kind: "quiet"; key: string; source: TurnSource; at: string; entries: TimelineEntry[] }
   | { kind: "trigger"; key: string; item: ThreadItemOf<"user_message"> };
 
 /**
  * What the thread view draws. Quiet heartbeat and schedule turns collapse
- * to one faint line; turn markers themselves aren't drawn; a message the
- * nibblet got from its heartbeat, a schedule or a sub-agent is a trigger
- * line rather than a chat bubble.
+ * to one faint line, holding what the turn did so it can be expanded; turn
+ * markers themselves aren't drawn; a message the nibblet got from its
+ * heartbeat, a schedule or a sub-agent is a trigger line rather than a chat
+ * bubble.
  */
 export function buildTimeline(items: readonly StoredItem[]): TimelineEntry[] {
   const quietTurns = new Map<string, ThreadItemOf<"turn">>();
@@ -69,39 +70,36 @@ export function buildTimeline(items: readonly StoredItem[]): TimelineEntry[] {
       quietTurns.set(item.id, item);
   }
   const out: TimelineEntry[] = [];
-  const emittedQuiet = new Set<string>();
+  const quietEntries = new Map<string, TimelineEntry[]>();
+  const quietEntry = (turn: ThreadItemOf<"turn">): TimelineEntry[] => {
+    let entries = quietEntries.get(turn.id);
+    if (!entries) {
+      entries = [];
+      quietEntries.set(turn.id, entries);
+      out.push({
+        kind: "quiet",
+        key: `quiet-${turn.id}`,
+        source: turn.source,
+        at: turn.createdAt,
+        entries,
+      });
+    }
+    return entries;
+  };
   for (const { item } of items) {
     if (isStatusCall(item) || isShareCall(item)) continue;
-    const quiet = item.turnId ? quietTurns.get(item.turnId) : undefined;
-    if (quiet) {
-      if (!emittedQuiet.has(quiet.id)) {
-        emittedQuiet.add(quiet.id);
-        out.push({
-          kind: "quiet",
-          key: `quiet-${quiet.id}`,
-          source: quiet.source,
-          at: quiet.createdAt,
-        });
-      }
-      continue;
-    }
     if (item.type === "turn") {
-      if (quietTurns.has(item.id) && !emittedQuiet.has(item.id)) {
-        emittedQuiet.add(item.id);
-        out.push({
-          kind: "quiet",
-          key: `quiet-${item.id}`,
-          source: item.source,
-          at: item.createdAt,
-        });
-      }
+      const quiet = quietTurns.get(item.id);
+      if (quiet) quietEntry(quiet);
       continue;
     }
+    const quiet = item.turnId ? quietTurns.get(item.turnId) : undefined;
+    const target = quiet ? quietEntry(quiet) : out;
     if (item.type === "user_message" && item.source !== "user") {
-      out.push({ kind: "trigger", key: item.id, item });
+      target.push({ kind: "trigger", key: item.id, item });
       continue;
     }
-    out.push({ kind: "item", key: item.id, item });
+    target.push({ kind: "item", key: item.id, item });
   }
   return out;
 }
