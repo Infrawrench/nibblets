@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sets up Nibblets on a Linux server or VM: Docker or Podman, the agents your nibblets
-# run on (Claude Code, Codex, OpenCode), this repo, the stack, and a link to
+# run on (Claude Code, Codex, OpenCode, Kimi Code), this repo, the stack, and a link to
 # Nibblets Connect so you can reach it from anywhere.
 #
 #   curl -fsSL https://nibblets.dev/install.sh | bash
@@ -398,7 +398,7 @@ check_memory_cgroup() {
 }
 
 # Node, for the host bridge (it shares this machine's logins and MCP servers
-# with nibblets) and for installing Codex.
+# with nibblets) and for installing Codex and Kimi Code.
 
 node_ok() { command -v node >/dev/null && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 24 ] 2>/dev/null; }
 
@@ -415,7 +415,7 @@ setup_node() {
   tar -xzf "$TOOLS/$file" -C "$TOOLS/node" --strip-components=1
   rm -f "$TOOLS/$file"
   hash -r
-  # So Codex, which runs on Node, works in new shells too.
+  # So Codex and Kimi Code, which run on Node, work in new shells too.
   if ! grep -qs "$TOOLS/node/bin" "$HOME/.profile"; then
     # shellcheck disable=SC2016 # $HOME and $PATH are for the profile to expand.
     printf '\n# Added by the Nibblets installer\nexport PATH="$HOME/.local/bin:%s:$PATH"\n' "$TOOLS/node/bin" >>"$HOME/.profile"
@@ -426,13 +426,14 @@ setup_node() {
 # The agents, as plugins: a name, how to tell it's installed and signed in,
 # and how to install it and sign in.
 
-AGENTS=(claude codex opencode)
+AGENTS=(claude codex opencode kimi)
 
 agent_name() {
   case "$1" in
     claude) echo "Claude Code" ;;
     codex) echo "Codex" ;;
     opencode) echo "OpenCode" ;;
+    kimi) echo "Kimi Code" ;;
   esac
 }
 agent_blurb() {
@@ -440,6 +441,7 @@ agent_blurb() {
     claude) echo "your Claude subscription" ;;
     codex) echo "your ChatGPT subscription" ;;
     opencode) echo "API keys, Copilot, and more" ;;
+    kimi) echo "your Kimi subscription" ;;
   esac
 }
 agent_emoji() {
@@ -447,6 +449,7 @@ agent_emoji() {
     claude) echo "🧡" ;;
     codex) echo "💚" ;;
     opencode) echo "💙" ;;
+    kimi) echo "🌙" ;;
   esac
 }
 agent_installed() { command -v "$1" >/dev/null; }
@@ -455,6 +458,7 @@ agent_signed_in() {
     claude) [ -s "$HOME/.claude/.credentials.json" ] ;;
     codex) [ -s "$HOME/.codex/auth.json" ] ;;
     opencode) [ -s "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json" ] ;;
+    kimi) [ -s "${KIMI_CODE_HOME:-$HOME/.kimi-code}/credentials/kimi-code.json" ] ;;
   esac
 }
 agent_install() {
@@ -462,6 +466,8 @@ agent_install() {
     claude) curl -fsSL https://claude.ai/install.sh | bash ;;
     codex) setup_node && npm install -g --prefix "$HOME/.local" @openai/codex ;;
     opencode) curl -fsSL https://opencode.ai/install | bash ;;
+    # node-pty is optional, for its interactive terminal; it may not build here, and needn't.
+    kimi) setup_node && npm install -g --prefix "$HOME/.local" @moonshot-ai/kimi-code ;;
   esac
 }
 agent_login() {
@@ -474,6 +480,8 @@ agent_login() {
       return 1
     } ;;
     opencode) opencode auth login ;;
+    # Device codes too, so it can be approved on any device.
+    kimi) kimi login ;;
   esac
 }
 
