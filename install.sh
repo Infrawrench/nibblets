@@ -580,7 +580,12 @@ setup_repo() {
   [ "$REF" = main ] && what="the latest Nibblets (main; there's no release yet)"
   if [ -d "$DIR/.git" ]; then
     # Fetched and checked out rather than pulled, so it works for a tag or a branch.
-    spin "Updating to $what" bash -c "git -C '$DIR' fetch --depth 1 origin '$REF' && git -C '$DIR' checkout -q --detach FETCH_HEAD"
+    # A tag is fetched as one, so it's kept: docker/up.sh only downloads a
+    # release's images when it can see the tag, and builds them otherwise.
+    case "$REF" in
+      v[0-9]*) spin "Updating to $what" bash -c "git -C '$DIR' fetch --depth 1 origin tag '$REF' && git -C '$DIR' checkout -q --detach '$REF'" ;;
+      *) spin "Updating to $what" bash -c "git -C '$DIR' fetch --depth 1 origin '$REF' && git -C '$DIR' checkout -q --detach FETCH_HEAD" ;;
+    esac
   else
     [ ! -e "$DIR" ] || fail "$DIR exists and isn't a Nibblets checkout. Set NIBBLETS_DIR to put it somewhere else."
     spin "Getting $what" git clone --depth 1 --branch "$REF" "$REPO" "$DIR"
