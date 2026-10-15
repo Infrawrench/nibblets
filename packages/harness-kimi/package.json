@@ -12,7 +12,8 @@
   "dependencies": {
     "@moonshot-ai/kimi-code": "^2.2.0",
     "@nibblet/harness": "workspace:*",
-    "@nibblet/protocol": "workspace:*"
+    "@nibblet/protocol": "workspace:*",
+    "smol-toml": "^1.9.1"
   },
   "devDependencies": {}
 }

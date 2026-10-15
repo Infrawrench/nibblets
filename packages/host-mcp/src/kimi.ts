@@ -48,8 +48,8 @@ export async function detectKimi(run: Run, paths: KimiPaths = kimiPaths()): Prom
     hasLogin: hasToken,
     detail: !installed
       ? "Kimi Code isn't set up on this machine"
-      : !hasToken && !hasConfig
-        ? "Sign in to Kimi Code first"
+      : !hasToken
+        ? "Sign in to Kimi Code first: run `kimi login`"
         : null,
   };
 }

@@ -2,6 +2,7 @@ import { chmod, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { McpServerSpec } from "@nibblet/harness";
 import type { Effort, KimiLogin } from "@nibblet/protocol";
+import { parse, stringify, type TomlTable, type TomlValue } from "smol-toml";
 
 /**
  * Turning the host's Kimi Code CLI setup into one that works inside a
@@ -14,10 +15,10 @@ import type { Effort, KimiLogin } from "@nibblet/protocol";
 /** The OAuth token `/login` writes, relative to `$KIMI_CODE_HOME`. */
 export const KIMI_CREDENTIALS_DIR = "credentials";
 export const KIMI_TOKEN_FILE = "kimi-code.json";
-
-const TABLE_HEADER = /^\s*\[/;
-const THINKING_TABLE = /^\[\[?thinking\s*(\.|\]|\[)/;
-const TOP_LEVEL_TELEMETRY = /^\s*telemetry\s*=/;
+/** The runtime config, relative to `$KIMI_CODE_HOME`. */
+export const KIMI_CONFIG_FILE = "config.toml";
+/** What the config is kept as in `secrets`, beside the token. */
+const KIMI_CONFIG_SECRET = "kimi-config.toml";
 
 /** Kimi's own MCP file format: a `mcpServers` object, stdio or http per entry. */
 export function mcpConfig(servers: Record<string, McpServerSpec>): string {
@@ -31,47 +32,71 @@ export function mcpConfig(servers: Record<string, McpServerSpec>): string {
 }
 
 /**
- * The host's `config.toml` with the nibblet's thinking effort applied, and
- * telemetry off. Both are replaced rather than added: TOML can't define the
- * same table or key twice, and a bare key after a table header would belong
- * to that table, so the scalar goes first and the table last.
+ * The host's `config.toml` with telemetry off and, when the model has effort
+ * levels and `effort` is one of them, thinking on at that effort. A model
+ * without effort levels keeps whatever thinking setting the host has.
+ * Throws when the host's config isn't valid TOML, since Kimi couldn't load
+ * it either.
  */
-export function kimiConfig(login: KimiLogin, effort: Effort): string {
-  const kept: string[] = [];
-  let inThinking = false;
-  for (const line of (login.config ?? "").split("\n")) {
-    if (TABLE_HEADER.test(line)) inThinking = THINKING_TABLE.test(line);
-    if (inThinking || TOP_LEVEL_TELEMETRY.test(line)) continue;
-    kept.push(line);
+export function kimiConfig(login: KimiLogin, effort: Effort, efforts: readonly Effort[]): string {
+  let config: TomlTable;
+  try {
+    config = parse(login.config ?? "");
+  } catch (err) {
+    throw new Error(
+      `The host's Kimi Code config.toml isn't valid TOML: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
-  return [
-    "telemetry = false",
-    ...kept,
-    "",
-    "[thinking]",
-    "enabled = true",
-    `effort = ${JSON.stringify(effort)}`,
-    "",
-  ].join("\n");
+  config.telemetry = false;
+  if (efforts.includes(effort)) {
+    const host = config.thinking;
+    config.thinking = { ...(isTable(host) ? host : {}), enabled: true, effort };
+  }
+  return `${stringify(config)}\n`;
+}
+
+function isTable(value: TomlValue | undefined): value is TomlTable {
+  return typeof value === "object" && !Array.isArray(value) && !(value instanceof Date);
 }
 
 /**
- * Writes the login where Kimi Code CLI looks for it under `home`. The token
- * itself goes in `secrets`, outside the home volume (so it's never kept
- * there or copied into a snapshot), and the credentials file is a link to
- * it. Any real credentials file an earlier version left behind is removed.
+ * Writes `content` to `name` in `secrets`, outside the home volume (so it's
+ * never kept there or copied into a snapshot), and links `target` to it. Any
+ * real file an earlier version left at `target` is removed.
  */
-export async function installLogin(home: string, login: KimiLogin, secrets: string): Promise<void> {
-  const dir = path.join(home, KIMI_CREDENTIALS_DIR);
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  const target = path.join(dir, KIMI_TOKEN_FILE);
+async function linkSecret(
+  target: string,
+  secrets: string,
+  name: string,
+  content: string,
+): Promise<void> {
+  await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
   await rm(target, { force: true, recursive: true });
-  if (!login.token) return;
   await mkdir(secrets, { recursive: true, mode: 0o700 });
-  const real = path.join(secrets, KIMI_TOKEN_FILE);
-  await writeFile(real, login.token, { mode: 0o600 });
+  const real = path.join(secrets, name);
+  await writeFile(real, content, { mode: 0o600 });
   await chmod(real, 0o600);
   await symlink(real, target);
+}
+
+/**
+ * Writes the login where Kimi Code CLI looks for it under `home`: the OAuth
+ * token, and the config, which can hold provider API keys of its own. Both
+ * live in `secrets` and are linked in.
+ */
+export async function installLogin(
+  home: string,
+  token: string,
+  config: string,
+  secrets: string,
+): Promise<void> {
+  await linkSecret(
+    path.join(home, KIMI_CREDENTIALS_DIR, KIMI_TOKEN_FILE),
+    secrets,
+    KIMI_TOKEN_FILE,
+    token,
+  );
+  await linkSecret(path.join(home, KIMI_CONFIG_FILE), secrets, KIMI_CONFIG_SECRET, config);
 }
 
 /** The MCP servers a nibblet brings, in the file Kimi Code CLI reads. */

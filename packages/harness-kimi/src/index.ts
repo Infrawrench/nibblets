@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -11,7 +11,7 @@ import {
   type HarnessContext,
   type TurnRequest,
 } from "@nibblet/harness";
-import { KimiLine, type KimiLogin } from "@nibblet/protocol";
+import { harnesses, KimiLine } from "@nibblet/protocol";
 import { installLogin, kimiConfig, writeMcpConfig } from "./login.ts";
 import { KimiMapper } from "./mapper.ts";
 
@@ -43,7 +43,7 @@ export function resolveCli(): string {
   return path.join(pkgDir, bin);
 }
 
-/** Where the token goes: the container's /tmp, never the home volume. */
+/** Where the token and config go: the container's /tmp, never the home volume. */
 const KIMI_SECRETS = path.join(os.tmpdir(), "nibblet-secrets");
 
 /**
@@ -57,6 +57,11 @@ export function promptFor(turn: TurnRequest): string {
   return system ? `${system}\n\n${input}` : input;
 }
 
+/** The effort levels Kimi takes for `model`; none for a model that has no setting. */
+function effortsFor(model: string) {
+  return harnesses.kimi.models.find((m) => m.id === model)?.efforts ?? [];
+}
+
 /**
  * Writes the Kimi home a nibblet runs in: the host's own config and login
  * under a private home, plus the MCP servers the nibblet brings. Throws when
@@ -64,18 +69,16 @@ export function promptFor(turn: TurnRequest): string {
  */
 export async function prepareHome(ctx: HarnessContext): Promise<string> {
   const login = ctx.config.kimiLogin;
-  if (!login?.config && !login?.token) {
+  if (!login?.token) {
     throw new Error(
       "Kimi Code needs a login: run `kimi login` on this machine, or pick another harness.",
     );
   }
+  const config = kimiConfig(login, ctx.config.effort, effortsFor(ctx.config.model));
   const home = path.join(ctx.workdir, ".kimi-code");
   await mkdir(home, { recursive: true, mode: 0o700 });
   await writeMcpConfig(home, ctx.mcpServers);
-  await installLogin(home, login, KIMI_SECRETS);
-  await writeFile(path.join(home, "config.toml"), kimiConfig(login, ctx.config.effort), {
-    mode: 0o600,
-  });
+  await installLogin(home, login.token, config, KIMI_SECRETS);
   return home;
 }
 
@@ -154,7 +157,6 @@ export const kimiHarness = defineHarness({
         } finally {
           turn.signal.removeEventListener("abort", onAbort);
           reader.close();
-          mapper.finish();
           out.finish();
         }
 

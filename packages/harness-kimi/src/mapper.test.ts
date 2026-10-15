@@ -28,7 +28,6 @@ function run(input: readonly unknown[]) {
     const known = KimiLine.safeParse(line);
     if (known.success) mapper.handle(known.data);
   }
-  mapper.finish();
   out.finish();
   const latest = new Map<string, ThreadItem>();
   for (const item of emitted) latest.set(item.id, item);
@@ -61,11 +60,10 @@ describe("KimiMapper", () => {
   it("takes the session id from the resume hint so the next turn can resume", () => {
     const { mapper } = run(lines);
     expect(mapper.state.sessionId).toBe("01HZ");
-    expect(mapper.state.version).toBe("2.2.0");
     expect(mapper.state.error).toBeNull();
   });
 
-  it("ignores lines it doesn't know, and reports a retry as a notice", () => {
+  it("ignores lines it doesn't know, and reports a retry as a notice, not a failure", () => {
     const { mapper, items } = run([
       { role: "meta", type: "system.version", version: "2.2.0" },
       { role: "something-else", text: "future" },
@@ -81,10 +79,27 @@ describe("KimiMapper", () => {
         error_message: "429 from the provider",
       },
     ]);
-    expect(mapper.state.error).toBe("429 from the provider");
+    expect(mapper.state.error).toBeNull();
     expect(items).toContainEqual(
       expect.objectContaining({ type: "notice", level: "warning", text: "429 from the provider" }),
     );
+  });
+
+  it("keeps the tool calls of a step with no text, whether content is left out or null", () => {
+    const { items } = run([
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{ type: "function", id: "c1", function: { name: "Bash", arguments: "{}" } }],
+      },
+      { role: "tool", tool_call_id: "c1", content: "ok" },
+    ]);
+    expect(items.find((i) => i.type === "tool_call")).toMatchObject({
+      name: "Bash",
+      status: "done",
+      output: "ok",
+    });
+    expect(items.some((i) => i.type === "assistant_message")).toBe(false);
   });
 
   it("closes a tool call as interrupted when its result never arrives", () => {

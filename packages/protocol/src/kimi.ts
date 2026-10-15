@@ -2,8 +2,9 @@ import { z } from "zod";
 
 /**
  * One line of `kimi -p --output-format stream-json`, which is OpenAI chat
- * shaped: an assistant message carries the text so far plus any tool calls
- * the model made, and each tool call is followed by its own tool message.
+ * shaped: each assistant message is one whole step (its text, plus any tool
+ * calls the model made in it), and each tool call is followed by its own tool
+ * message.
  * `meta` lines carry the CLI's own notices, such as the session to resume
  * next turn and any provider retry.
  *
@@ -14,7 +15,9 @@ import { z } from "zod";
 export const KimiLine = z.union([
   z.object({
     role: z.literal("assistant"),
-    content: z.string().optional(),
+    // Kimi leaves it out when a step only calls tools; OpenAI-style writers
+    // send null instead.
+    content: z.string().nullish(),
     tool_calls: z
       .array(
         z.object({
