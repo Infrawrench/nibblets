@@ -24,6 +24,14 @@ import { McpGate, type Decision } from "./gate.ts";
 
 const log = (message: string) => console.warn(`guard: ${message}`);
 
+/** An error's message, with its causes': fetch only says "fetch failed", and the cause says why. */
+function reason(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  // Connecting to several addresses fails with an AggregateError that has only a code.
+  const message = err.message || ("code" in err ? String(err.code) : err.name);
+  return err.cause instanceof Error ? `${message} (${reason(err.cause)})` : message;
+}
+
 const Answer = z.discriminatedUnion("status", [
   z.object({ status: z.literal("waiting"), approvalId: z.string() }),
   z.object({ status: z.literal("decided"), approved: z.boolean(), reason: z.string().nullable() }),
@@ -120,7 +128,7 @@ async function main(): Promise<void> {
     rules: () => rules,
     log,
     port: GATE_PORT,
-    onRefresh: () => apply().catch((err: unknown) => log(`couldn't refresh: ${String(err)}`)),
+    onRefresh: () => apply().catch((err: unknown) => log(`couldn't refresh: ${reason(err)}`)),
   });
 
   // The browser keeps its profile and downloads under the guard's own home.
@@ -137,7 +145,7 @@ async function main(): Promise<void> {
       break;
     } catch (err) {
       if (attempt >= 30) throw err;
-      log(`waiting for the server: ${err instanceof Error ? err.message : String(err)}`);
+      log(`waiting for the server: ${reason(err)}`);
       await new Promise((r) => setTimeout(r, 2000));
     }
   }
@@ -155,7 +163,7 @@ async function main(): Promise<void> {
 
 if (import.meta.main) {
   main().catch((err: unknown) => {
-    console.error(`guard: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`guard: ${reason(err)}`);
     process.exit(1);
   });
 }
