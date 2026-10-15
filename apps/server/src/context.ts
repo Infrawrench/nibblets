@@ -33,13 +33,27 @@ export function scheduleInput(name: string, prompt: string): string {
   return `Scheduled task "${name}" is due.\n\n${prompt}\n\nIf there's nothing worth telling the user, reply with exactly ${QUIET_REPLY}.`;
 }
 
-/** Whether a heartbeat or schedule reply means "nothing to report". */
+/**
+ * Whether a reply means "nothing to report". Only turns the user didn't
+ * start can go quiet: heartbeats, schedules, a sub-agent's result, and
+ * carrying on after a restart.
+ */
 export function isQuiet(source: TurnSource, reply: string): boolean {
-  if (source !== "heartbeat" && source !== "schedule") return false;
+  if (source === "user") return false;
   const trimmed = reply.trim();
   return (
     trimmed === QUIET_REPLY || trimmed.startsWith(QUIET_REPLY) || trimmed.endsWith(QUIET_REPLY)
   );
+}
+
+/**
+ * Whether a reply still being written could turn out quiet ("NO", "NO_REP"),
+ * so it isn't shown before it's finished saying so.
+ */
+export function mayBeQuiet(source: TurnSource, partial: string): boolean {
+  if (source === "user") return false;
+  const trimmed = partial.trim();
+  return isQuiet(source, trimmed) || QUIET_REPLY.startsWith(trimmed);
 }
 
 const RECAP_ITEMS = 40;
@@ -107,7 +121,7 @@ export function systemPrompt(input: SystemPromptInput): string {
     "Use `schedule_create` for anything at a set time, and heartbeats (`heartbeat_set`) for regular check-ins on things you're looking after. Keep as many heartbeats as you need, each with its own interval, hours and checklist, and remove ones that are no longer useful. Don't promise to do something later without scheduling it or setting a heartbeat.",
     "For work that splits into independent pieces, `spawn_subagent` starts a child nibblet; its answer comes back to you as a message.",
     "Files the user attaches are saved under `uploads/` in your working directory. To give the user a file (a report, an export, an image you made), call `share_file` with its path; it appears in the chat for them to open or download, so don't paste its contents too.",
-    `On heartbeat and scheduled turns, if there's nothing worth telling the user, reply with exactly ${QUIET_REPLY}.`,
+    `On heartbeat, scheduled and sub-agent result turns, if there's nothing worth telling the user, reply with exactly ${QUIET_REPLY}. Never reply ${QUIET_REPLY} to a message from the user.`,
   ];
   if (nibblet.browser) {
     rules.push(

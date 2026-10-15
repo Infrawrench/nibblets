@@ -15,7 +15,7 @@ import { z } from "zod";
 import { cliLogins } from "./clilogins.ts";
 import type { Config } from "./config.ts";
 import { Approvals } from "./approvals.ts";
-import { heartbeatInput, isQuiet, systemPrompt } from "./context.ts";
+import { heartbeatInput, isQuiet, mayBeQuiet, QUIET_REPLY, systemPrompt } from "./context.ts";
 import {
   LimitWaits,
   looksLikeUsageLimit,
@@ -553,11 +553,14 @@ export class Conductor {
       case "item": {
         const turn = this.active.get(nibbletId);
         if (turn && message.item.type === "assistant_message") turn.lastReply = message.item.text;
-        // Hide the reply itself when it's a quiet "nothing to report".
+        // Hide the reply itself when it's a quiet "nothing to report", and
+        // while it's streaming in and might yet be one.
         if (
           turn &&
           message.item.type === "assistant_message" &&
-          isQuiet(turn.source, message.item.text)
+          (message.item.streaming
+            ? mayBeQuiet(turn.source, message.item.text)
+            : isQuiet(turn.source, message.item.text))
         )
           return;
         await this.store.putItem(nibbletId, message.item);
@@ -735,7 +738,7 @@ export class Conductor {
     await this.enqueue(
       child.parentId,
       "subagent",
-      `Sub-agent "${child.name}" (${childId}) ${ok ? "finished" : "failed"}:\n\n${result}`,
+      `Sub-agent "${child.name}" (${childId}) ${ok ? "finished" : "failed"}:\n\n${result}\n\nIf there's nothing worth telling the user yet, reply with exactly ${QUIET_REPLY}.`,
     );
     // Its work is done; it can sleep until someone messages it directly.
     await this.stop(childId).catch(() => undefined);
