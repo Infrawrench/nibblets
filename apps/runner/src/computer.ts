@@ -20,6 +20,8 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { rm } from "node:fs/promises";
+import path from "node:path";
 import type { McpServerSpec } from "@nibblet/harness";
 import { VIEW_PORT } from "@nibblet/protocol";
 
@@ -30,6 +32,24 @@ const DEFAULT_PORTS = { mcp: 7800, view: VIEW_PORT };
 export interface Computer {
   mcp: McpServerSpec;
   stop(): void;
+}
+
+/**
+ * Removes the lock a Chromium that didn't shut down cleanly (killed with its
+ * container, or the machine losing power) leaves in its profile. The lock
+ * names the host it was taken on, and every container gets a new hostname,
+ * so the next Chromium takes the profile for one in use on another computer
+ * and quits, leaving the nibblet with no browser until the lock goes. Call it
+ * before the browser starts: the profile is this guard's alone, so nothing
+ * else can be holding it.
+ */
+export async function clearProfileLock(home: string): Promise<void> {
+  // Chromium's default; the entry never gives the guard an XDG_CONFIG_HOME.
+  const profile = path.join(home, ".config", "chromium");
+  for (const name of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) {
+    // They're symlinks, mostly to things that are gone: rm doesn't follow them.
+    await rm(path.join(profile, name), { force: true });
+  }
 }
 
 export async function startComputer(

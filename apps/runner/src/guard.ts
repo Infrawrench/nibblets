@@ -19,7 +19,7 @@ import {
   type ToolRule,
 } from "@nibblet/protocol";
 import { z } from "zod";
-import { startComputer, type Computer } from "./computer.ts";
+import { clearProfileLock, startComputer, type Computer } from "./computer.ts";
 import { McpGate, type Decision } from "./gate.ts";
 
 const log = (message: string) => console.warn(`guard: ${message}`);
@@ -136,6 +136,11 @@ async function main(): Promise<void> {
   if (env.NIBBLET_BROWSER === "1") {
     if (!env.NIBBLET_VIEW_TOKEN)
       log("NIBBLET_VIEW_TOKEN is empty; the browser view is unprotected");
+    if (process.env.HOME) {
+      await clearProfileLock(process.env.HOME).catch((err: unknown) =>
+        log(`couldn't clear the browser's profile lock: ${reason(err)}`),
+      );
+    }
     computer = await startComputer(
       env.NIBBLET_VIEW_TOKEN,
       (_level, message) => log(message),
