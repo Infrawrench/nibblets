@@ -845,6 +845,23 @@ export function createMockServer(): ServerConnection {
       tasks: async () => [],
       apps: async () => mockApps,
       stopTask: async () => ({ ok: true }),
+      browserBorrowStart: async ({ id }) => ({
+        nibbletId: id,
+        state: "local" as const,
+        detail: null,
+        proxyPort: 54321,
+        onePassword: true,
+        startedAt: Date.now(),
+      }),
+      browserBorrowEnd: async ({ id }) => ({
+        nibbletId: id,
+        state: "handback" as const,
+        detail: null,
+        proxyPort: null,
+        onePassword: true,
+        startedAt: Date.now(),
+      }),
+      browserBorrow: async () => null,
       decide: async ({ id, approvalId, approve, reason }) => {
         const found = items.get(id)?.find((s) => s.item.id === approvalId)?.item;
         if (found?.type === "approval" && found.status === "pending") {

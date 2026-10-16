@@ -126,6 +126,8 @@ export class Conductor {
     return link !== undefined;
   });
   serverName = "nibblet";
+  /** Whether a nibblet is signed in locally right now, so it mustn't be woken or started. */
+  borrowed: (nibbletId: string) => boolean = () => false;
 
   constructor(store: Store, docker: Orchestrator, config: Config) {
     this.store = store;
@@ -637,6 +639,13 @@ export class Conductor {
     attachments: FileRef[] = [],
     opts: { first?: boolean } = {},
   ): Promise<string> {
+    // Signed in locally: the container is stopped on purpose, so don't start it.
+    // A person's message says so; a heartbeat or schedule just waits for the handback.
+    if (this.borrowed(nibbletId)) {
+      if (source === "user")
+        throw new RpcError("unavailable", "It's signed in locally right now — hand it back first.");
+      return "";
+    }
     // While waiting out a usage limit, heartbeats and schedules don't pile up.
     if (this.limits.waiting(nibbletId) && (source === "heartbeat" || source === "schedule")) {
       const pending = this.queues.get(nibbletId)?.find((t) => t.source === source);

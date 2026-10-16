@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Globe, Hand, Loader2, MousePointerClick } from "lucide-react";
-import type { Nibblet } from "@nibblet/protocol";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Globe, Hand, KeyRound, Loader2, LogIn, MousePointerClick, Network } from "lucide-react";
+import type { BrowserBorrow, Nibblet } from "@nibblet/protocol";
+import { keys, useBorrow } from "../../lib/servers.tsx";
 import { listSessions, openBrowser } from "../../lib/browserView.ts";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { Button } from "../ui/Button.tsx";
@@ -33,13 +34,23 @@ export function BrowserPanel({
   });
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const borrow = useBorrow(connection, nibblet.id);
 
   if (!nibblet.browser) {
     return <Empty>The browser is turned off for {nibblet.name}. Turn it on in Settings.</Empty>;
   }
   if (connection.mock) return <MockBrowser />;
+  // A local sign-in stops the nibblet on purpose, so this comes before "asleep".
+  if (borrow.data) {
+    return <BorrowView connection={connection} nibblet={nibblet} borrow={borrow.data} />;
+  }
   if (nibblet.status === "stopped")
-    return <Empty>{nibblet.name} is asleep. Wake them to use the browser.</Empty>;
+    return (
+      <Empty>
+        <span>{nibblet.name} is asleep. Wake them to use the browser.</span>
+        <SignInLocally connection={connection} nibblet={nibblet} />
+      </Empty>
+    );
 
   const session = sessions.data?.[0];
   if (!session) {
@@ -66,6 +77,7 @@ export function BrowserPanel({
           {opening ? <Loader2 className="animate-spin" /> : <Globe />}
           Open browser
         </Button>
+        <SignInLocally connection={connection} nibblet={nibblet} />
         {error ? <span className="text-xs text-danger">{error}</span> : null}
       </Empty>
     );
@@ -78,6 +90,7 @@ export function BrowserPanel({
       kind="computer"
       sessionId={session.session_id}
       label="Browser"
+      actions={popout ? null : <SignInLocally connection={connection} nibblet={nibblet} compact />}
       onEnded={() => void qc.invalidateQueries({ queryKey: sessionsKey })}
       popout={popout}
       onPopOut={() =>
@@ -134,6 +147,103 @@ function MockBrowser() {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Borrows the nibblet's browser profile onto this computer: it stops, its
+ * profile opens in a Chrome window here to sign in quickly (with the host's
+ * 1Password if it's installed), and closing the window hands it back with
+ * every extension purged. Not offered over Nibblets Connect from another
+ * computer: the window opens where the server runs.
+ */
+function SignInLocally({
+  connection,
+  nibblet,
+  compact = false,
+}: {
+  connection: ServerConnection;
+  nibblet: Nibblet;
+  compact?: boolean;
+}) {
+  const qc = useQueryClient();
+  const start = useMutation({
+    mutationFn: () => connection.client.nibblets.browserBorrowStart({ id: nibblet.id }),
+    onSuccess: (borrow) => qc.setQueryData(keys.borrow(connection.id, nibblet.id), borrow),
+  });
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <Button
+        size={compact ? "sm" : "md"}
+        variant="secondary"
+        disabled={start.isPending}
+        title="Open this profile in a Chrome window on this computer to sign in, then hand it back"
+        onClick={() => start.mutate()}
+      >
+        {start.isPending ? <Loader2 className="animate-spin" /> : <LogIn />}
+        Sign in locally
+      </Button>
+      {start.error ? (
+        <span className="max-w-xs text-center text-2xs text-danger">
+          {start.error instanceof Error ? start.error.message : String(start.error)}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+const BORROW_BLURB: Record<BrowserBorrow["state"], string> = {
+  preparing: "Stopping the nibblet and copying its profile to this computer…",
+  local:
+    "Signed in locally. Finish signing in in the Chrome window on this computer, then close it to hand the profile back.",
+  handback: "Purging extensions and handing the profile back…",
+};
+
+function BorrowView({
+  connection,
+  nibblet,
+  borrow,
+}: {
+  connection: ServerConnection;
+  nibblet: Nibblet;
+  borrow: BrowserBorrow;
+}) {
+  const end = useMutation({
+    mutationFn: () => connection.client.nibblets.browserBorrowEnd({ id: nibblet.id }),
+  });
+  const busy = borrow.state !== "local";
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+      <LogIn className="size-7 text-accent" />
+      <div className="max-w-md space-y-2">
+        <p className="text-sm text-dim">{BORROW_BLURB[borrow.state]}</p>
+        {borrow.detail ? <p className="text-xs text-danger">{borrow.detail}</p> : null}
+      </div>
+      {borrow.state === "local" ? (
+        <div className="flex max-w-md flex-col gap-1.5 text-xs text-faint">
+          {borrow.onePassword ? (
+            <span className="flex items-center justify-center gap-1.5">
+              <KeyRound className="size-3.5" /> 1Password is in the window; it's purged before
+              hand-back.
+            </span>
+          ) : null}
+          {borrow.proxyPort ? (
+            <span className="flex items-center justify-center gap-1.5">
+              <Network className="size-3.5" /> The window browses through the nibblet's connection.
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      <Button
+        variant="secondary"
+        disabled={busy || end.isPending}
+        title="Close the window and throw away the local sign-in"
+        onClick={() => end.mutate()}
+      >
+        {end.isPending ? <Loader2 className="animate-spin" /> : null}
+        Cancel and discard
+      </Button>
     </div>
   );
 }

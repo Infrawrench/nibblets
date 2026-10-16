@@ -3,6 +3,7 @@ import { CliStatuses, HostTools } from "./mcp.ts";
 import { HarnessId, HarnessModels } from "./models.ts";
 import { ConnectStatus, TailscaleStatus } from "./connect.ts";
 import { OnePasswordGrants, OnePasswordStatus, VaultGrant } from "./onepassword.ts";
+import { BrowserBorrow } from "./borrow.ts";
 import { procedure } from "./rpc.ts";
 import { Snapshot, SnapshotActivity, SnapshotTimeline } from "./snapshots.ts";
 import { TailnetKeys } from "./tailscale.ts";
@@ -75,6 +76,17 @@ export const contract = {
      * Empty while it's asleep.
      */
     apps: procedure(Id, z.array(DesktopApp)),
+    /**
+     * Borrows the nibblet's browser profile for a quick sign-in: stops it and
+     * opens its profile in a Chrome window on the machine running the server's
+     * host bridge. Returns once the window is open; it hands back by itself
+     * when the window closes.
+     */
+    browserBorrowStart: procedure(Id, BrowserBorrow),
+    /** Ends a local sign-in early, discarding whatever was done in the window. */
+    browserBorrowEnd: procedure(Id, BrowserBorrow),
+    /** The nibblet's current local-sign-in state, or null if it isn't borrowed. */
+    browserBorrow: procedure(Id, BrowserBorrow.nullable()),
   },
   harnesses: {
     /** A harness's models: the fixed lists for Claude and Codex, the host's live list for OpenCode. */
@@ -202,6 +214,10 @@ export const LiveMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("apps"), nibbletId: z.string(), apps: z.array(DesktopApp) }),
   /** The thread was replaced (a snapshot was restored): drop it and fetch again from the start. */
   z.object({ type: z.literal("thread_reset"), nibbletId: z.string() }),
+  /** A local sign-in's state changed (started, open on the host, handing back, or over). */
+  z.object({ type: z.literal("browser_borrow"), borrow: BrowserBorrow }),
+  /** A local sign-in ended: it's no longer borrowed. */
+  z.object({ type: z.literal("browser_borrow_ended"), nibbletId: z.string() }),
   z.object({
     type: z.literal("snapshots_changed"),
     nibbletId: z.string(),

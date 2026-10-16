@@ -60,6 +60,62 @@ export const RUNNER_HARDENING = {
 
 /** The runner image's user home, which holds its working folder. */
 const RUNNER_HOME = "/home/nibblet";
+/** The folder the browser profile (`chromium/`) sits in, inside the guard's home. */
+const PROFILE_PARENT = `${RUNNER_HOME}/.guard/.config`;
+/** The guard owns its home and profile (uid:gid from the runner image). */
+const GUARD_OWNER = "1100:1100";
+/** Caches in the profile that rebuild themselves, so aren't worth borrowing. */
+const PROFILE_ARCHIVE_EXCLUDES = [
+  "chromium/*/Cache",
+  "chromium/*/Code Cache",
+  "chromium/*/GPUCache",
+  "chromium/*/Service Worker/CacheStorage",
+];
+const borrowProxyName = (nibbletId: string): string => `nibblet-borrow-proxy-${nibbletId}`;
+/** The port the borrow proxy listens on inside its container; the host port is chosen by Docker. */
+const BORROW_PROXY_PORT = 8888;
+/**
+ * A tiny forward proxy for a borrowed window: plain HTTP requests are
+ * forwarded, HTTPS is tunnelled with CONNECT. It only ever listens on the
+ * nibblet's network and is reached from the host's loopback through Docker's
+ * published port, so it takes no authentication of its own.
+ */
+const BORROW_PROXY_SCRIPT = `
+const http = require("http");
+const net = require("net");
+const { URL } = require("url");
+const port = Number(process.env.PORT || 8888);
+const server = http.createServer((req, res) => {
+  let target;
+  try { target = new URL(req.url); } catch { res.writeHead(400).end(); return; }
+  const up = http.request(
+    {
+      host: target.hostname,
+      port: target.port || 80,
+      method: req.method,
+      path: target.pathname + target.search,
+      headers: req.headers,
+    },
+    (r) => { res.writeHead(r.statusCode || 502, r.headers); r.pipe(res); },
+  );
+  up.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+  req.pipe(up);
+});
+server.on("connect", (req, client, head) => {
+  const i = req.url.lastIndexOf(":");
+  const host = req.url.slice(0, i);
+  const p = Number(req.url.slice(i + 1)) || 443;
+  const up = net.connect(p, host, () => {
+    client.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+    if (head && head.length) up.write(head);
+    up.pipe(client);
+    client.pipe(up);
+  });
+  up.on("error", () => client.destroy());
+  client.on("error", () => up.destroy());
+});
+server.listen(port, "0.0.0.0");
+`;
 /** Where a sub-agent's entry leaves its pid in its host's container (SUBAGENT_PIDS in the runner). */
 const SUBAGENT_PIDS = "/run/nibblet-subagents";
 
@@ -526,6 +582,142 @@ kill -KILL "$pid" 2>/dev/null; true`,
       ["sh", "-c", `find ${RUNNER_HOME} -mindepth 1 -delete && tar -C /home -xzpf -`],
       { readOnly: false, stdin: archive },
     );
+  }
+
+  /**
+   * Writes just the browser profile (the guard's `~/.config/chromium`), as a
+   * gzipped tar rooted at `chromium/`, to `out`. The nibblet must be stopped
+   * first (a borrow stops it), so nothing is browsing while it's copied; the
+   * caches that rebuild themselves are left out. An empty profile is made if
+   * the nibblet never browsed, so the window still opens.
+   */
+  async archiveProfile(nibbletId: string, out: Writable): Promise<void> {
+    const volume = await this.ensureHome(nibbletId);
+    const excludes = PROFILE_ARCHIVE_EXCLUDES.map((e) => `--exclude=${e}`).join(" ");
+    await this.inHome(
+      volume,
+      [
+        "sh",
+        "-c",
+        `cd ${PROFILE_PARENT} && mkdir -p chromium && tar --numeric-owner ${excludes} -czf - chromium`,
+      ],
+      { readOnly: false, stdout: out },
+    );
+  }
+
+  /**
+   * Replaces the browser profile from a tar made by `archiveProfile` (rooted
+   * at `chromium/`), handing ownership back to the guard. The nibblet must be
+   * stopped; its guard clears any stale profile lock when it starts again.
+   */
+  async restoreProfile(nibbletId: string, archive: Readable): Promise<void> {
+    const volume = await this.ensureHome(nibbletId);
+    await this.inHome(
+      volume,
+      [
+        "sh",
+        "-c",
+        `mkdir -p ${PROFILE_PARENT} && rm -rf ${PROFILE_PARENT}/chromium && ` +
+          `tar -C ${PROFILE_PARENT} --no-same-owner -xzf - && ` +
+          `chown -R ${GUARD_OWNER} ${PROFILE_PARENT}/chromium`,
+      ],
+      { readOnly: false, stdin: archive },
+    );
+  }
+
+  /**
+   * The user-agent the nibblet's Chromium presents, worked out from the
+   * runner image's Chromium version, so a borrowed window on the host can
+   * look like the nibblet. Null if the version can't be read.
+   */
+  async browserUserAgent(): Promise<string | null> {
+    const stdout: Buffer[] = [];
+    const sink = new Writable({
+      write(chunk: Buffer, _enc, done) {
+        stdout.push(chunk);
+        done();
+      },
+    });
+    try {
+      await this.runImageCapture(["/usr/bin/chromium", "--version"], sink);
+    } catch {
+      return null;
+    }
+    const major = /\b(\d+)\.\d+\.\d+/.exec(Buffer.concat(stdout).toString("utf8"))?.[1];
+    if (!major) return null;
+    return (
+      `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) ` +
+      `Chrome/${major}.0.0.0 Safari/537.36`
+    );
+  }
+
+  /**
+   * An HTTP/HTTPS proxy on the nibblet's own Docker network, published on the
+   * host's loopback, so a borrowed window egresses from the same place the
+   * nibblet would (its public IP). It runs while the nibblet is stopped for a
+   * borrow; a Tailscale exit node isn't reproduced, since that lived in the
+   * stopped container. Returns the host port and how to stop it.
+   */
+  async startBorrowProxy(nibbletId: string): Promise<{ port: number; stop: () => Promise<void> }> {
+    const name = borrowProxyName(nibbletId);
+    await this.removeContainer(name);
+    const container = await this.docker.createContainer({
+      name,
+      Image: this.config.NIBBLET_RUNNER_IMAGE,
+      Cmd: ["node", "-e", BORROW_PROXY_SCRIPT],
+      Env: [`PORT=${BORROW_PROXY_PORT}`],
+      Labels: { [MANAGED]: "true", [ROLE]: "borrow-proxy", [NIBBLET]: nibbletId },
+      ExposedPorts: { [`${BORROW_PROXY_PORT}/tcp`]: {} },
+      HostConfig: {
+        NetworkMode: this.config.NIBBLET_NETWORK,
+        CapDrop: ["ALL"],
+        SecurityOpt: ["no-new-privileges:true"],
+        PidsLimit: 128,
+        RestartPolicy: { Name: "no" },
+        // The host (where the borrowed window runs) reaches it on loopback only.
+        PortBindings: { [`${BORROW_PROXY_PORT}/tcp`]: [{ HostIp: "127.0.0.1", HostPort: "" }] },
+      },
+    });
+    const stop = () => this.removeContainer(name);
+    try {
+      await container.start();
+      const info = await container.inspect();
+      const bound = info.NetworkSettings.Ports?.[`${BORROW_PROXY_PORT}/tcp`]?.[0]?.HostPort;
+      const port = bound ? Number(bound) : NaN;
+      if (!Number.isInteger(port)) throw new Error("the proxy didn't get a host port");
+      return { port, stop };
+    } catch (err) {
+      await stop().catch(() => undefined);
+      throw err;
+    }
+  }
+
+  /** Runs a command in a throwaway runner container, offline, capturing stdout. */
+  private async runImageCapture(cmd: string[], stdout: Writable): Promise<void> {
+    const container = await this.docker.createContainer({
+      Image: this.config.NIBBLET_RUNNER_IMAGE,
+      User: "0",
+      Cmd: cmd,
+      Labels: { [MANAGED]: "true", [ROLE]: "probe" },
+      HostConfig: { NetworkMode: "none", ...RUNNER_HARDENING },
+    });
+    try {
+      const stream = await container.attach({ stream: true, stdout: true, stderr: true });
+      this.docker.modem.demuxStream(
+        stream,
+        stdout,
+        new Writable({
+          write(_c, _e, done) {
+            done();
+          },
+        }),
+      );
+      await container.start();
+      const result: { StatusCode: number } = await container.wait();
+      if (result.StatusCode !== 0) throw new Error(`${cmd[0]} exited ${result.StatusCode}`);
+    } finally {
+      await container.remove({ force: true }).catch(() => undefined);
+    }
   }
 
   /** Runs a command as root in a throwaway container with the home volume mounted, offline. */

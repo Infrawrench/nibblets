@@ -7,6 +7,7 @@ import { z } from "zod";
 import { createApp } from "./app.ts";
 import { Bus } from "./bus.ts";
 import { Conductor } from "./conductor.ts";
+import { Borrow } from "./borrow.ts";
 import { loadConfig } from "./config.ts";
 import { Orchestrator } from "./docker.ts";
 import { createEmbedder } from "./embeddings.ts";
@@ -53,6 +54,15 @@ async function main(): Promise<void> {
   conductor.terminals.onTasks = (nibbletId, tasks) =>
     bus.publish({ type: "tasks", nibbletId, tasks });
   conductor.terminals.onApps = (nibbletId, apps) => bus.publish({ type: "apps", nibbletId, apps });
+  const borrow = new Borrow({
+    store,
+    docker,
+    config,
+    stop: (nibbletId) => conductor.stop(nibbletId),
+    start: (nibbletId) => conductor.start(nibbletId),
+    publish: (message) => bus.publish(message),
+  });
+  conductor.borrowed = (nibbletId) => borrow.borrowed(nibbletId);
   const scheduler = new Scheduler(store, conductor);
   const snapshots = new Snapshots({
     store,
@@ -100,6 +110,7 @@ async function main(): Promise<void> {
       snapshots,
       harnessUpdates,
       appUpdates,
+      borrow,
     },
     bus,
   );
