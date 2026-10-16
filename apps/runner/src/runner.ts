@@ -23,6 +23,8 @@ export interface RunnerDeps {
   plugins: Record<HarnessId, HarnessPlugin>;
   send(msg: RunnerToServer): void;
   workdir: string;
+  /** A sub-agent's own place for its harness's state; see HarnessContext.stateDir. */
+  stateDir?: string;
   mcpServers: Record<string, McpServerSpec>;
   /** Builds the spec for a host MCP server, reached through the nibblet server. */
   hostMcp(name: string): McpServerSpec;
@@ -148,6 +150,7 @@ export class Runner {
     const ctx: HarnessContext = {
       config: { ...config, resumeSessionId: this.lastSessionId },
       workdir: this.deps.workdir,
+      ...(this.deps.stateDir ? { stateDir: this.deps.stateDir } : {}),
       mcpServers: mcpServersFor(config, this.deps),
       credproxyUrl: this.deps.credproxyUrl,
       credproxyKey: this.deps.credproxyKey,

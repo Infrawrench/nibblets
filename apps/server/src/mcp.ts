@@ -319,7 +319,7 @@ function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
     "spawn_subagent",
     {
       description:
-        "Start a sub-agent: a new nibblet in its own container that works on one task in parallel with you. Its final answer is sent back to you as a message when it's done. Give it everything it needs; it doesn't see this conversation.",
+        "Start a sub-agent: a new nibblet that works on one task in parallel with you, in your container, so it sees your files, installed tools and running servers; it gets its own browser window. Its final answer is sent back to you as a message when it's done. Give it everything it needs; it doesn't see this conversation.",
       inputSchema: {
         name: z.string().min(1).max(60).describe("A short name, shown in the UI"),
         task: z.string().min(1).describe("The complete task, with all context it needs"),

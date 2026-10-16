@@ -17,7 +17,6 @@ import WebSocket from "ws";
 import { z } from "zod";
 import type { Bus } from "./bus.ts";
 import type { RunnerLink } from "./conductor.ts";
-import { runnerName } from "./docker.ts";
 import { createHandlers, type Services } from "./handlers.ts";
 import { hostMcpHandler } from "./hostmcp.ts";
 import { mountGuard } from "./guard.ts";
@@ -26,7 +25,6 @@ import { mountFiles } from "./files.ts";
 import { viewToken } from "./store.ts";
 
 const TICKET_TTL_MS = 30_000;
-const VIEW_PORT = 7900;
 
 function safeEqual(a: string, b: string): boolean {
   const x = Buffer.from(a);
@@ -250,7 +248,8 @@ export function createApp(services: Services, bus: Bus) {
       const row = await store.nibbletRow(id).catch(() => null);
       if (!row) return;
       const path = c.req.path.slice(`/api/nibblets/${id}/computer`.length);
-      const upstreamUrl = `ws://${runnerName(id)}:${VIEW_PORT}${path}${new URL(c.req.url).search.replace(/([?&])ticket=[^&]*&?/, "$1")}`;
+      // A sub-agent's browser is beside its parent's, in its parent's container.
+      const upstreamUrl = `ws://${await conductor.browserAddress(id)}${path}${new URL(c.req.url).search.replace(/([?&])ticket=[^&]*&?/, "$1")}`;
       const token = viewToken(config.NIBBLET_OWNER_TOKEN, id, row.tokenHash);
       const handler = upgradeWebSocket(() => {
         let upstream: WebSocket | null = null;
@@ -300,7 +299,7 @@ export function createApp(services: Services, bus: Bus) {
     const path = c.req.path.slice(`/api/nibblets/${id}/computer`.length);
     const search = new URL(c.req.url).search;
     const token = viewToken(config.NIBBLET_OWNER_TOKEN, id, row.tokenHash);
-    const res = await fetch(`http://${runnerName(id)}:${VIEW_PORT}${path}${search}`, {
+    const res = await fetch(`http://${await conductor.browserAddress(id)}${path}${search}`, {
       method: c.req.method,
       headers: {
         authorization: `Bearer ${token}`,

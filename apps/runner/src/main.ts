@@ -57,12 +57,13 @@ const hostMcpBase = env.NIBBLET_MCP_URL.replace(/\/mcp\/?$/, "/hostmcp");
 
 // The browser, 1Password and its own MCP servers sit behind the guard's
 // gate, run as another user; this process only knows their addresses.
-const gateBase = `http://127.0.0.1:${GATE_PORT}`;
+const gateBase = `http://127.0.0.1:${env.NIBBLET_GATE_PORT ?? GATE_PORT}`;
 
 const runner: Runner = new Runner({
   plugins,
   send: (msg) => connection?.send(msg),
   workdir,
+  ...(env.NIBBLET_STATE_DIR ? { stateDir: env.NIBBLET_STATE_DIR } : {}),
   mcpServers,
   hostMcp: (name) => ({
     type: "http",
@@ -107,6 +108,7 @@ connection = new Connection({
       type: "ready",
       harnessVersion: versions.join(", "),
       activeTurnId: runner.currentTurnId(),
+      viewPort: env.NIBBLET_VIEW_PORT ?? null,
     });
     connection?.send({ type: "tasks", tasks: tasks.list() });
   },

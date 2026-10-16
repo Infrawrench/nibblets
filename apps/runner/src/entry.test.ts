@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { firewallRules, nameservers, ownSubnet } from "./entry.ts";
+import { firewallRules, nameservers, ownSubnet, safeId } from "./entry.ts";
+
+describe("a sub-agent's id", () => {
+  it("is taken as the server makes them", () => {
+    expect(safeId("nb_TtoJSyhCSr21")).toBe("nb_TtoJSyhCSr21");
+  });
+
+  it("can't reach out of the folders it names", () => {
+    for (const id of ["../guard", "nb/x", "", undefined, "nb x"]) {
+      expect(() => safeId(id)).toThrow();
+    }
+  });
+});
 
 describe("the container's firewall", () => {
   it("finds the network the container is on", () => {

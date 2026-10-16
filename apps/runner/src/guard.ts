@@ -127,7 +127,7 @@ async function main(): Promise<void> {
     ask: (name, tool, input) => server.ask(name, tool, input),
     rules: () => rules,
     log,
-    port: GATE_PORT,
+    port: env.NIBBLET_GATE_PORT ?? GATE_PORT,
     onRefresh: () => apply().catch((err: unknown) => log(`couldn't refresh: ${reason(err)}`)),
   });
 
@@ -136,7 +136,13 @@ async function main(): Promise<void> {
   if (env.NIBBLET_BROWSER === "1") {
     if (!env.NIBBLET_VIEW_TOKEN)
       log("NIBBLET_VIEW_TOKEN is empty; the browser view is unprotected");
-    computer = await startComputer(env.NIBBLET_VIEW_TOKEN, (_level, message) => log(message));
+    computer = await startComputer(
+      env.NIBBLET_VIEW_TOKEN,
+      (_level, message) => log(message),
+      env.NIBBLET_BROWSER_PORT && env.NIBBLET_VIEW_PORT
+        ? { mcp: env.NIBBLET_BROWSER_PORT, view: env.NIBBLET_VIEW_PORT }
+        : undefined,
+    );
   }
   // Settings first, so the gate never answers with half of them.
   for (let attempt = 1; ; attempt++) {
@@ -150,7 +156,7 @@ async function main(): Promise<void> {
     }
   }
   await gate.start();
-  console.log(`guard: gate on 127.0.0.1:${GATE_PORT}`);
+  console.log(`guard: gate on 127.0.0.1:${env.NIBBLET_GATE_PORT ?? GATE_PORT}`);
 
   const shutdown = async () => {
     await gate.close().catch(() => {});
