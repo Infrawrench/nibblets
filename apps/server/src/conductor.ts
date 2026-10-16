@@ -69,6 +69,8 @@ const Resume = z.record(
 type Resume = z.infer<typeof Resume>;
 const RESUME_INPUT =
   "Nibblets restarted (to update) while you were working, so your last turn was cut short. Carry on where you left off.";
+/** How long a sub-agent has to reconnect after a server restart; less than an orphaned turn's wait. */
+const RECONNECT_WAIT_MS = 60_000;
 const SUBAGENT_RESUME_INPUT =
   "The container you share with your parent restarted while you were working, so your last turn was cut short, and background tasks you started have stopped. Carry on where you left off.";
 
@@ -102,8 +104,10 @@ export class Conductor {
    * of one this server replaced or stopped isn't taken for a crash.
    */
   private readonly subagentRuns = new Map<string, symbol>();
-  /** Where a sub-agent's browser view listens in its host's container, as its runner said. */
-  private readonly viewPorts = new Map<string, number>();
+  /** Where a sub-agent's browser view is (`host:port`), as its runner said once connected. */
+  private readonly views = new Map<string, string>();
+  /** Host containers being started for sub-agents, so siblings share one start. */
+  private readonly hostStarts = new Map<string, Promise<unknown>>();
   /** Vault names last shared with each runner, for its system prompt. */
   private readonly onePasswordVaults = new Map<string, SharedVault[]>();
   /** The user's terminals in the containers, and the background tasks each reports. */
@@ -144,15 +148,24 @@ export class Conductor {
       }
       return id;
     };
-    // A sub-agent that was stopped isn't running just because its host is.
+    // A sub-agent that was stopped isn't running just because its host is,
+    // and one from before sub-agents shared their parent's container (which
+    // has one of its own, removed below) isn't running in its host at all.
     const runners = new Map(
       all.flatMap((n) => {
         const host = containers.get(hostOf(n.id));
         const stopped = n.parentId && (n.status === "stopped" || n.status === "error");
-        return host && !stopped ? [[n.id, host] as const] : [];
+        const legacy = n.parentId && containers.has(n.id);
+        return host && !stopped && !legacy ? [[n.id, host] as const] : [];
       }),
     );
-    const outdated = (id: string) => this.docker.runnerOutdated(hostOf(id));
+    // Asked once, before any host is recreated below (after which its new
+    // container would answer for its sub-agents).
+    const outdatedHosts = new Set<string>();
+    for (const [id, c] of containers) {
+      if (c.running && (await this.docker.runnerOutdated(id))) outdatedHosts.add(id);
+    }
+    const outdated = (id: string) => outdatedHosts.has(hostOf(id));
     // Running turns live in memory, so the last server lost track of any it
     // left running. A runner that's still up may still be on one: wait for it
     // to say. Otherwise the turn is over, and the nibblet carries on below.
@@ -161,7 +174,7 @@ export class Conductor {
     const lost: string[] = [];
     for (const { nibbletId, item } of await this.store.runningTurnItems()) {
       const runner = runners.get(nibbletId);
-      const waiting = runner?.running && !(await outdated(nibbletId));
+      const waiting = runner?.running && !outdated(nibbletId);
       if (waiting) {
         this.orphans.set(nibbletId, item);
         setTimeout(() => void this.settleOrphan(nibbletId), 2 * 60_000).unref();
@@ -174,15 +187,18 @@ export class Conductor {
     }
     for (const nibblet of all) {
       const runner = runners.get(nibblet.id);
-      if (nibblet.parentId && runner?.running && (await outdated(nibblet.id))) {
+      if (nibblet.parentId && runner?.running && outdated(nibblet.id)) {
         // Its host is about to be recreated below, and it with it.
         await this.store.setStatus(nibblet.id, "stopped");
-      } else if (runner?.running && (await outdated(nibblet.id))) {
+      } else if (runner?.running && outdated(nibblet.id)) {
         // The runner image was rebuilt: give it a container with the fixes.
         await this.start(nibblet.id).catch(() => undefined);
       } else if (runner?.running) {
         // Its runner keeps its token and reconnects by itself.
         await this.store.setStatus(nibblet.id, "starting", "Reconnecting");
+        // A container's exit is reported, but nothing would say a sub-agent's
+        // processes had gone while this server was away.
+        if (nibblet.parentId) this.expectReconnect(nibblet.id);
       } else if (nibblet.status !== "stopped" && nibblet.status !== "error") {
         await this.store.setStatus(nibblet.id, "stopped");
       }
@@ -203,6 +219,22 @@ export class Conductor {
       resume[id] = { turns: resume[id]?.turns ?? [], wasWorking: true };
     }
     await this.resume(resume);
+  }
+
+  /**
+   * A sub-agent that doesn't reconnect after a server restart has stopped:
+   * marked so, the next message to it starts it again rather than waiting on it.
+   */
+  private expectReconnect(nibbletId: string): void {
+    setTimeout(() => {
+      void (async () => {
+        if (this.links.has(nibbletId)) return;
+        const nibblet = await this.store.getNibblet(nibbletId).catch(() => null);
+        if (nibblet?.status !== "starting") return;
+        this.views.delete(nibbletId);
+        await this.store.setStatus(nibbletId, "stopped");
+      })().catch((err: unknown) => console.warn(`couldn't settle ${nibbletId}`, err));
+    }, RECONNECT_WAIT_MS).unref();
   }
 
   /** Marks a turn the last server lost as paused, saying so. */
@@ -297,11 +329,14 @@ export class Conductor {
     return n.id;
   }
 
-  /** Where the server reaches a nibblet's browser view. */
-  async browserAddress(nibbletId: string): Promise<string> {
-    const host = await this.hostOf(await this.store.getNibblet(nibbletId));
-    const port = host === nibbletId ? VIEW_PORT : (this.viewPorts.get(nibbletId) ?? VIEW_PORT);
-    return `${runnerName(host)}:${port}`;
+  /**
+   * Where the server reaches a nibblet's browser view: its own container's
+   * 7900, or for a sub-agent the port its runner reported in its host's
+   * container. Null for a sub-agent that hasn't reported one (it isn't up).
+   */
+  browserAddress(nibbletId: string, parentId: string | null): string | null {
+    if (!parentId) return `${runnerName(nibbletId)}:${VIEW_PORT}`;
+    return this.views.get(nibbletId) ?? null;
   }
 
   async start(nibbletId: string): Promise<Nibblet> {
@@ -365,7 +400,9 @@ export class Conductor {
     const nibbletId = nibblet.id;
     const host = await this.hostOf(nibblet);
     try {
-      if (!(await this.docker.runnerRunning(host))) await this.start(host);
+      const starting = this.hostStarts.get(host);
+      if (starting) await starting;
+      else if (!(await this.docker.runnerRunning(host))) await this.startHost(host);
       const token = await this.store.rotateToken(nibbletId);
       await this.store.updateNibblet(nibbletId, {
         status: "starting",
@@ -375,7 +412,7 @@ export class Conductor {
       const run = Symbol(nibbletId);
       // The run it replaces ends quietly.
       this.subagentRuns.set(nibbletId, run);
-      this.viewPorts.delete(nibbletId);
+      this.views.delete(nibbletId);
       await this.docker.startSubagent(
         host,
         nibbletId,
@@ -390,6 +427,25 @@ export class Conductor {
     }
   }
 
+  private async recordView(nibbletId: string, port: number | null): Promise<void> {
+    const nibblet = await this.store.getNibblet(nibbletId);
+    if (!nibblet.parentId || port === null) {
+      this.views.delete(nibbletId);
+      return;
+    }
+    this.views.set(nibbletId, `${runnerName(await this.hostOf(nibblet))}:${port}`);
+  }
+
+  /** Starts a sub-agent's host container, once however many of its sub-agents ask at the same time. */
+  private startHost(hostId: string): Promise<unknown> {
+    let starting = this.hostStarts.get(hostId);
+    if (!starting) {
+      starting = this.start(hostId).finally(() => this.hostStarts.delete(hostId));
+      this.hostStarts.set(hostId, starting);
+    }
+    return starting;
+  }
+
   /** A sub-agent's guard and runner stopped without being asked to. */
   private async onSubagentExit(
     nibbletId: string,
@@ -399,6 +455,7 @@ export class Conductor {
   ): Promise<void> {
     if (this.subagentRuns.get(nibbletId) !== run) return;
     this.subagentRuns.delete(nibbletId);
+    this.views.delete(nibbletId);
     const nibblet = await this.store.getNibblet(nibbletId).catch(() => null);
     if (!nibblet || nibblet.status === "stopped") return;
     this.links.get(nibbletId)?.close();
@@ -439,6 +496,7 @@ export class Conductor {
       if (!running && !this.links.has(child.id)) continue;
       if (this.busy(child.id)) working.push(child.id);
       this.subagentRuns.delete(child.id);
+      this.views.delete(child.id);
       void this.approvals.cancelAll(child.id, reason);
       this.failActive(child.id, "interrupted", reason);
       this.links.get(child.id)?.close();
@@ -472,6 +530,7 @@ export class Conductor {
       containerId: null,
       harnessSessionId: null,
     });
+    this.views.delete(nibbletId);
     if (stopped.parentId) {
       this.subagentRuns.delete(nibbletId);
       await this.docker.stopSubagent(await this.hostOf(stopped), nibbletId);
@@ -483,7 +542,8 @@ export class Conductor {
   }
 
   async delete(nibbletId: string): Promise<void> {
-    for (const child of await this.store.children(nibbletId)) await this.delete(child.id);
+    // At the same time: each waits for its own processes to stop.
+    await Promise.all((await this.store.children(nibbletId)).map((child) => this.delete(child.id)));
     await this.stop(nibbletId).catch(() => undefined);
     this.queues.delete(nibbletId);
     const nibblet = await this.store.getNibblet(nibbletId);
@@ -716,6 +776,7 @@ export class Conductor {
   async detach(nibbletId: string, link: RunnerLink): Promise<void> {
     if (this.links.get(nibbletId) !== link) return;
     this.links.delete(nibbletId);
+    this.views.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
     this.failActive(nibbletId, "failed", "Lost touch with its container");
   }
@@ -729,8 +790,7 @@ export class Conductor {
   async onRunnerMessage(nibbletId: string, message: RunnerToServer): Promise<void> {
     switch (message.type) {
       case "ready": {
-        if (message.viewPort === null) this.viewPorts.delete(nibbletId);
-        else this.viewPorts.set(nibbletId, message.viewPort);
+        await this.recordView(nibbletId, message.viewPort);
         if (this.orphans.has(nibbletId)) {
           const adopted =
             message.activeTurnId !== null && this.adoptOrphan(nibbletId, message.activeTurnId);

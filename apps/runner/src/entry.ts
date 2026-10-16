@@ -279,20 +279,30 @@ async function main(): Promise<void> {
   });
 }
 
-/** A port nothing in the container is listening on, for now. */
-function freePort(host: string): Promise<number> {
-  return new Promise((resolve, reject) => {
+/**
+ * Where a sub-agent's ports come from: below Linux's ephemeral range
+ * (32768 up), so an outgoing connection can't take one between it being
+ * picked here and its server binding it moments later.
+ */
+export const SUBAGENT_PORTS = { from: 20_000, to: 32_000 };
+
+function canListen(port: number, host: string): Promise<boolean> {
+  return new Promise((resolve) => {
     const server = createServer();
-    server.once("error", reject);
-    server.listen(0, host, () => {
-      const address = server.address();
-      server.close(() =>
-        typeof address === "object" && address
-          ? resolve(address.port)
-          : reject(new Error("no port")),
-      );
-    });
+    server.once("error", () => resolve(false));
+    server.listen(port, host, () => server.close(() => resolve(true)));
   });
+}
+
+/** A port in SUBAGENT_PORTS nothing in the container is listening on, nor in `taken`. */
+async function freePort(host: string, taken: readonly number[]): Promise<number> {
+  const { from, to } = SUBAGENT_PORTS;
+  for (let attempt = 0; attempt < 200; attempt++) {
+    // At random, so sub-agents starting together don't try the same ones.
+    const port = from + Math.floor(Math.random() * (to - from));
+    if (!taken.includes(port) && (await canListen(port, host))) return port;
+  }
+  throw new Error("no free port for the sub-agent");
 }
 
 /** Ids are the server's own (`nb_` and base64url), but they end up in paths. */
@@ -339,11 +349,9 @@ async function subagent(): Promise<void> {
   const tmp = `/tmp/nibblet-${id}`;
   await ownedDir(tmp, AGENT_UID, AGENT_GID, 0o700);
 
-  const ports = {
-    gate: await freePort("127.0.0.1"),
-    browser: await freePort("0.0.0.0"),
-    view: await freePort("0.0.0.0"),
-  };
+  const gate = await freePort("127.0.0.1", []);
+  const browser = await freePort("0.0.0.0", [gate]);
+  const ports = { gate, browser, view: await freePort("0.0.0.0", [gate, browser]) };
   log(`sub-agent ${id}: gate on ${ports.gate}, browser view on ${ports.view}`);
   await startPair(
     {

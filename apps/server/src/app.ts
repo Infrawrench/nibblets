@@ -249,7 +249,9 @@ export function createApp(services: Services, bus: Bus) {
       if (!row) return;
       const path = c.req.path.slice(`/api/nibblets/${id}/computer`.length);
       // A sub-agent's browser is beside its parent's, in its parent's container.
-      const upstreamUrl = `ws://${await conductor.browserAddress(id)}${path}${new URL(c.req.url).search.replace(/([?&])ticket=[^&]*&?/, "$1")}`;
+      const address = conductor.browserAddress(id, row.parentId);
+      if (!address) return;
+      const upstreamUrl = `ws://${address}${path}${new URL(c.req.url).search.replace(/([?&])ticket=[^&]*&?/, "$1")}`;
       const token = viewToken(config.NIBBLET_OWNER_TOKEN, id, row.tokenHash);
       const handler = upgradeWebSocket(() => {
         let upstream: WebSocket | null = null;
@@ -299,7 +301,9 @@ export function createApp(services: Services, bus: Bus) {
     const path = c.req.path.slice(`/api/nibblets/${id}/computer`.length);
     const search = new URL(c.req.url).search;
     const token = viewToken(config.NIBBLET_OWNER_TOKEN, id, row.tokenHash);
-    const res = await fetch(`http://${await conductor.browserAddress(id)}${path}${search}`, {
+    const address = conductor.browserAddress(id, row.parentId);
+    if (!address) return c.json({ error: "The browser isn't running" }, 503);
+    const res = await fetch(`http://${address}${path}${search}`, {
       method: c.req.method,
       headers: {
         authorization: `Bearer ${token}`,

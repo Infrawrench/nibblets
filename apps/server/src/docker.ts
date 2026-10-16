@@ -214,26 +214,34 @@ kill -KILL "$pid" 2>/dev/null; true`,
     );
   }
 
-  /** Deletes what a sub-agent kept in its host's home: its harness's state and its browser profile. */
+  /**
+   * Deletes what a sub-agent kept in its host's home: its harness's state and
+   * its browser profile, with its logins. In the host's container when it's
+   * up, or straight from its home volume when it isn't.
+   */
   async removeSubagentState(hostId: string, nibbletId: string): Promise<void> {
-    await this.inRunner(
-      hostId,
-      [
-        "sh",
-        "-c",
-        `rm -rf "${RUNNER_HOME}/.subagents/$SUBAGENT" "${RUNNER_HOME}/.guard/subagents/$SUBAGENT"`,
-      ],
-      { SUBAGENT: nibbletId },
-    );
+    // It goes into a path, and a stopped host's helper takes no environment.
+    if (!/^[\w-]+$/.test(nibbletId)) throw new Error(`not a nibblet id: ${nibbletId}`);
+    const cmd = [
+      "rm",
+      "-rf",
+      `${RUNNER_HOME}/.subagents/${nibbletId}`,
+      `${RUNNER_HOME}/.guard/subagents/${nibbletId}`,
+    ];
+    if (await this.inRunner(hostId, cmd, {})) return;
+    await this.inHome(await this.ensureHome(hostId), cmd, { readOnly: false });
   }
 
-  /** Runs a command as root in a nibblet's running container, to completion. Nothing if it's not up. */
+  /**
+   * Runs a command as root in a nibblet's running container, to completion.
+   * False, without running it, if the container isn't up; throws if it fails.
+   */
   private async inRunner(
     nibbletId: string,
     cmd: string[],
     env: Record<string, string>,
-  ): Promise<void> {
-    if (!(await this.runnerRunning(nibbletId))) return;
+  ): Promise<boolean> {
+    if (!(await this.runnerRunning(nibbletId))) return false;
     const exec = await this.docker.getContainer(runnerName(nibbletId)).exec({
       Cmd: cmd,
       User: "0",
@@ -247,6 +255,9 @@ kill -KILL "$pid" 2>/dev/null; true`,
       stream.once("end", () => resolve());
       stream.once("close", () => resolve());
     });
+    const { ExitCode } = await exec.inspect();
+    if (ExitCode !== 0 && ExitCode !== null) throw new Error(`${cmd[0]} exited ${ExitCode}`);
+    return true;
   }
 
   /**
