@@ -203,6 +203,7 @@ function fingerprint(target: string): string {
 const noTailscale = (detail: string): TailscaleStatus => ({
   installed: false,
   running: false,
+  stopped: false,
   serving: false,
   url: null,
   detail,

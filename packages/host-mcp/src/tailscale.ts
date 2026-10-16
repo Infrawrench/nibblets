@@ -11,6 +11,8 @@ import type { Run } from "./clis/cli.ts";
 export interface TailscaleState {
   installed: boolean;
   running: boolean;
+  /** Installed, but its service isn't running, so there's nothing to sign in to yet. */
+  stopped: boolean;
   serving: boolean;
   url: string | null;
   detail: string | null;
@@ -23,6 +25,7 @@ const CANDIDATES = ["tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tai
 
 const Status = z.looseObject({
   BackendState: z.string(),
+  AuthURL: z.string().optional(),
   Self: z.looseObject({ DNSName: z.string().optional() }).optional(),
 });
 
@@ -45,12 +48,38 @@ function parseJson(text: string): unknown {
   }
 }
 
-/** The tailnet name of this machine, without MagicDNS's trailing dot. */
-export function parseTailscaleStatus(text: string): { running: boolean; dnsName: string | null } {
+/**
+ * What `tailscale status --json` says: whether the service answered at all,
+ * whether it's on a tailnet, this machine's tailnet name (without MagicDNS's
+ * trailing dot), and the link of a sign-in that's already waiting.
+ */
+export function parseTailscaleStatus(text: string): {
+  reachable: boolean;
+  running: boolean;
+  dnsName: string | null;
+  authUrl: string | null;
+} {
   const parsed = Status.safeParse(parseJson(text));
-  if (!parsed.success) return { running: false, dnsName: null };
+  if (!parsed.success) return { reachable: false, running: false, dnsName: null, authUrl: null };
   const dns = parsed.data.Self?.DNSName?.replace(/\.$/, "") || null;
-  return { running: parsed.data.BackendState === "Running", dnsName: dns };
+  const authUrl = parsed.data.AuthURL?.startsWith("https://") ? parsed.data.AuthURL : null;
+  return {
+    reachable: true,
+    running: parsed.data.BackendState === "Running",
+    dnsName: dns,
+    authUrl,
+  };
+}
+
+/** How to start the service, for the CLI that was found. */
+function startHint(cli: string): string {
+  if (cli.startsWith("/Applications/") || process.platform === "win32") {
+    return "Open the Tailscale app to start it.";
+  }
+  if (process.platform === "darwin") {
+    return "Open the Tailscale app, or if it came from Homebrew, run `sudo brew services start tailscale`.";
+  }
+  return "Start it with `sudo systemctl start tailscaled`.";
 }
 
 /** Whether `tailscale serve` is already proxying HTTPS to `target`. */
@@ -89,27 +118,43 @@ export async function tailscaleState(
     return {
       installed: false,
       running: false,
+      stopped: false,
       serving: false,
       url: null,
       detail: null,
       action: null,
     };
   }
-  const { running, dnsName } = parseTailscaleStatus((await run(cli, ["status", "--json"])).stdout);
+  const { reachable, running, dnsName, authUrl } = parseTailscaleStatus(
+    (await run(cli, ["status", "--json"])).stdout,
+  );
+  if (!reachable) {
+    return {
+      installed: true,
+      running: false,
+      stopped: true,
+      serving: false,
+      url: null,
+      detail: `Tailscale is installed but isn't running. ${startHint(cli)}`,
+      action: null,
+    };
+  }
   if (!running || !dnsName) {
     return {
       installed: true,
       running: false,
+      stopped: false,
       serving: false,
       url: null,
       detail: "Tailscale isn't signed in on this computer.",
-      action: null,
+      action: authUrl ? { label: "Sign in to Tailscale", url: authUrl } : null,
     };
   }
   const serving = parseServeStatus((await run(cli, ["serve", "status", "--json"])).stdout, target);
   return {
     installed: true,
     running: true,
+    stopped: false,
     serving,
     url: serving ? `https://${dnsName}` : null,
     detail: null,
@@ -150,7 +195,8 @@ export async function setTailscaleServe(
 /**
  * Starts `tailscale up` and hands back the link that finishes signing in,
  * for the UI to open. The CLI waits for the sign-in, so it's given a short
- * timeout: the link is printed straight away.
+ * timeout: the link is printed straight away. A sign-in that's already
+ * waiting is reused, and when there's no link the CLI's reason is passed on.
  */
 export async function tailscaleLogin(
   plainRun: Run,
@@ -158,13 +204,20 @@ export async function tailscaleLogin(
   socket = process.env.TAILSCALE_SOCKET,
 ): Promise<TailscaleState> {
   const run = withSocket(plainRun, socket);
+  const before = await tailscaleState(plainRun, target, socket);
+  if (!before.installed || before.stopped || before.running || before.action) return before;
   const cli = await findCli(plainRun);
-  if (!cli) return tailscaleState(plainRun, target, socket);
+  if (!cli) return before;
   const result = await run(cli, ["up", "--timeout=8s"]);
-  const login = /https:\/\/login\.tailscale\.com\/a\/\S+/.exec(
-    `${result.stderr}\n${result.stdout}`,
-  )?.[0];
+  const output = `${result.stderr}\n${result.stdout}`;
+  const login = /https:\/\/login\.tailscale\.com\/a\/\S+/.exec(output)?.[0];
   const state = await tailscaleState(plainRun, target, socket);
-  if (state.running || !login) return state;
-  return { ...state, action: { label: "Sign in to Tailscale", url: login } };
+  if (state.running || state.stopped) return state;
+  if (login) return { ...state, action: { label: "Sign in to Tailscale", url: login } };
+  if (state.action) return state;
+  const why = output.trim().split("\n")[0] ?? "";
+  return {
+    ...state,
+    detail: why ? `tailscale up failed: ${why}` : "tailscale up didn't give a sign-in link",
+  };
 }

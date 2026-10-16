@@ -197,6 +197,8 @@ export const TailscaleStatus = z.object({
   installed: z.boolean(),
   /** Signed in and connected to a tailnet. */
   running: z.boolean(),
+  /** Installed, but its service isn't running, so there's nothing to sign in to yet. */
+  stopped: z.boolean().default(false),
   /** Whether this server is shared on the tailnet with `tailscale serve`. */
   serving: z.boolean(),
   url: z.string().nullable(),

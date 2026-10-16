@@ -195,33 +195,49 @@ function TailscaleRow({ connection }: { connection: ServerConnection }) {
   const status = useQuery({
     queryKey: key,
     queryFn: () => connection.client.tailscale.status({}),
-    // While someone's finishing a sign-in or turning Serve on in their browser.
-    refetchInterval: (q) => (q.state.data?.action ? 3000 : false),
+    // While someone's finishing a sign-in or turning Serve on in their browser,
+    // or starting Tailscale itself.
+    refetchInterval: (q) => (q.state.data?.action ? 3000 : q.state.data?.stopped ? 5000 : false),
   });
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const run = async (fn: () => Promise<TailscaleStatus>) => {
     setBusy(true);
+    setError(null);
     try {
       const next = await fn();
       qc.setQueryData(key, next);
       if (next.action) openUrl(next.action.url);
       void qc.invalidateQueries({ queryKey: keys.connect(connection.id) });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
   };
   const s = status.data;
-  const hint = !s
-    ? "Checking…"
-    : !s.installed
-      ? (s.detail ?? "Install Tailscale on this computer to reach it over your tailnet.")
-      : s.serving && s.url
-        ? s.url
-        : (s.detail ?? "Share this server on your tailnet over HTTPS.");
+  const hint =
+    error ??
+    (!s
+      ? "Checking…"
+      : !s.installed
+        ? (s.detail ?? "Install Tailscale on this computer to reach it over your tailnet.")
+        : s.serving && s.url
+          ? s.url
+          : (s.detail ?? "Share this server on your tailnet over HTTPS."));
   return (
     <FieldRow label="Tailscale" hint={hint}>
       <div className="flex items-center gap-2">
-        {s?.installed && !s.running ? (
+        {s?.stopped ? (
+          <Button
+            size="sm"
+            disabled={busy || status.isFetching}
+            onClick={() => void status.refetch()}
+          >
+            {status.isFetching ? <Loader2 className="animate-spin" /> : null}
+            Check again
+          </Button>
+        ) : s?.installed && !s.running ? (
           <Button
             size="sm"
             variant="primary"

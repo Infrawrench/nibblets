@@ -40,10 +40,12 @@ function fakeHost(): { run: Run; calls: string[] } {
 describe("tailscale", () => {
   it("reads the machine's MagicDNS name", () => {
     expect(parseTailscaleStatus(status)).toEqual({
+      reachable: true,
       running: true,
       dnsName: "pogair.tail1234.ts.net",
+      authUrl: null,
     });
-    expect(parseTailscaleStatus("not json").running).toBe(false);
+    expect(parseTailscaleStatus("not json")).toMatchObject({ reachable: false, running: false });
   });
 
   it("knows whether the server is being served", () => {
@@ -113,5 +115,60 @@ describe("tailscale", () => {
       label: "Sign in to Tailscale",
       url: "https://login.tailscale.com/a/1234abcd",
     });
+  });
+
+  it("says when Tailscale is installed but its service isn't running, without trying to sign in", async () => {
+    const calls: string[] = [];
+    const run: Run = async (command, args) => {
+      calls.push(args.join(" "));
+      if (command !== "tailscale") return { code: 127, stdout: "", stderr: "" };
+      if (args[0] === "version") return { code: 0, stdout: "1.104.1", stderr: "" };
+      return {
+        code: 1,
+        stdout: "",
+        stderr: "failed to connect to local Tailscale service; is Tailscale running?\n",
+      };
+    };
+    const state = await tailscaleLogin(run, TARGET);
+    expect(state).toMatchObject({ installed: true, running: false, stopped: true, action: null });
+    expect(state.detail).toMatch(/isn't running/);
+    expect(calls).not.toContain("up --timeout=8s");
+  });
+
+  it("reuses a sign-in that's already waiting", async () => {
+    const calls: string[] = [];
+    const run: Run = async (command, args) => {
+      calls.push(args.join(" "));
+      if (command !== "tailscale") return { code: 127, stdout: "", stderr: "" };
+      if (args[0] === "version") return { code: 0, stdout: "1.104.1", stderr: "" };
+      const waiting = { BackendState: "NeedsLogin", AuthURL: "https://login.tailscale.com/a/w8" };
+      return { code: 0, stdout: JSON.stringify(waiting), stderr: "" };
+    };
+    const state = await tailscaleLogin(run, TARGET);
+    expect(state.action).toEqual({
+      label: "Sign in to Tailscale",
+      url: "https://login.tailscale.com/a/w8",
+    });
+    expect(calls).not.toContain("up --timeout=8s");
+  });
+
+  it("passes on why tailscale up gave no link", async () => {
+    const run: Run = async (command, args) => {
+      if (command !== "tailscale") return { code: 127, stdout: "", stderr: "" };
+      if (args[0] === "version") return { code: 0, stdout: "1.104.1", stderr: "" };
+      if (args.join(" ") === "status --json") {
+        return { code: 0, stdout: JSON.stringify({ BackendState: "NeedsLogin" }), stderr: "" };
+      }
+      return {
+        code: 1,
+        stdout: "",
+        stderr: "Error: changing settings via 'tailscale up' requires mentioning all\n",
+      };
+    };
+    const state = await tailscaleLogin(run, TARGET);
+    expect(state.action).toBeNull();
+    expect(state.detail).toBe(
+      "tailscale up failed: Error: changing settings via 'tailscale up' requires mentioning all",
+    );
   });
 });
