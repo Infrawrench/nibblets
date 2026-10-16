@@ -243,55 +243,57 @@ export function createApp(services: Services, bus: Bus) {
   // OpenComputerUse's view server inside the container: the live browser and taking control.
   app.get("/api/nibblets/:id/computer/*", async (c, next) => {
     if (c.req.header("upgrade")?.toLowerCase() !== "websocket") return next();
-    return requireTicket(c, async () => {
-      const id = c.req.param("id") ?? "";
-      const row = await store.nibbletRow(id).catch(() => null);
-      if (!row) return;
-      const path = c.req.path.slice(`/api/nibblets/${id}/computer`.length);
-      // A sub-agent's browser is beside its parent's, in its parent's container.
-      const address = conductor.browserAddress(id, row.parentId);
-      if (!address) return;
-      const upstreamUrl = `ws://${address}${path}${new URL(c.req.url).search.replace(/([?&])ticket=[^&]*&?/, "$1")}`;
-      const token = viewToken(config.NIBBLET_OWNER_TOKEN, id, row.tokenHash);
-      const handler = upgradeWebSocket(() => {
-        let upstream: WebSocket | null = null;
-        const pending: (string | Buffer)[] = [];
-        return {
-          onOpen(_event, ws) {
-            upstream = new WebSocket(upstreamUrl, {
-              headers: { authorization: `Bearer ${token}` },
-            });
-            upstream.on("open", () => {
-              for (const m of pending.splice(0)) upstream?.send(m);
-            });
-            upstream.on("message", (data, isBinary) => {
-              const chunk = Buffer.isBuffer(data)
-                ? data
-                : Array.isArray(data)
-                  ? Buffer.concat(data)
-                  : Buffer.from(data);
-              ws.send(isBinary ? new Uint8Array(chunk) : chunk.toString("utf8"));
-            });
-            upstream.on("close", (code, reason) =>
-              ws.close(code === 1005 ? 1000 : code, reason.toString()),
-            );
-            upstream.on("error", () => ws.close(1011, "browser unavailable"));
-          },
-          onMessage(event) {
-            const data =
-              typeof event.data === "string"
-                ? event.data
-                : Buffer.from(event.data instanceof ArrayBuffer ? event.data : new ArrayBuffer(0));
-            if (upstream?.readyState === WebSocket.OPEN) upstream.send(data);
-            else pending.push(data);
-          },
-          onClose() {
-            upstream?.close();
-          },
-        };
-      });
-      await handler(c, next);
+    // Every way out returns a response, the upgrade's included: Hono fails a
+    // request whose handler returns nothing.
+    const denied = await requireTicket(c, async () => {});
+    if (denied) return denied;
+    const id = c.req.param("id") ?? "";
+    const row = await store.nibbletRow(id).catch(() => null);
+    if (!row) return c.text("No such nibblet", 404);
+    const path = c.req.path.slice(`/api/nibblets/${id}/computer`.length);
+    // A sub-agent's browser is beside its parent's, in its parent's container.
+    const address = conductor.browserAddress(id, row.parentId);
+    if (!address) return c.text("The browser isn't running", 503);
+    const upstreamUrl = `ws://${address}${path}${new URL(c.req.url).search.replace(/([?&])ticket=[^&]*&?/, "$1")}`;
+    const token = viewToken(config.NIBBLET_OWNER_TOKEN, id, row.tokenHash);
+    const handler = upgradeWebSocket(() => {
+      let upstream: WebSocket | null = null;
+      const pending: (string | Buffer)[] = [];
+      return {
+        onOpen(_event, ws) {
+          upstream = new WebSocket(upstreamUrl, {
+            headers: { authorization: `Bearer ${token}` },
+          });
+          upstream.on("open", () => {
+            for (const m of pending.splice(0)) upstream?.send(m);
+          });
+          upstream.on("message", (data, isBinary) => {
+            const chunk = Buffer.isBuffer(data)
+              ? data
+              : Array.isArray(data)
+                ? Buffer.concat(data)
+                : Buffer.from(data);
+            ws.send(isBinary ? new Uint8Array(chunk) : chunk.toString("utf8"));
+          });
+          upstream.on("close", (code, reason) =>
+            ws.close(code === 1005 ? 1000 : code, reason.toString()),
+          );
+          upstream.on("error", () => ws.close(1011, "browser unavailable"));
+        },
+        onMessage(event) {
+          const data =
+            typeof event.data === "string"
+              ? event.data
+              : Buffer.from(event.data instanceof ArrayBuffer ? event.data : new ArrayBuffer(0));
+          if (upstream?.readyState === WebSocket.OPEN) upstream.send(data);
+          else pending.push(data);
+        },
+        onClose() {
+          upstream?.close();
+        },
+      };
     });
+    return handler(c, next);
   });
 
   app.all("/api/nibblets/:id/computer/*", requireUser, async (c) => {
