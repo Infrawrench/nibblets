@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { MASKED } from "./mcp.ts";
-import { BROWSER_MCP_PORT, GATE_PORT, VIEW_PORT } from "./ports.ts";
+import {
+  BROWSER_MCP_PORT,
+  DESKTOP_MCP_PORT,
+  DESKTOP_VIEW_PORT,
+  GATE_PORT,
+  VIEW_PORT,
+} from "./ports.ts";
 
 /**
  * A nibblet on the user's tailnet: its container joins as a machine of its
@@ -28,11 +34,13 @@ export const CONTAINER_TAILSCALE_STATE = "/var/lib/nibblet-tailscale";
  * runner's own MCP servers and the harnesses listen.
  */
 export const MAX_TAILNET_PORT = 19_999;
-/** Ports in the container the tailnet can never reach: the browser's MCP endpoint, `GATE_PORT`, `VIEW_PORT` and the proxy. */
+/** Ports in the container the tailnet can never reach: the browser's and the desktop's, `GATE_PORT` and the proxy. */
 export const RESERVED_TAILNET_PORTS: readonly number[] = [
   BROWSER_MCP_PORT,
   GATE_PORT,
   VIEW_PORT,
+  DESKTOP_MCP_PORT,
+  DESKTOP_VIEW_PORT,
   TAILSCALE_PROXY_PORT,
 ];
 

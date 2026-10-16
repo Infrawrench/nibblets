@@ -15,6 +15,18 @@ RUN apt-get update \
       xkb-data libxkbcommon0 libxkbcommon-x11-0 libpixman-1-0 xvfb libxtst6 libxext6 libx11-6 \
  && rm -rf /var/lib/apt/lists/*
 
+# A few desktop apps for the launcher the agent and the user share (see
+# apps/runner/src/apps.ts): a terminal and a text editor, both small, on the
+# GTK Chromium already brings. The agent can't install system packages, so
+# anything else it adds goes in its home folder with a desktop entry.
+# Foot's client and server and Mousepad's settings have entries of their own,
+# which would only crowd the launcher.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends foot mousepad \
+ && rm -rf /var/lib/apt/lists/* \
+ && cd /usr/share/applications \
+ && rm footclient.desktop foot-server.desktop org.xfce.mousepad-settings.desktop
+
 # Python, because agents reach for it, and uv for projects that want their
 # own environments. Plain `pip install` goes to ~/.local (pip falls back to a user install),
 # which is the nibblet's persistent home, so packages survive restarts.
@@ -134,9 +146,10 @@ ENV NODE_ENV=production \
     NIBBLET_WORKDIR=/home/nibblet/work \
     CHROME_PATH=/usr/local/bin/chromium \
     OCU_LINUX_DISPLAY=wayland \
+    APPIMAGE_EXTRACT_AND_RUN=1 \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
     PATH=/home/nibblet/.local/bin:$PATH
-# The browser view, served by OpenComputerUse and proxied by the server.
-EXPOSE 7900
+# The browser's view and the desktop's, served by OpenComputerUse and proxied by the server.
+EXPOSE 7900 7901
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "/app/apps/runner/src/entry.ts"]

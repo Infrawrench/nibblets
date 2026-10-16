@@ -134,6 +134,16 @@ describe("systemPrompt", () => {
     expect(prompt).toContain("computer");
   });
 
+  it("tells it about the desktop and its apps only when it has one", () => {
+    const base = { nibblet, serverName: "home", memories: [], history: null, parent: null };
+    const now = new Date("2026-10-13T12:00:00Z");
+    expect(systemPrompt({ ...base, now })).not.toContain("app_launch");
+    const prompt = systemPrompt({ ...base, now, desktop: true });
+    expect(prompt).toContain("`app_list`");
+    expect(prompt).toContain("`desktop` tools");
+    expect(prompt).toContain("~/.local/share/applications");
+  });
+
   it("tells it where it is on the tailnet, what's shared, and how to reach out", () => {
     const base = { nibblet, serverName: "home", memories: [], history: null, parent: null };
     const now = new Date("2026-10-13T12:00:00Z");

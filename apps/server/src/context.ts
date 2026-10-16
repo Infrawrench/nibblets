@@ -92,6 +92,8 @@ export interface SystemPromptInput {
   now: Date;
   /** 1Password vaults shared with it, if any. */
   onePasswordVaults?: readonly SharedVault[];
+  /** Whether its container has a desktop for apps other than the browser. */
+  desktop?: boolean;
   /** Its container's machine on the user's tailnet, once it has joined. */
   tailnet?: { node: TailnetNode; ports: readonly number[] } | null;
 }
@@ -106,7 +108,7 @@ export function systemPrompt(input: SystemPromptInput): string {
 
   if (input.parent) {
     parts.push(
-      `You are a sub-agent of ${input.parent.name}. You run in ${input.parent.name}'s container, beside it: you see the same files, installed tools and running servers (your working folder is the same as its), but you have your own browser. Do the task you were given, then finish with a clear, self-contained final answer: it is sent back to ${input.parent.name} as your result.`,
+      `You are a sub-agent of ${input.parent.name}. You run in ${input.parent.name}'s container, beside it: you see the same files, installed tools, running servers and desktop apps (your working folder is the same as its), but you have your own browser. Do the task you were given, then finish with a clear, self-contained final answer: it is sent back to ${input.parent.name} as your result.`,
     );
   }
 
@@ -131,6 +133,11 @@ export function systemPrompt(input: SystemPromptInput): string {
   if (nibblet.browser) {
     rules.push(
       "You have a Chromium browser through the `computer` tools (OpenComputerUse), shared with the user: they can watch it and take control. Use it for anything on the web: browsing, reading pages, filling forms, taking screenshots. Don't run your own headless browser (chromium, Playwright, Puppeteer and the like) from the shell instead, since the user can't see that; `curl` is fine for plain downloads and APIs. `list_sessions` first, and if none is open, `start_session` with app `chromium` (pass the URL as an argument). If the user is using it, wait rather than fighting over the mouse.",
+    );
+  }
+  if (input.desktop) {
+    rules.push(
+      "Your container also has a desktop for other apps, shared with the user the same way: they see every app open on it, whoever opened it, and can open apps there themselves. `app_list` says what's installed and `app_launch` opens one, giving you a session id for the `desktop` tools (the same tools as `computer`, for these apps); `list_sessions` on `desktop` shows what's open, the user's included. Keep to the browser for the web. Apps run as you, and you can't install system packages: to add one, put it under your home folder (AppImages work) with a desktop entry in `~/.local/share/applications`, and it shows up for both of you. Close what you opened with `end_session` when you're done with it, unless the user wants it kept.",
     );
   }
   parts.push(`## How you work\n\n${rules.map((r) => `- ${r}`).join("\n")}`);

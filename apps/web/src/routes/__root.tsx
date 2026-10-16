@@ -5,8 +5,8 @@ import { cn } from "../lib/cn.ts";
 export const Route = createRootRoute({
   component: function Root() {
     const path = useRouterState({ select: (s) => s.location.pathname });
-    // Pop-out windows (the browser) are just their content.
-    if (path.startsWith("/browser/")) return <Outlet />;
+    // Pop-out windows (the browser, the apps) are just their content.
+    if (path.startsWith("/browser/") || path.startsWith("/apps/")) return <Outlet />;
     // On a phone it's one thing at a time: the list is home, and pages open over it.
     const home = path === "/";
     return (

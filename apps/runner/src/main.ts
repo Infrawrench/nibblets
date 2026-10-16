@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { McpServerSpec } from "@nibblet/harness";
 import { GATE_PORT, RunnerEnv } from "@nibblet/protocol";
+import { DesktopApps } from "./apps.ts";
+import type { Computer } from "./computer.ts";
 import { Connection } from "./connection.ts";
+import { DESKTOP_VIEW_URL, joinDesktop, startDesktop } from "./desktop.ts";
 import { RunnerFiles } from "./files.ts";
 import { plugins } from "./plugins.ts";
 import { Runner } from "./runner.ts";
@@ -46,6 +49,27 @@ const tasks = new BackgroundTasks({
   onChange: (list) => connection?.send({ type: "tasks", tasks: list }),
 });
 mcpServers.tasks = await tasks.startMcp();
+// The desktop, for apps other than the browser, and the launcher's list of
+// them. A sub-agent uses its host container's desktop.
+let desktop: Computer | null = null;
+let apps: DesktopApps | null = null;
+if (env.NIBBLET_DESKTOP_TOKEN) {
+  if (env.NIBBLET_SUBAGENT === "1") {
+    mcpServers.desktop = joinDesktop(env.NIBBLET_DESKTOP_TOKEN);
+  } else {
+    desktop = await startDesktop(env.NIBBLET_DESKTOP_TOKEN, workdir, log);
+    mcpServers.desktop = desktop.mcp;
+  }
+  apps = new DesktopApps({
+    viewUrl: DESKTOP_VIEW_URL,
+    token: env.NIBBLET_DESKTOP_TOKEN,
+    onChange: (list) => connection?.send({ type: "apps", apps: list }),
+  });
+  mcpServers.apps = await apps.startMcp();
+}
+const scanApps = () =>
+  void apps?.scan().catch((err: unknown) => log("warn", `couldn't list apps: ${String(err)}`));
+
 const terminals = new Terminals({
   workdir,
   send: (msg) => connection?.send(msg),
@@ -98,6 +122,9 @@ connection = new Connection({
           log("warn", err instanceof Error ? err.message : String(err));
         }
         return;
+      case "apps_scan":
+        scanApps();
+        return;
       default:
         runner.handle(msg);
     }
@@ -111,6 +138,10 @@ connection = new Connection({
       viewPort: env.NIBBLET_VIEW_PORT ?? null,
     });
     connection?.send({ type: "tasks", tasks: tasks.list() });
+    if (apps) {
+      connection?.send({ type: "apps", apps: apps.list() });
+      scanApps();
+    }
   },
   // The server that held the terminals has gone; whoever was typing is cut off anyway.
   onClose: () => terminals.closeAll(),
@@ -124,6 +155,8 @@ async function shutdown(): Promise<void> {
   await files.close().catch(() => {});
   terminals.closeAll();
   await tasks.close().catch(() => {});
+  await apps?.close().catch(() => {});
+  desktop?.stop();
   process.exit(0);
 }
 process.on("SIGTERM", () => void shutdown());

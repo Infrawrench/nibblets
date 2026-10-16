@@ -20,6 +20,7 @@ import {
   type Memory,
   type Nibblet,
   type ConnectStatus,
+  type DesktopApp,
   type Schedule,
   type Snapshot,
   type SnapshotActivity,
@@ -51,6 +52,28 @@ const mockOpencodeModels = [
     name: "Qwen 3.6 27B",
   },
 ].map(opencodeModel);
+
+/** The apps the runner image ships, as its launcher lists them (without their icons). */
+const mockApps: DesktopApp[] = [
+  {
+    id: "foot",
+    name: "Foot",
+    comment: "A wayland native terminal emulator",
+    icon: null,
+    command: "foot",
+    args: [],
+    categories: ["System", "TerminalEmulator"],
+  },
+  {
+    id: "org.xfce.mousepad",
+    name: "Mousepad",
+    comment: "Simple Text Editor",
+    icon: null,
+    command: "mousepad",
+    args: [],
+    categories: ["Utility", "TextEditor", "GTK"],
+  },
+];
 
 const mockHostTools: HostTool[] = [
   {
@@ -820,6 +843,7 @@ export function createMockServer(): ServerConnection {
         return { ok: true };
       },
       tasks: async () => [],
+      apps: async () => mockApps,
       stopTask: async () => ({ ok: true }),
       decide: async ({ id, approvalId, approve, reason }) => {
         const found = items.get(id)?.find((s) => s.item.id === approvalId)?.item;

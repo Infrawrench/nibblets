@@ -97,8 +97,8 @@ describe("the tailnet's firewall", () => {
 
   it("takes only ports a user could have shared", () => {
     expect(tailnetPorts("3000, 8080")).toEqual([3000, 8080]);
-    // The gate, the browser, its view, the proxy, sub-agents' ports, and junk.
-    expect(tailnetPorts("7810,7800,7900,1055,25000,0,abc,")).toEqual([]);
+    // The gate, the browser, its view, the desktop's two, the proxy, sub-agents' ports, and junk.
+    expect(tailnetPorts("7810,7800,7900,7801,7901,1055,25000,0,abc,")).toEqual([]);
     expect(tailnetPorts(undefined)).toEqual([]);
   });
 });

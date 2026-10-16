@@ -291,8 +291,8 @@ function openMainWindow(url = uiUrl()) {
   });
   // Links out of the UI open in the user's browser, not in the app.
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
-    // The UI's own pop-outs (a nibblet's browser) open as app windows.
-    if (target.startsWith(new URL("/browser/", uiUrl()).href)) {
+    // The UI's own pop-outs (a nibblet's browser, its apps) open as app windows.
+    if (["/browser/", "/apps/"].some((p) => target.startsWith(new URL(p, uiUrl()).href))) {
       return {
         action: "allow",
         overrideBrowserWindowOptions: {

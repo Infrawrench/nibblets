@@ -158,7 +158,10 @@ export function NibbletSettings({
           />
         </div>
       </FieldRow>
-      <FieldRow label="Browser" hint="A Chromium it and you can both drive.">
+      <FieldRow
+        label="Browser"
+        hint="A Chromium, and a desktop for other apps, that it and you can both drive."
+      >
         <Switch
           checked={nibblet.browser}
           onChange={(browser) => void update({ id: nibblet.id, browser })}

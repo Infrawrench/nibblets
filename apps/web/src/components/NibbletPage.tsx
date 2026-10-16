@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
+  AppWindow,
   Brain,
   CalendarClock,
   Globe,
@@ -23,6 +24,7 @@ import { Hamster } from "./hamster/Hamster.tsx";
 import { HarnessIcon } from "./HarnessIcon.tsx";
 import { ThreadView } from "./thread/ThreadView.tsx";
 import { Composer } from "./thread/Composer.tsx";
+import { AppsPanel } from "./panels/AppsPanel.tsx";
 import { BrowserPanel } from "./panels/BrowserPanel.tsx";
 import { TerminalPanel } from "./panels/TerminalPanel.tsx";
 import { SchedulesPanel } from "./panels/SchedulesPanel.tsx";
@@ -136,6 +138,7 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
             onChange={(p) => setPanel(p === panel ? null : p)}
             options={[
               { value: "browser", label: <Globe />, title: "Browser" },
+              { value: "apps", label: <AppWindow />, title: "Apps" },
               { value: "terminal", label: <SquareTerminal />, title: "Terminal" },
               { value: "schedules", label: <CalendarClock />, title: "Schedules" },
               { value: "memory", label: <Brain />, title: "Memory" },
@@ -184,6 +187,7 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
             {panel === "browser" ? (
               <BrowserPanel connection={connection} nibblet={nibblet} />
             ) : null}
+            {panel === "apps" ? <AppsPanel connection={connection} nibblet={nibblet} /> : null}
             {panel === "terminal" ? (
               <TerminalPanel connection={connection} nibblet={nibblet} />
             ) : null}
@@ -206,6 +210,7 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
 
 const panelTitles: Record<PanelTab, string> = {
   browser: "Browser",
+  apps: "Apps",
   terminal: "Terminal",
   schedules: "Schedules",
   memory: "Memory",

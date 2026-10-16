@@ -49,6 +49,17 @@ export function viewToken(ownerToken: string, nibbletId: string, tokenHash: stri
 }
 
 /**
+ * The token a nibblet's desktop (the OpenComputerUse for its apps, run as
+ * the agent's user) accepts; derived like the view token, but apart from it,
+ * since the agent may know this one and must never know that.
+ */
+export function desktopToken(ownerToken: string, nibbletId: string, tokenHash: string): string {
+  return createHmac("sha256", ownerToken)
+    .update(`desktop:${nibbletId}:${tokenHash}`)
+    .digest("base64url");
+}
+
+/**
  * The token a nibblet's guard (the separate user in its container that holds
  * its secrets) uses for /guard/:id; derived like the view token.
  */

@@ -15,6 +15,9 @@
  * A sub-agent runs its own beside its parent's, in the same container, on
  * the ports it's given: its own browser, with its own profile.
  *
+ * The runner starts another, the desktop (see desktop.ts), for the agent's
+ * other apps, as the agent's own user.
+ *
  * Overrides: `OCU_CMD` (default `opencomputeruse`), `OCU_ARGS` (space
  * separated), `OCU_MCP_URL`.
  */
@@ -52,18 +55,30 @@ export async function clearProfileLock(home: string): Promise<void> {
   }
 }
 
+export interface ComputerOptions {
+  /** The MCP endpoint's token; a new one, kept in this process, unless given. */
+  token?: string;
+  /** Its environment, and so the apps' it starts; this process's unless given. */
+  env?: NodeJS.ProcessEnv;
+  /** Where it, and the apps it starts, run. */
+  cwd?: string;
+  /** Its arguments, rather than `OCU_ARGS` or the usual ones. */
+  args?: string[];
+}
+
 export async function startComputer(
   viewToken: string,
   log: (level: "info" | "warn", message: string) => void,
   ports: { mcp: number; view: number } = DEFAULT_PORTS,
+  opts: ComputerOptions = {},
 ): Promise<Computer> {
-  const token = randomBytes(24).toString("base64url");
+  const token = opts.token ?? randomBytes(24).toString("base64url");
   const command = process.env.OCU_CMD ?? "opencomputeruse";
-  const args = (
-    process.env.OCU_ARGS ?? `serve --port ${ports.mcp} --view-listen 0.0.0.0:${ports.view}`
-  )
-    .split(" ")
-    .filter(Boolean);
+  const args =
+    opts.args ??
+    (process.env.OCU_ARGS ?? `serve --port ${ports.mcp} --view-listen 0.0.0.0:${ports.view}`)
+      .split(" ")
+      .filter(Boolean);
   const tokens = { OCU_SERVE_TOKEN: token, OCU_VIEW_TOKEN: viewToken };
   const url = process.env.OCU_MCP_URL ?? `http://127.0.0.1:${ports.mcp}/mcp`;
   const stdio: Computer = {
@@ -80,7 +95,8 @@ export async function startComputer(
   try {
     child = spawn(command, args, {
       stdio: ["ignore", "inherit", "inherit"],
-      env: { ...process.env, ...tokens, OCU_LINUX_DISPLAY: "wayland" },
+      env: { ...(opts.env ?? process.env), ...tokens, OCU_LINUX_DISPLAY: "wayland" },
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
     });
   } catch (err) {
     log("warn", `OpenComputerUse serve failed to start (${String(err)}); using stdio`);
