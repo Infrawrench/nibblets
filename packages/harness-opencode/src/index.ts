@@ -135,7 +135,7 @@ export const opencodeHarness = defineHarness({
   bundledCli: () => cliPackage().version,
   async open(ctx) {
     // createOpencodeServer spawns `opencode` from PATH with the parent's env.
-    const home = path.join(ctx.workdir, ".opencode");
+    const home = path.join(ctx.stateDir ?? ctx.workdir, ".opencode");
     const dirs = await prepareHome(home);
     // The token lives outside the home volume, in the container's own /tmp.
     if (ctx.config.opencodeLogin) {

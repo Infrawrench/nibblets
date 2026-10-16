@@ -11,10 +11,26 @@
  * means nothing regains one. Before they start, a firewall stops the agent
  * reaching the cloud metadata address, or anything on the runners' network
  * but the server and the credential proxy: not other nibblets, not the tunnel.
+ *
+ * `entry.ts subagent`, run by the server with `docker exec`, starts a
+ * sub-agent's own guard and runner in its parent's container, beside the
+ * parent's: the same files, tools and servers, but its own browser (with its
+ * own profile), gate, harness state and temporary folder.
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promises as dns } from "node:dns";
-import { chmod, chown, lstat, mkdir, readFile, rename, symlink } from "node:fs/promises";
+import {
+  chmod,
+  chown,
+  lstat,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { createServer } from "node:net";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -24,6 +40,11 @@ const run = promisify(execFile);
 const HOME = "/home/nibblet";
 const GUARD_HOME = path.join(HOME, ".guard");
 const DOWNLOADS = path.join(HOME, "Downloads");
+/** Sub-agents' harness state, and their guards' homes (browser profiles), by id. */
+export const SUBAGENT_STATE = path.join(HOME, ".subagents");
+const SUBAGENT_GUARD_HOMES = path.join(GUARD_HOME, "subagents");
+/** Each running sub-agent's entry's pid, so the server can stop it. */
+export const SUBAGENT_PIDS = "/run/nibblet-subagents";
 const here = path.dirname(new URL(import.meta.url).pathname);
 
 const log = (message: string) => console.log(`entry: ${message}`);
@@ -139,6 +160,7 @@ function as(
   groups: readonly number[],
   script: string,
   env: Record<string, string>,
+  opts: { group?: boolean } = {},
 ): ChildProcess {
   return spawn(
     "setpriv",
@@ -151,31 +173,52 @@ function as(
       process.execPath,
       path.join(here, script),
     ],
-    { stdio: "inherit", env },
+    // `group`: its own process group, so what it started can be stopped with it.
+    { stdio: "inherit", env, detached: opts.group ?? false },
   );
 }
 
-async function main(): Promise<void> {
-  await firewall();
-  await folders();
+interface Pair {
+  /** The guard's home: its browser profile and settings. */
+  guardHome: string;
+  /** Extra environment for both. */
+  env: Record<string, string>;
+  /** Extra environment for the guard alone. */
+  guardEnv: Record<string, string>;
+  /** Extra environment for the runner alone. */
+  runnerEnv: Record<string, string>;
+  /** The guard's runtime folder: a sub-agent's browser has its own display. */
+  runtimeDir: string;
+}
 
-  const guard = as(GUARD_UID, GUARD_GID, [GUARD_GID, AGENT_GID], "guard.ts", {
-    ...pick([
-      "PATH",
-      "LANG",
-      "TZ",
-      "NODE_ENV",
-      "CHROME_PATH",
-      "OCU_LINUX_DISPLAY",
-      "NIBBLET_ID",
-      "NIBBLET_SERVER_URL",
-      "NIBBLET_BROWSER",
-      ...GUARD_ONLY_ENV,
-    ]),
-    HOME: GUARD_HOME,
-    USER: "guard",
-    XDG_RUNTIME_DIR: `/tmp/guard-${GUARD_UID}`,
-  });
+/** Starts the guard and the runner, and stops both, then this process, when either stops. */
+async function startPair(pair: Pair, onStop: () => Promise<void> = async () => {}): Promise<void> {
+  const guard = as(
+    GUARD_UID,
+    GUARD_GID,
+    [GUARD_GID, AGENT_GID],
+    "guard.ts",
+    {
+      ...pick([
+        "PATH",
+        "LANG",
+        "TZ",
+        "NODE_ENV",
+        "CHROME_PATH",
+        "OCU_LINUX_DISPLAY",
+        "NIBBLET_ID",
+        "NIBBLET_SERVER_URL",
+        "NIBBLET_BROWSER",
+        ...GUARD_ONLY_ENV,
+      ]),
+      ...pair.env,
+      ...pair.guardEnv,
+      HOME: pair.guardHome,
+      USER: "guard",
+      XDG_RUNTIME_DIR: pair.runtimeDir,
+    },
+    { group: true },
+  );
 
   // Everything but the guard's secrets. The SSH agent's socket, when it's
   // shared, is root's group on Docker Desktop.
@@ -186,6 +229,8 @@ async function main(): Promise<void> {
   const sshGroup = (await exists("/run/nibblet/ssh-agent.sock")) ? [0] : [];
   const runner = as(AGENT_UID, AGENT_GID, [AGENT_GID, ...sshGroup], "main.ts", {
     ...runnerEnv,
+    ...pair.env,
+    ...pair.runnerEnv,
     HOME,
     USER: "nibblet",
   });
@@ -199,22 +244,133 @@ async function main(): Promise<void> {
     process.exitCode = code;
     for (const child of [guard, runner]) if (child.exitCode === null) child.kill("SIGTERM");
     // Long enough for the runner to give background tasks their SHUTDOWN_GRACE_MS.
-    setTimeout(() => process.exit(code), 10_000).unref();
+    setTimeout(() => void onStop().finally(() => process.exit(code)), 10_000).unref();
+  };
+  let exited = 0;
+  const exit = (name: string) => (code: number | null) => {
+    log(`the ${name} stopped (${code})`);
+    stop(code ?? 1);
+    if (++exited === 2) void onStop();
   };
   guard.on("exit", (code) => {
-    log(`the guard stopped (${code})`);
-    stop(code ?? 1);
+    // Its browser and MCP servers, which it may not have had the chance to
+    // stop: a sub-agent's would outlive it, in a container that carries on.
+    try {
+      if (guard.pid) process.kill(-guard.pid, "SIGKILL");
+    } catch {
+      // Nothing left.
+    }
+    exit("guard")(code);
   });
-  runner.on("exit", (code) => {
-    log(`the runner stopped (${code})`);
-    stop(code ?? 1);
-  });
+  runner.on("exit", exit("runner"));
   process.on("SIGTERM", () => stop(0));
   process.on("SIGINT", () => stop(0));
 }
 
+async function main(): Promise<void> {
+  await firewall();
+  await folders();
+  await startPair({
+    guardHome: GUARD_HOME,
+    env: {},
+    guardEnv: {},
+    runnerEnv: {},
+    runtimeDir: `/tmp/guard-${GUARD_UID}`,
+  });
+}
+
+/**
+ * Where a sub-agent's ports come from: below Linux's ephemeral range
+ * (32768 up), so an outgoing connection can't take one between it being
+ * picked here and its server binding it moments later.
+ */
+export const SUBAGENT_PORTS = { from: 20_000, to: 32_000 };
+
+function canListen(port: number, host: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.once("error", () => resolve(false));
+    server.listen(port, host, () => server.close(() => resolve(true)));
+  });
+}
+
+/** A port in SUBAGENT_PORTS nothing in the container is listening on, nor in `taken`. */
+async function freePort(host: string, taken: readonly number[]): Promise<number> {
+  const { from, to } = SUBAGENT_PORTS;
+  for (let attempt = 0; attempt < 200; attempt++) {
+    // At random, so sub-agents starting together don't try the same ones.
+    const port = from + Math.floor(Math.random() * (to - from));
+    if (!taken.includes(port) && (await canListen(port, host))) return port;
+  }
+  throw new Error("no free port for the sub-agent");
+}
+
+/** Ids are the server's own (`nb_` and base64url), but they end up in paths. */
+export function safeId(id: string | undefined): string {
+  if (!id || !/^[\w-]+$/.test(id)) throw new Error(`not a nibblet id: ${id}`);
+  return id;
+}
+
+async function ownedDir(dir: string, uid: number, gid: number, mode: number): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  await chown(dir, uid, gid);
+  await chmod(dir, mode);
+}
+
+/** A sub-agent's guard and runner, in its parent's container (already set up by its entry). */
+async function subagent(): Promise<void> {
+  const id = safeId(process.env.NIBBLET_ID);
+  const pidFile = path.join(SUBAGENT_PIDS, `${id}.pid`);
+  // A run of this one that's still going (its server lost track of it) gives way.
+  const previous = Number(await readFile(pidFile, "utf8").catch(() => ""));
+  if (previous > 0 && previous !== process.pid) {
+    try {
+      process.kill(previous, "SIGTERM");
+      for (let i = 0; i < 60; i++) {
+        process.kill(previous, 0);
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    } catch {
+      // Gone.
+    }
+  }
+  await mkdir(SUBAGENT_PIDS, { recursive: true, mode: 0o700 });
+  await writeFile(pidFile, String(process.pid));
+
+  await ownedDir(SUBAGENT_STATE, AGENT_UID, AGENT_GID, 0o700);
+  const state = path.join(SUBAGENT_STATE, id);
+  await ownedDir(state, AGENT_UID, AGENT_GID, 0o700);
+  await ownedDir(SUBAGENT_GUARD_HOMES, GUARD_UID, GUARD_GID, 0o700);
+  const guardHome = path.join(SUBAGENT_GUARD_HOMES, id);
+  await ownedDir(guardHome, GUARD_UID, GUARD_GID, 0o700);
+  const downloads = path.join(guardHome, "Downloads");
+  if (!(await exists(downloads))) await symlink(DOWNLOADS, downloads);
+  // Its own temporary folder: where harnesses put logins, and the runner its task logs.
+  const tmp = `/tmp/nibblet-${id}`;
+  await ownedDir(tmp, AGENT_UID, AGENT_GID, 0o700);
+
+  const gate = await freePort("127.0.0.1", []);
+  const browser = await freePort("0.0.0.0", [gate]);
+  const ports = { gate, browser, view: await freePort("0.0.0.0", [gate, browser]) };
+  log(`sub-agent ${id}: gate on ${ports.gate}, browser view on ${ports.view}`);
+  await startPair(
+    {
+      guardHome,
+      env: { NIBBLET_GATE_PORT: String(ports.gate), NIBBLET_VIEW_PORT: String(ports.view) },
+      guardEnv: { NIBBLET_BROWSER_PORT: String(ports.browser) },
+      runnerEnv: { NIBBLET_STATE_DIR: state, TMPDIR: tmp },
+      runtimeDir: `/tmp/guard-${GUARD_UID}-${id}`,
+    },
+    async () => {
+      // Only its own: a newer run may have taken the file over.
+      if ((await readFile(pidFile, "utf8").catch(() => "")) === String(process.pid))
+        await rm(pidFile, { force: true });
+    },
+  );
+}
+
 if (import.meta.main) {
-  main().catch((err: unknown) => {
+  (process.argv[2] === "subagent" ? subagent() : main()).catch((err: unknown) => {
     console.error(`entry: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   });

@@ -61,7 +61,7 @@ export const codexHarness = defineHarness({
     return typeof v === "string" ? v : "unknown";
   },
   async open(ctx) {
-    const codexHome = path.join(ctx.workdir, ".codex");
+    const codexHome = path.join(ctx.stateDir ?? ctx.workdir, ".codex");
     await mkdir(codexHome, { recursive: true });
     await writeFile(
       path.join(codexHome, "auth.json"),

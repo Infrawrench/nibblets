@@ -75,7 +75,7 @@ export async function prepareHome(ctx: HarnessContext): Promise<string> {
     );
   }
   const config = kimiConfig(login, ctx.config.effort, effortsFor(ctx.config.model));
-  const home = path.join(ctx.workdir, ".kimi-code");
+  const home = path.join(ctx.stateDir ?? ctx.workdir, ".kimi-code");
   await mkdir(home, { recursive: true, mode: 0o700 });
   await writeMcpConfig(home, ctx.mcpServers);
   await installLogin(home, login.token, config, KIMI_SECRETS);
@@ -121,7 +121,13 @@ export const kimiHarness = defineHarness({
           // The kimi home sits in the workdir, where Kimi also looks for a
           // project's own MCP servers, so it only loads them once the folder
           // is trusted. The container is the sandbox; the workdir is ours.
-          env: { ...process.env, KIMI_CODE_HOME: home, KIMI_CODE_TRUST_WORKSPACE: "1" },
+          // A sub-agent's home is elsewhere, and the workdir's is its
+          // parent's, with the parent's token: that one stays untrusted.
+          env: {
+            ...process.env,
+            KIMI_CODE_HOME: home,
+            ...(ctx.stateDir ? {} : { KIMI_CODE_TRUST_WORKSPACE: "1" }),
+          },
           stdio: ["ignore", "pipe", "pipe"],
         });
         const stderr: string[] = [];

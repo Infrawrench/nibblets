@@ -42,6 +42,12 @@ export interface HarnessContext {
   config: RunnerConfig;
   /** The nibblet's working folder, on its home volume: kept across restarts. */
   workdir: string;
+  /**
+   * Where the harness keeps its own home (sessions, config, its MCP servers),
+   * when not in the workdir: a sub-agent shares its parent's workdir, but
+   * not its sessions or its token.
+   */
+  stateDir?: string;
   mcpServers: Record<string, McpServerSpec>;
   /** Base URL of the credential proxy; `/anthropic` and `/openai` hang off it. */
   credproxyUrl: string;

@@ -65,7 +65,7 @@ export const claudeHarness = defineHarness({
     return typeof v === "string" ? v : "unknown";
   },
   async open(ctx) {
-    const configDir = path.join(ctx.workdir, ".claude");
+    const configDir = path.join(ctx.stateDir ?? ctx.workdir, ".claude");
     await mkdir(configDir, { recursive: true });
     let sessionId = ctx.config.resumeSessionId;
     const mcpServers = Object.fromEntries(

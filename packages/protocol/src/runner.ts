@@ -88,6 +88,8 @@ export const GuardApprovalDecision = z.object({
 
 /** Where the guard's gate listens, inside each container. */
 export const GATE_PORT = 7810;
+/** Where OpenComputerUse's view server listens, for the server to proxy the browser. */
+export const VIEW_PORT = 7900;
 /** The container's users: the agent (and the runner) as one, the guard as another. */
 export const AGENT_UID = 1001;
 export const AGENT_GID = 1002;
@@ -157,6 +159,11 @@ export const RunnerToServer = z.discriminatedUnion("type", [
     harnessVersion: z.string(),
     /** The turn it's still working on, when it reconnects to a server that restarted. */
     activeTurnId: z.string().nullable().default(null),
+    /**
+     * Where its browser's view listens in the container, when not on the
+     * usual 7900: a sub-agent runs in its parent's container, beside it.
+     */
+    viewPort: z.number().int().nullable().default(null),
   }),
   z.object({ type: z.literal("item"), item: ThreadItem }),
   z.object({
@@ -206,6 +213,14 @@ export const RunnerEnv = z.object({
   NIBBLET_CREDPROXY_KEY: z.string(),
   /** Set when the nibblet has a browser: OpenComputerUse is registered as an MCP server. */
   NIBBLET_BROWSER: z.enum(["0", "1"]).default("0"),
+  /**
+   * Set for a sub-agent, which runs in its parent's container beside it: the
+   * ports its own guard listens on, and where its harness keeps its state so
+   * it doesn't share the parent's.
+   */
+  NIBBLET_GATE_PORT: z.coerce.number().int().optional(),
+  NIBBLET_VIEW_PORT: z.coerce.number().int().optional(),
+  NIBBLET_STATE_DIR: z.string().optional(),
 });
 export type RunnerEnv = z.infer<typeof RunnerEnv>;
 
@@ -218,6 +233,10 @@ export const GuardEnv = z.object({
   NIBBLET_BROWSER: z.enum(["0", "1"]).default("0"),
   /** Bearer token OpenComputerUse's view server (port 7900) accepts; the server proxies to it. */
   NIBBLET_VIEW_TOKEN: z.string().default(""),
+  /** A sub-agent's own ports, beside its parent's guard (7810, 7800 and 7900). */
+  NIBBLET_GATE_PORT: z.coerce.number().int().optional(),
+  NIBBLET_BROWSER_PORT: z.coerce.number().int().optional(),
+  NIBBLET_VIEW_PORT: z.coerce.number().int().optional(),
 });
 export type GuardEnv = z.infer<typeof GuardEnv>;
 

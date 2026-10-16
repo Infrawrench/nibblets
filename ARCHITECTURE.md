@@ -1,6 +1,6 @@
 # Architecture
 
-Nibblets are self-hosted, always-on agents, each drawn as a hamster you can dress up. A nibblet is a thread: it runs in its own Docker container on one of three harnesses (Claude Agent SDK, Codex, OpenCode), wakes on a heartbeat and on schedules, keeps its memory outside the container in Postgres with pgvector, and can spawn sub-agents, which are child nibblets.
+Nibblets are self-hosted, always-on agents, each drawn as a hamster you can dress up. A nibblet is a thread: it runs in its own Docker container on one of three harnesses (Claude Agent SDK, Codex, OpenCode), wakes on a heartbeat and on schedules, keeps its memory outside the container in Postgres with pgvector, and can spawn sub-agents, which are child nibblets that run in their parent's container.
 
 ## Processes
 
@@ -46,6 +46,14 @@ The agent runs whatever a model asks it to, so anything in its reach is in a pro
 - **The runner and the harness** (uid 1001, `nibblet`) only know the gate's address. They can't read the guard's environment, memory or home, and they never get the guard's token or the browser's view token.
 
 Neither keeps any capability, and the server sets no-new-privileges, drops every capability the entry doesn't need, and limits processes. Before they start, the entry sets iptables rules: the cloud metadata range (169.254.0.0/16) is blocked, and on `nibblet-runners` only the server and the credential proxy are reachable, not other nibblets or the tunnel. The internet and `host.docker.internal` stay reachable: the first is the point, and OpenCode's local providers (such as Ollama) need the second. Downloads land in `/home/nibblet/Downloads`, which the agent can read.
+
+### Sub-agents: beside their parent, in its container
+
+A sub-agent works on its parent's files, with whatever the parent installed and alongside the servers it's running, so it runs in the parent's container (the top of the tree's, for a sub-agent's sub-agent) rather than its own. The server starts it with `docker exec` of `entry.ts subagent`, as root like the entry, which starts a second guard and runner pair under the same two users:
+
+- **Its own browser:** its guard runs its own OpenComputerUse and Chromium, with a profile in `/home/nibblet/.guard/subagents/<id>`, so it gets its own window rather than the parent's. Its gate, browser and view listen on free ports the entry picks; the runner reports the view port in `ready`, and the server proxies the sub-agent's browser there.
+- **Its own state:** the same working folder, but its harness keeps its home (sessions, config, its MCP servers and token) in `/home/nibblet/.subagents/<id>` (`HarnessContext.stateDir`), and its runner gets its own `TMPDIR`, for logins and task logs. Kimi doesn't trust the workdir for a sub-agent, since the `.kimi-code` there is the parent's.
+- **Its lifetime:** stopping it signals the pid its entry leaves in `/run/nibblet-subagents`. It shares the container's CPU and memory limits, and goes when the container does: a restart asks the ones that were working to carry on once it's back, and a stop tells their parent's thread they stopped. Deleting it removes its state and profile.
 
 1Password's `fill_login` never types into whatever the browser shows. It opens the login's own saved address (or a page the agent names on the same site), checks where it landed, and only then fills the username and password.
 

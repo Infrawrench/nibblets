@@ -12,17 +12,20 @@
  * `NIBBLET_VIEW_TOKEN`; the server proxies `/api/nibblets/:id/computer/*` to
  * it with that bearer.
  *
+ * A sub-agent runs its own beside its parent's, in the same container, on
+ * the ports it's given: its own browser, with its own profile.
+ *
  * Overrides: `OCU_CMD` (default `opencomputeruse`), `OCU_ARGS` (space
  * separated), `OCU_MCP_URL`.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import type { McpServerSpec } from "@nibblet/harness";
+import { VIEW_PORT } from "@nibblet/protocol";
 
 // The tokens go in the environment (OCU_SERVE_TOKEN, OCU_VIEW_TOKEN), never
 // the command line, which every process in the container can read.
-const DEFAULT_ARGS = "serve --port 7800 --view-listen 0.0.0.0:7900";
-const DEFAULT_MCP_URL = "http://127.0.0.1:7800/mcp";
+const DEFAULT_PORTS = { mcp: 7800, view: VIEW_PORT };
 
 export interface Computer {
   mcp: McpServerSpec;
@@ -32,17 +35,22 @@ export interface Computer {
 export async function startComputer(
   viewToken: string,
   log: (level: "info" | "warn", message: string) => void,
+  ports: { mcp: number; view: number } = DEFAULT_PORTS,
 ): Promise<Computer> {
   const token = randomBytes(24).toString("base64url");
   const command = process.env.OCU_CMD ?? "opencomputeruse";
-  const args = (process.env.OCU_ARGS ?? DEFAULT_ARGS).split(" ").filter(Boolean);
+  const args = (
+    process.env.OCU_ARGS ?? `serve --port ${ports.mcp} --view-listen 0.0.0.0:${ports.view}`
+  )
+    .split(" ")
+    .filter(Boolean);
   const tokens = { OCU_SERVE_TOKEN: token, OCU_VIEW_TOKEN: viewToken };
-  const url = process.env.OCU_MCP_URL ?? DEFAULT_MCP_URL;
+  const url = process.env.OCU_MCP_URL ?? `http://127.0.0.1:${ports.mcp}/mcp`;
   const stdio: Computer = {
     mcp: {
       type: "stdio",
       command,
-      args: ["mcp", "--view-listen", "0.0.0.0:7900"],
+      args: ["mcp", "--view-listen", `0.0.0.0:${ports.view}`],
       env: { OCU_LINUX_DISPLAY: "wayland", OCU_VIEW_TOKEN: viewToken },
     },
     stop() {},

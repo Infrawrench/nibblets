@@ -57,6 +57,8 @@ export const RUNNER_HARDENING = {
 
 /** The runner image's user home, which holds its working folder. */
 const RUNNER_HOME = "/home/nibblet";
+/** Where a sub-agent's entry leaves its pid in its host's container (SUBAGENT_PIDS in the runner). */
+const SUBAGENT_PIDS = "/run/nibblet-subagents";
 
 /**
  * The server's handle on Docker: runner containers for nibblets and the
@@ -142,6 +144,120 @@ export class Orchestrator {
     });
     await container.start();
     return container.id;
+  }
+
+  /** Whether a nibblet's own container is up. */
+  async runnerRunning(nibbletId: string): Promise<boolean> {
+    try {
+      return (await this.docker.getContainer(runnerName(nibbletId)).inspect()).State.Running;
+    } catch (err) {
+      if (isNotFound(err)) return false;
+      throw err;
+    }
+  }
+
+  /**
+   * Starts a sub-agent in the container of the nibblet it works for (`hostId`):
+   * its own guard and runner beside the host's, sharing its files, tools and
+   * servers (see the runner's entry). `onExit` is called with the end of its
+   * output when they stop, whether on their own or with the container.
+   */
+  async startSubagent(
+    hostId: string,
+    nibbletId: string,
+    env: RunnerEnv & GuardEnv,
+    onExit: (code: number | null, tail: string) => void,
+  ): Promise<void> {
+    const container = this.docker.getContainer(runnerName(hostId));
+    const exec = await container.exec({
+      Cmd: ["node", "/app/apps/runner/src/entry.ts", "subagent"],
+      // Root, as the container's own entry: it splits into the guard and the agent.
+      User: "0",
+      Env: Object.entries(env).map(([k, v]) => `${k}=${v}`),
+      WorkingDir: `${RUNNER_HOME}/work`,
+      AttachStdout: true,
+      AttachStderr: true,
+    });
+    const stream = await exec.start({ hijack: true, stdin: false });
+    // Its last lines, in place of a container's logs, for saying why it stopped.
+    let tail = "";
+    const keep = new Writable({
+      write(chunk: Buffer, _enc, done) {
+        tail = (tail + chunk.toString("utf8")).slice(-4000);
+        done();
+      },
+    });
+    this.docker.modem.demuxStream(stream, keep, keep);
+    stream.once("end", () => {
+      void exec
+        .inspect()
+        .then((info) => info.ExitCode ?? null)
+        .catch(() => null)
+        .then((code) => onExit(code, tail));
+    });
+  }
+
+  /** Stops a sub-agent started with startSubagent, giving its tasks their time to finish. */
+  async stopSubagent(hostId: string, nibbletId: string): Promise<void> {
+    await this.inRunner(
+      hostId,
+      [
+        "sh",
+        "-c",
+        // The id comes in the environment, not the script.
+        `f="${SUBAGENT_PIDS}/$SUBAGENT.pid"; pid=$(cat "$f" 2>/dev/null) || exit 0
+kill -TERM "$pid" 2>/dev/null || exit 0
+i=0; while kill -0 "$pid" 2>/dev/null && [ $i -lt ${RUNNER_STOP_SECONDS * 4} ]; do sleep 0.25; i=$((i+1)); done
+kill -KILL "$pid" 2>/dev/null; true`,
+      ],
+      { SUBAGENT: nibbletId },
+    );
+  }
+
+  /**
+   * Deletes what a sub-agent kept in its host's home: its harness's state and
+   * its browser profile, with its logins. In the host's container when it's
+   * up, or straight from its home volume when it isn't.
+   */
+  async removeSubagentState(hostId: string, nibbletId: string): Promise<void> {
+    // It goes into a path, and a stopped host's helper takes no environment.
+    if (!/^[\w-]+$/.test(nibbletId)) throw new Error(`not a nibblet id: ${nibbletId}`);
+    const cmd = [
+      "rm",
+      "-rf",
+      `${RUNNER_HOME}/.subagents/${nibbletId}`,
+      `${RUNNER_HOME}/.guard/subagents/${nibbletId}`,
+    ];
+    if (await this.inRunner(hostId, cmd, {})) return;
+    await this.inHome(await this.ensureHome(hostId), cmd, { readOnly: false });
+  }
+
+  /**
+   * Runs a command as root in a nibblet's running container, to completion.
+   * False, without running it, if the container isn't up; throws if it fails.
+   */
+  private async inRunner(
+    nibbletId: string,
+    cmd: string[],
+    env: Record<string, string>,
+  ): Promise<boolean> {
+    if (!(await this.runnerRunning(nibbletId))) return false;
+    const exec = await this.docker.getContainer(runnerName(nibbletId)).exec({
+      Cmd: cmd,
+      User: "0",
+      Env: Object.entries(env).map(([k, v]) => `${k}=${v}`),
+      AttachStdout: true,
+      AttachStderr: true,
+    });
+    const stream = await exec.start({ hijack: true, stdin: false });
+    stream.resume();
+    await new Promise<void>((resolve) => {
+      stream.once("end", () => resolve());
+      stream.once("close", () => resolve());
+    });
+    const { ExitCode } = await exec.inspect();
+    if (ExitCode !== 0 && ExitCode !== null) throw new Error(`${cmd[0]} exited ${ExitCode}`);
+    return true;
   }
 
   /**

@@ -102,7 +102,7 @@ export function systemPrompt(input: SystemPromptInput): string {
 
   if (input.parent) {
     parts.push(
-      `You are a sub-agent of ${input.parent.name}. Do the task you were given, then finish with a clear, self-contained final answer: it is sent back to ${input.parent.name} as your result.`,
+      `You are a sub-agent of ${input.parent.name}. You run in ${input.parent.name}'s container, beside it: you see the same files, installed tools and running servers (your working folder is the same as its), but you have your own browser. Do the task you were given, then finish with a clear, self-contained final answer: it is sent back to ${input.parent.name} as your result.`,
     );
   }
 
