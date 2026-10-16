@@ -532,6 +532,7 @@ export function createMockServer(): ServerConnection {
   let tailscale: TailscaleStatus = {
     installed: true,
     running: true,
+    stopped: false,
     serving: false,
     url: null,
     detail: null,
