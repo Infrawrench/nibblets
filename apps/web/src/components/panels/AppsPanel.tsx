@@ -4,7 +4,8 @@ import { AppWindow, LayoutGrid, Loader2, RefreshCw, Search, X } from "lucide-rea
 import type { DesktopApp, Nibblet } from "@nibblet/protocol";
 import { endSession, launchApp, listSessions, type OcuSession } from "../../lib/browserView.ts";
 import type { ServerConnection } from "../../lib/connection.ts";
-import { keys } from "../../lib/servers.tsx";
+import { hostOf } from "../../lib/nibblets.ts";
+import { keys, useNibblets } from "../../lib/servers.tsx";
 import { cn } from "../../lib/cn.ts";
 import { Button } from "../ui/Button.tsx";
 import { SectionHeading } from "../ui/Field.tsx";
@@ -26,8 +27,11 @@ export function AppsPanel({
   popout?: boolean;
 }) {
   const qc = useQueryClient();
+  const nibblets = useNibblets(connection);
+  // The desktop is its container's: a sub-agent's is its host's, and comes with the host's browser.
+  const host = hostOf(nibblet, nibblets.data ?? []);
   const asleep = nibblet.status === "stopped";
-  const live = nibblet.browser && !asleep && !connection.mock;
+  const live = host.browser && !asleep && !connection.mock;
   const sessionsKey = ["desktop-sessions", connection.id, nibblet.id];
   const sessions = useQuery({
     queryKey: sessionsKey,
@@ -41,16 +45,18 @@ export function AppsPanel({
     queryKey: appsKey,
     queryFn: () => connection.client.nibblets.apps({ id: nibblet.id }),
     // Kept current by the live socket, which passes on what each scan finds.
-    enabled: nibblet.browser && !asleep,
+    enabled: host.browser && !asleep,
   });
   // null: the newest app that's open, or the launcher when nothing is.
   const [selected, setSelected] = useState<string | "launcher" | null>(null);
   const [notice, setNotice] = useState<{ kind: "pending" | "error"; message: string } | null>(null);
 
-  if (!nibblet.browser) {
+  if (!host.browser) {
     return (
       <Empty>
-        Apps come with the browser, which is turned off for {nibblet.name}. Turn it on in Settings.
+        {host.id === nibblet.id
+          ? `Apps come with the browser, which is turned off for ${nibblet.name}. Turn it on in Settings.`
+          : `${nibblet.name} uses ${host.name}'s apps, which come with ${host.name}'s browser. It's turned off in ${host.name}'s settings.`}
       </Empty>
     );
   }

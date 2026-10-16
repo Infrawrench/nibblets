@@ -16,7 +16,7 @@
  */
 import type { McpServerSpec } from "@nibblet/harness";
 import { DESKTOP_MCP_PORT, DESKTOP_VIEW_PORT } from "@nibblet/protocol";
-import { startComputer, type Computer } from "./computer.ts";
+import { serveArgs, startComputer, waitForHttp, type Computer } from "./computer.ts";
 
 /** Where the runner reaches the desktop's view server, to start apps on it. */
 export const DESKTOP_VIEW_URL = `http://127.0.0.1:${DESKTOP_VIEW_PORT}`;
@@ -33,38 +33,27 @@ export function desktopEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   };
 }
 
+/** Starts the container's desktop; null when it doesn't come up, and then there's none. */
 export async function startDesktop(
   token: string,
   workdir: string,
   log: (level: "info" | "warn", message: string) => void,
-): Promise<Computer> {
-  return startComputer(
+): Promise<Computer | null> {
+  const ports = { mcp: DESKTOP_MCP_PORT, view: DESKTOP_VIEW_PORT };
+  // No stdio fallback: one in each harness would be no one else's, and a
+  // sub-agent or the user would find nothing at these ports.
+  return startComputer(token, (level, message) => log(level, `desktop: ${message}`), ports, {
     token,
-    (level, message) => log(level, `desktop: ${message}`),
-    { mcp: DESKTOP_MCP_PORT, view: DESKTOP_VIEW_PORT },
-    {
-      token,
-      env: desktopEnv(process.env),
-      cwd: workdir,
-      // `serve` listens on every address unless told otherwise; only the view is the server's.
-      args: [
-        "serve",
-        "--port",
-        String(DESKTOP_MCP_PORT),
-        "--listen-on",
-        "127.0.0.1",
-        "--view-listen",
-        `0.0.0.0:${DESKTOP_VIEW_PORT}`,
-      ],
-    },
-  );
+    env: desktopEnv(process.env),
+    cwd: workdir,
+    args: serveArgs(ports),
+    stdio: false,
+  });
 }
 
-/** A sub-agent's way in to its host's desktop. */
-export function joinDesktop(token: string): McpServerSpec {
-  return {
-    type: "http",
-    url: `http://127.0.0.1:${DESKTOP_MCP_PORT}/mcp`,
-    headers: { authorization: `Bearer ${token}` },
-  };
+/** A sub-agent's way in to its host's desktop; null when that isn't answering. */
+export async function joinDesktop(token: string): Promise<McpServerSpec | null> {
+  const url = `http://127.0.0.1:${DESKTOP_MCP_PORT}/mcp`;
+  if (!(await waitForHttp(url, () => false))) return null;
+  return { type: "http", url, headers: { authorization: `Bearer ${token}` } };
 }

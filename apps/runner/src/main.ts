@@ -50,25 +50,39 @@ const tasks = new BackgroundTasks({
 });
 mcpServers.tasks = await tasks.startMcp();
 // The desktop, for apps other than the browser, and the launcher's list of
-// them. A sub-agent uses its host container's desktop.
+// them. A sub-agent uses its host container's desktop. It comes up while the
+// runner connects, and the harness waits for it (`mcpReady`), not the runner.
 let desktop: Computer | null = null;
 let apps: DesktopApps | null = null;
-if (env.NIBBLET_DESKTOP_TOKEN) {
-  if (env.NIBBLET_SUBAGENT === "1") {
-    mcpServers.desktop = joinDesktop(env.NIBBLET_DESKTOP_TOKEN);
-  } else {
-    desktop = await startDesktop(env.NIBBLET_DESKTOP_TOKEN, workdir, log);
-    mcpServers.desktop = desktop.mcp;
-  }
-  apps = new DesktopApps({
-    viewUrl: DESKTOP_VIEW_URL,
-    token: env.NIBBLET_DESKTOP_TOKEN,
-    onChange: (list) => connection?.send({ type: "apps", apps: list }),
-  });
-  mcpServers.apps = await apps.startMcp();
-}
 const scanApps = () =>
   void apps?.scan().catch((err: unknown) => log("warn", `couldn't list apps: ${String(err)}`));
+async function setUpDesktop(token: string): Promise<void> {
+  if (env.NIBBLET_SUBAGENT === "1") {
+    const joined = await joinDesktop(token);
+    if (!joined) {
+      log("warn", "its host container's desktop isn't answering; no desktop apps");
+      return;
+    }
+    mcpServers.desktop = joined;
+  } else {
+    desktop = await startDesktop(token, workdir, log);
+    if (!desktop) return;
+    mcpServers.desktop = desktop.mcp;
+  }
+  const launcher = new DesktopApps({
+    viewUrl: DESKTOP_VIEW_URL,
+    token,
+    onChange: (list) => connection?.send({ type: "apps", apps: list }),
+  });
+  mcpServers.apps = await launcher.startMcp();
+  apps = launcher;
+  scanApps();
+}
+const desktopReady = env.NIBBLET_DESKTOP_TOKEN
+  ? setUpDesktop(env.NIBBLET_DESKTOP_TOKEN).catch((err: unknown) =>
+      log("warn", `couldn't set up the desktop: ${String(err)}`),
+    )
+  : Promise.resolve();
 
 const terminals = new Terminals({
   workdir,
@@ -89,6 +103,7 @@ const runner: Runner = new Runner({
   workdir,
   ...(env.NIBBLET_STATE_DIR ? { stateDir: env.NIBBLET_STATE_DIR } : {}),
   mcpServers,
+  mcpReady: desktopReady,
   hostMcp: (name) => ({
     type: "http",
     url: `${hostMcpBase}/${encodeURIComponent(name)}`,

@@ -8,15 +8,13 @@
  * from the `apps` MCP server here. Both start apps through the desktop's
  * view server, so a session either of them opens is the other's too.
  */
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServerSpec } from "@nibblet/harness";
 import type { DesktopApp } from "@nibblet/protocol";
 import { access, readdir, readFile, stat } from "node:fs/promises";
-import { createServer, type Server as HttpServer } from "node:http";
 import { homedir } from "node:os";
 import path from "node:path";
 import { z } from "zod";
+import { serveMcp, toolReply } from "./mcp-http.ts";
 
 /** Icons bigger than this are left out, so a list of them stays small enough to send. */
 const MAX_ICON_BYTES = 48 * 1024;
@@ -75,13 +73,12 @@ export function entryKeys(text: string): Map<string, string> {
 }
 
 /**
- * An `Exec` line as argv, without its field codes (`%f`, `%U` and the like,
- * which stand for files and URLs the launcher would pass). Arguments are
- * split on spaces, and double quotes group them, with `\"`, `` \` ``, `\$`
- * and `\\` escaped inside.
+ * An `Exec` line's words. Spaces separate them, and double quotes group
+ * them, with `\"`, `` \` ``, `\$` and `\\` escaped inside. Field codes are
+ * left in; execArgv fills them.
  */
-export function execArgv(exec: string): string[] {
-  const argv: string[] = [];
+export function execWords(exec: string): string[] {
+  const words: string[] = [];
   let current = "";
   let quoted = false;
   let started = false;
@@ -99,7 +96,7 @@ export function execArgv(exec: string): string[] {
       quoted = true;
       started = true;
     } else if (c === " " || c === "\t") {
-      if (started) argv.push(current);
+      if (started) words.push(current);
       current = "";
       started = false;
     } else {
@@ -107,10 +104,41 @@ export function execArgv(exec: string): string[] {
       started = true;
     }
   }
-  if (started) argv.push(current);
-  return argv
-    .filter((a) => !/^%[fFuUdDnNickvm]$/.test(a))
-    .map((a) => a.replace(/%([fFuUdDnNickvm%])/g, (_, c: string) => (c === "%" ? "%" : "")));
+  if (started) words.push(current);
+  return words;
+}
+
+/**
+ * An `Exec` line as argv, its field codes filled in: `%F` and `%U` with all
+ * of `files` (files or URLs), `%f` and `%u` with the first (a launcher would
+ * start the app once for each; this starts it once), and the rest with
+ * nothing. Files for an app whose line has no place for them go at the end.
+ */
+export function execArgv(exec: string, files: readonly string[] = []): string[] {
+  const argv: string[] = [];
+  let placed = false;
+  for (const word of execWords(exec)) {
+    if (word === "%F" || word === "%U") {
+      argv.push(...files);
+      placed = true;
+    } else if (word === "%f" || word === "%u") {
+      if (files[0] !== undefined) argv.push(files[0]);
+      placed = true;
+    } else if (/^%[dDnNickvm]$/.test(word)) {
+      // Deprecated, or the icon and name, which nothing here needs.
+    } else {
+      argv.push(
+        word.replace(/%([fFuUdDnNickvm%])/g, (_, c: string) => {
+          if (c === "%") return "%";
+          if (!"fFuU".includes(c)) return "";
+          placed = true;
+          return files[0] ?? "";
+        }),
+      );
+    }
+  }
+  if (!placed) argv.push(...files);
+  return argv;
 }
 
 const isTrue = (v: string | undefined) => v === "true" || v === "1";
@@ -140,13 +168,16 @@ function shown(command: string): boolean {
   return !path.basename(command).startsWith("chromium");
 }
 
+/** An app as a scan finds it: with its `Exec` line, for starting it with files. */
+export type ScannedApp = DesktopApp & { exec: string };
+
 /** One desktop entry as an app, or null when it isn't one to offer. */
 export async function readEntry(
   id: string,
   text: string,
   icon: (name: string) => Promise<string | null>,
   env: NodeJS.ProcessEnv = process.env,
-): Promise<DesktopApp | null> {
+): Promise<ScannedApp | null> {
   const keys = entryKeys(text);
   if (keys.get("Type") !== "Application") return null;
   // Settings panels and the like that only one desktop shows, and entries
@@ -154,11 +185,12 @@ export async function readEntry(
   if (isTrue(keys.get("NoDisplay")) || isTrue(keys.get("Hidden"))) return null;
   if (isTrue(keys.get("Terminal")) || keys.has("OnlyShowIn")) return null;
   const name = keys.get("Name");
-  const exec = keys.get("Exec");
-  if (!name || !exec) return null;
+  const rawExec = keys.get("Exec");
+  if (!name || !rawExec) return null;
   const tryExec = keys.get("TryExec");
   if (tryExec && !(await runnable(unescapeValue(tryExec), env))) return null;
-  const [command, ...args] = execArgv(unescapeValue(exec));
+  const exec = unescapeValue(rawExec);
+  const [command, ...args] = execArgv(exec);
   if (!command || !shown(command)) return null;
   const comment = keys.get("Comment") ?? keys.get("GenericName");
   const iconName = keys.get("Icon");
@@ -170,7 +202,13 @@ export async function readEntry(
     command,
     args,
     categories: (keys.get("Categories") ?? "").split(";").filter(Boolean),
+    exec,
   };
+}
+
+/** What goes to the user: everything but the `Exec` line. */
+function forUser({ exec: _, ...app }: ScannedApp): DesktopApp {
+  return app;
 }
 
 async function listDir(dir: string): Promise<string[]> {
@@ -200,16 +238,21 @@ async function dataUrl(file: string): Promise<string | null> {
   return bytes ? `data:${type};base64,${bytes.toString("base64")}` : null;
 }
 
+/** How long an icon that wasn't found stays not found, before it's looked for again. */
+const ICON_MISS_MS = 60_000;
+
 /**
  * Finds an icon by its theme name, the way a desktop would, near enough:
  * hicolor (where apps put theirs) and the other installed themes, at the
  * sizes in ICON_SIZES, then the old pixmaps folder. An absolute path is
- * read as it is.
+ * read as it is. What it finds is kept, and what it doesn't is looked for
+ * again after ICON_MISS_MS, since an app the agent adds may bring its icon
+ * after its entry.
  */
-export function iconFinder(dirs: readonly string[], home = homedir()) {
+export function iconFinder(dirs: readonly string[], home = homedir(), now = Date.now) {
   const roots = [path.join(home, ".icons"), ...dirs.map((d) => path.join(d, "icons"))];
   const pixmaps = dirs.map((d) => path.join(d, "pixmaps"));
-  const cache = new Map<string, Promise<string | null>>();
+  const cache = new Map<string, { found: Promise<string | null>; at: number }>();
   const find = async (name: string): Promise<string | null> => {
     if (path.isAbsolute(name)) return dataUrl(name);
     if (name.includes("/")) return null;
@@ -236,9 +279,13 @@ export function iconFinder(dirs: readonly string[], home = homedir()) {
     }
     return null;
   };
-  return (name: string) => {
-    let found = cache.get(name);
-    if (!found) cache.set(name, (found = find(name)));
+  return async (name: string) => {
+    const kept = cache.get(name);
+    if (kept && ((await kept.found) !== null || now() - kept.at < ICON_MISS_MS)) {
+      return kept.found;
+    }
+    const found = find(name);
+    cache.set(name, { found, at: now() });
     return found;
   };
 }
@@ -251,10 +298,10 @@ export function iconFinder(dirs: readonly string[], home = homedir()) {
 export async function scanApps(
   dirs: readonly string[] = dataDirs(),
   env: NodeJS.ProcessEnv = process.env,
-): Promise<DesktopApp[]> {
-  const icon = iconFinder(dirs);
+  icon: (name: string) => Promise<string | null> = iconFinder(dirs),
+): Promise<ScannedApp[]> {
   const seen = new Set<string>();
-  const apps: DesktopApp[] = [];
+  const apps: ScannedApp[] = [];
   for (const dir of dirs) {
     for (const { id, file } of await entryFiles(path.join(dir, "applications"))) {
       if (seen.has(id)) continue;
@@ -280,44 +327,63 @@ export interface DesktopAppsOptions {
   /** Called with the list whenever a scan finds it changed. */
   onChange?: (apps: DesktopApp[]) => void;
   /** Overrides how the list is made, for tests. */
-  scan?: () => Promise<DesktopApp[]>;
+  scan?: () => Promise<ScannedApp[]>;
 }
 
 /** The launcher: the apps there are, and opening one on the desktop. */
 export class DesktopApps {
   private readonly opts: DesktopAppsOptions;
-  private last: DesktopApp[] = [];
+  private readonly scanner: () => Promise<ScannedApp[]>;
+  private last: ScannedApp[] = [];
   private lastJson = "[]";
-  private http: HttpServer | null = null;
+  /** Scans can overlap; only one newer than what's shown replaces it. */
+  private started = 0;
+  private shown = 0;
+  private closeMcp: (() => Promise<void>) | null = null;
 
   constructor(opts: DesktopAppsOptions) {
     this.opts = opts;
+    if (opts.scan) {
+      this.scanner = opts.scan;
+    } else {
+      // Kept between scans: looking for icons is most of a scan's work.
+      const dirs = dataDirs();
+      const icon = iconFinder(dirs);
+      this.scanner = () => scanApps(dirs, process.env, icon);
+    }
   }
 
   /** Looks again, tells `onChange` if anything changed, and returns the list. */
   async scan(): Promise<DesktopApp[]> {
-    const apps = await (this.opts.scan ?? scanApps)();
-    const json = JSON.stringify(apps);
-    if (json !== this.lastJson) {
-      this.last = apps;
-      this.lastJson = json;
-      this.opts.onChange?.(apps);
+    const run = ++this.started;
+    const apps = await this.scanner();
+    if (run > this.shown) {
+      this.shown = run;
+      const json = JSON.stringify(apps);
+      if (json !== this.lastJson) {
+        this.last = apps;
+        this.lastJson = json;
+        this.opts.onChange?.(this.list());
+      }
     }
-    return apps;
+    return this.list();
   }
 
   list(): DesktopApp[] {
-    return this.last;
+    return this.last.map(forUser);
   }
 
-  /** Opens an app on the desktop; `files` go after its own arguments. */
+  /** Opens an app on the desktop, with files (or URLs) where its `Exec` line takes them. */
   async launch(id: string, files: readonly string[] = []) {
-    const app = (await this.scan()).find((a) => a.id === id);
+    const find = () => this.last.find((a) => a.id === id);
+    // Only an app the last scan didn't see is worth scanning again for.
+    const app = find() ?? (await this.scan(), find());
     if (!app) throw new Error(`No app ${id}. app_list says which there are.`);
+    const [command, ...args] = execArgv(app.exec, files);
     const res = await fetch(`${this.opts.viewUrl}/sessions`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.opts.token}`, "content-type": "application/json" },
-      body: JSON.stringify({ app: app.command, args: [...app.args, ...files], display: "wayland" }),
+      body: JSON.stringify({ app: command, args, display: "wayland" }),
       signal: AbortSignal.timeout(60_000),
     });
     const body: unknown = await res.json().catch(() => null);
@@ -326,20 +392,11 @@ export class DesktopApps {
         body && typeof body === "object" && "error" in body ? String(body.error) : res.statusText;
       throw new Error(`Couldn't open ${app.name}: ${message}`);
     }
-    return { app, ...Started.parse(body) };
+    return { app: forUser(app), ...Started.parse(body) };
   }
 
   async startMcp(): Promise<McpServerSpec> {
-    const reply = async (work: () => Promise<string>) => {
-      try {
-        return { content: [{ type: "text" as const, text: await work() }] };
-      } catch (err) {
-        const text = err instanceof Error ? err.message : String(err);
-        return { content: [{ type: "text" as const, text }], isError: true };
-      }
-    };
-    const http = createServer((req, res) => {
-      const server = new McpServer({ name: "apps", version: "0.1.0" });
+    const served = await serveMcp("apps", (server) => {
       server.registerTool(
         "app_list",
         {
@@ -348,7 +405,7 @@ export class DesktopApps {
           inputSchema: {},
         },
         () =>
-          reply(async () => {
+          toolReply(async () => {
             const apps = await this.scan();
             if (apps.length === 0) return "No desktop apps are installed.";
             return apps
@@ -366,34 +423,24 @@ export class DesktopApps {
             files: z
               .array(z.string())
               .optional()
-              .describe("Files or URLs to open it with, as it would take them on its command line"),
+              .describe(
+                "Files or URLs to open it with. An app that takes one at a time gets the first.",
+              ),
           },
         },
         ({ id, files }) =>
-          reply(async () => {
+          toolReply(async () => {
             const { app, session_id, windows } = await this.launch(id, files);
             const titles = windows.map((w) => `"${w.title}" (window ${w.id})`).join(", ");
             return `Opened ${app.name} as session ${session_id}${titles ? `, showing ${titles}` : ""}.`;
           }),
       );
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-        enableJsonResponse: true,
-      });
-      res.on("close", () => {
-        void transport.close();
-        void server.close();
-      });
-      void server.connect(transport).then(() => transport.handleRequest(req, res));
     });
-    this.http = http;
-    await new Promise<void>((done) => http.listen(0, "127.0.0.1", () => done()));
-    const address = http.address();
-    const port = typeof address === "object" && address ? address.port : 0;
-    return { type: "http", url: `http://127.0.0.1:${port}/mcp`, headers: {} };
+    this.closeMcp = served.close;
+    return served.spec;
   }
 
   async close(): Promise<void> {
-    await new Promise<void>((done) => (this.http ? this.http.close(() => done()) : done()));
+    await this.closeMcp?.();
   }
 }

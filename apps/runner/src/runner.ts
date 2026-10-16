@@ -26,6 +26,8 @@ export interface RunnerDeps {
   /** A sub-agent's own place for its harness's state; see HarnessContext.stateDir. */
   stateDir?: string;
   mcpServers: Record<string, McpServerSpec>;
+  /** Settles once `mcpServers` has everything that's coming (the desktop starts beside the runner). */
+  mcpReady?: Promise<void>;
   /** Builds the spec for a host MCP server, reached through the nibblet server. */
   hostMcp(name: string): McpServerSpec;
   credproxyUrl: string;
@@ -144,6 +146,7 @@ export class Runner {
     ]);
     if (this.session?.key === key) return this.session.session;
     await this.guardReady;
+    await this.deps.mcpReady;
     await this.session?.session.close();
     this.session = null;
     for (const failure of await this.cli.apply(config.cli)) this.log("warn", failure);

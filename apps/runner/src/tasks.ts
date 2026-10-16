@@ -1,13 +1,11 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServerSpec } from "@nibblet/harness";
 import type { BackgroundTask } from "@nibblet/protocol";
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { appendFile, mkdir, open, rm } from "node:fs/promises";
-import { createServer, type Server as HttpServer } from "node:http";
 import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
+import { serveMcp, toolReply } from "./mcp-http.ts";
 
 /** Finished tasks kept in the list, newest first, before the oldest are forgotten. */
 const KEEP_FINISHED = 20;
@@ -66,7 +64,7 @@ export class BackgroundTasks {
   private readonly opts: BackgroundTasksOptions;
   private readonly tasks = new Map<string, Running>();
   private next = 1;
-  private http: HttpServer | null = null;
+  private closeMcp: (() => Promise<void>) | null = null;
   private ready: Promise<void>;
   private readonly checks: NodeJS.Timeout;
   private checking = false;
@@ -261,16 +259,7 @@ export class BackgroundTasks {
 
   /** A local MCP server with the `task_*` tools, for the harness to call. */
   async startMcp(): Promise<McpServerSpec> {
-    const reply = async (work: () => Promise<string> | string) => {
-      try {
-        return { content: [{ type: "text" as const, text: await work() }] };
-      } catch (err) {
-        const text = err instanceof Error ? err.message : String(err);
-        return { content: [{ type: "text" as const, text }], isError: true };
-      }
-    };
-    const http = createServer((req, res) => {
-      const server = new McpServer({ name: "tasks", version: "0.1.0" });
+    const served = await serveMcp("tasks", (server) => {
       server.registerTool(
         "task_start",
         {
@@ -286,7 +275,7 @@ export class BackgroundTasks {
           },
         },
         ({ command, name, cwd }) =>
-          reply(async () => {
+          toolReply(async () => {
             const task = await this.start({ command, name, cwd });
             return `Started ${task.id} (${task.name}). Check on it with task_output.`;
           }),
@@ -298,7 +287,7 @@ export class BackgroundTasks {
           inputSchema: {},
         },
         () =>
-          reply(() => {
+          toolReply(() => {
             const tasks = this.list();
             if (tasks.length === 0) return "No background tasks.";
             return tasks
@@ -319,7 +308,7 @@ export class BackgroundTasks {
           },
         },
         ({ id, lines }) =>
-          reply(async () => {
+          toolReply(async () => {
             const output = await this.output(id, lines ?? 100);
             const task = this.tasks.get(id)?.task;
             const state =
@@ -337,32 +326,20 @@ export class BackgroundTasks {
           inputSchema: { id: z.string().describe("The task's id") },
         },
         ({ id }) =>
-          reply(() => {
+          toolReply(() => {
             const task = this.stop(id);
             return task.status === "running" ? `Stopping ${id}.` : `${id} had already exited.`;
           }),
       );
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-        enableJsonResponse: true,
-      });
-      res.on("close", () => {
-        void transport.close();
-        void server.close();
-      });
-      void server.connect(transport).then(() => transport.handleRequest(req, res));
     });
-    this.http = http;
-    await new Promise<void>((done) => http.listen(0, "127.0.0.1", () => done()));
-    const address = http.address();
-    const port = typeof address === "object" && address ? address.port : 0;
-    return { type: "http", url: `http://127.0.0.1:${port}/mcp`, headers: {} };
+    this.closeMcp = served.close;
+    return served.spec;
   }
 
   async close(): Promise<void> {
     clearInterval(this.checks);
     await this.stopAll();
-    await new Promise<void>((done) => (this.http ? this.http.close(() => done()) : done()));
+    await this.closeMcp?.();
   }
 }
 

@@ -354,15 +354,13 @@ export class Conductor {
    * there's no desktop, which comes and goes with the host's browser.
    */
   async desktop(nibbletId: string): Promise<{ address: string; token: string } | null> {
-    const host = await this.hostOf(await this.store.getNibblet(nibbletId));
-    const [nibblet, row] = await Promise.all([
-      this.store.getNibblet(host),
-      this.store.nibbletRow(host),
-    ]);
-    if (!nibblet.browser) return null;
+    // One lookup for a nibblet with its own container; the proxy asks on every request.
+    let row = await this.store.nibbletRow(nibbletId);
+    while (row.parentId) row = await this.store.nibbletRow(row.parentId);
+    if (!row.browser) return null;
     return {
-      address: `${runnerName(host)}:${DESKTOP_VIEW_PORT}`,
-      token: desktopToken(this.config.NIBBLET_OWNER_TOKEN, host, row.tokenHash),
+      address: `${runnerName(row.id)}:${DESKTOP_VIEW_PORT}`,
+      token: desktopToken(this.config.NIBBLET_OWNER_TOKEN, row.id, row.tokenHash),
     };
   }
 

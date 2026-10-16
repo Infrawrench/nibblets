@@ -2,7 +2,15 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DesktopApps, dataDirs, entryKeys, execArgv, readEntry, scanApps } from "./apps.ts";
+import {
+  DesktopApps,
+  dataDirs,
+  entryKeys,
+  execArgv,
+  iconFinder,
+  readEntry,
+  scanApps,
+} from "./apps.ts";
 
 const noIcon = async () => null;
 
@@ -28,6 +36,26 @@ describe("desktop entries", () => {
     expect(execArgv('env "" GDK_BACKEND=x11 app')).toEqual(["env", "", "GDK_BACKEND=x11", "app"]);
   });
 
+  it("puts files where the Exec line takes them", () => {
+    const files = ["/a.txt", "/b.txt"];
+    expect(execArgv("app --open %f --readonly", files)).toEqual([
+      "app",
+      "--open",
+      "/a.txt",
+      "--readonly",
+    ]);
+    expect(execArgv("app %U --new-window", files)).toEqual([
+      "app",
+      "/a.txt",
+      "/b.txt",
+      "--new-window",
+    ]);
+    expect(execArgv("app --file=%f", files)).toEqual(["app", "--file=/a.txt"]);
+    expect(execArgv("app --icon %i %c", files)).toEqual(["app", "--icon", "/a.txt", "/b.txt"]);
+    // Nowhere to put them: at the end.
+    expect(execArgv("app --x", files)).toEqual(["app", "--x", "/a.txt", "/b.txt"]);
+  });
+
   it("makes an app of an entry it can open", async () => {
     const app = await readEntry(
       "org.xfce.mousepad",
@@ -42,6 +70,7 @@ describe("desktop entries", () => {
       command: "mousepad",
       args: [],
       categories: ["Utility", "TextEditor"],
+      exec: "mousepad %U",
     });
   });
 
@@ -127,6 +156,30 @@ describe("scanning for apps", () => {
   });
 });
 
+describe("finding icons", () => {
+  let root = "";
+  afterEach(async () => {
+    if (root) await rm(root, { recursive: true, force: true });
+  });
+
+  it("keeps what it found, and looks again for what it didn't after a while", async () => {
+    root = await mkdtemp(path.join(tmpdir(), "nibblet-icons-"));
+    let now = 0;
+    const find = iconFinder([root], path.join(root, "home"), () => now);
+    expect(await find("game")).toBeNull();
+    await mkdir(path.join(root, "pixmaps"), { recursive: true });
+    await writeFile(path.join(root, "pixmaps", "game.svg"), "<svg/>");
+    // Not found a moment ago, so not looked for yet.
+    expect(await find("game")).toBeNull();
+    now = 61_000;
+    const found = await find("game");
+    expect(found).toMatch(/^data:image\/svg\+xml;base64,/);
+    await rm(path.join(root, "pixmaps", "game.svg"));
+    now = 1_000_000;
+    expect(await find("game")).toBe(found);
+  });
+});
+
 describe("DesktopApps", () => {
   const foot = {
     id: "foot",
@@ -136,7 +189,9 @@ describe("DesktopApps", () => {
     command: "foot",
     args: ["--title=x"],
     categories: [],
+    exec: "foot --title=x %f",
   };
+  const { exec: _, ...shownFoot } = foot;
 
   it("says when the list changes, and only then", async () => {
     let list = [foot];
@@ -151,10 +206,29 @@ describe("DesktopApps", () => {
     await apps.scan();
     list = [];
     await apps.scan();
-    expect(seen).toEqual([[foot], []]);
+    expect(seen).toEqual([[shownFoot], []]);
   });
 
-  it("opens an app on the desktop's view server, files after its own arguments", async () => {
+  it("keeps the newest scan's list when an older one finishes after it", async () => {
+    const finish: ((list: (typeof foot)[]) => void)[] = [];
+    const seen: unknown[] = [];
+    const apps = new DesktopApps({
+      viewUrl: "http://127.0.0.1:1",
+      token: "t",
+      scan: () => new Promise((done) => finish.push(done)),
+      onChange: (l) => seen.push(l),
+    });
+    const older = apps.scan();
+    const newer = apps.scan();
+    finish[1]!([foot]);
+    await newer;
+    finish[0]!([]);
+    await older;
+    expect(apps.list()).toEqual([shownFoot]);
+    expect(seen).toEqual([[shownFoot]]);
+  });
+
+  it("opens an app on the desktop's view server, files where it takes them, from the last scan", async () => {
     const calls: { url: string; init: RequestInit }[] = [];
     const original = globalThis.fetch;
     globalThis.fetch = (async (url: string, init: RequestInit) => {
@@ -165,13 +239,18 @@ describe("DesktopApps", () => {
       );
     }) as typeof fetch;
     try {
+      let scans = 0;
       const apps = new DesktopApps({
         viewUrl: "http://127.0.0.1:7901",
         token: "t",
-        scan: async () => [foot],
+        scan: async () => (scans++, [foot]),
       });
+      await apps.scan();
       const opened = await apps.launch("foot", ["notes.txt"]);
       expect(opened.session_id).toBe("s1-abc");
+      expect(opened.app).toEqual(shownFoot);
+      // The last scan had it: no need to look again.
+      expect(scans).toBe(1);
       expect(calls[0]?.url).toBe("http://127.0.0.1:7901/sessions");
       expect((calls[0]?.init.headers as Record<string, string>).authorization).toBe("Bearer t");
       expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
@@ -180,6 +259,7 @@ describe("DesktopApps", () => {
         display: "wayland",
       });
       await expect(apps.launch("nope")).rejects.toThrow("No app nope");
+      expect(scans).toBe(2);
     } finally {
       globalThis.fetch = original;
     }
