@@ -148,6 +148,16 @@ describe("mcpServersFor", () => {
       "onepassword",
     ]);
     expect(servers.host_files).toMatchObject({ url: "http://server/hostmcp/files" });
+    // A gated server can't take a built-in's name.
+    const clash = mcpServersFor(
+      { ...config, hostMcp: [], gated: ["tasks"] },
+      {
+        mcpServers: { tasks: { type: "http", url: "http://127.0.0.1:4000/mcp", headers: {} } },
+        hostMcp: (name) => ({ type: "http", url: `http://server/hostmcp/${name}`, headers: {} }),
+        gateUrl: (name) => `http://127.0.0.1:7810/mcp/${name}`,
+      },
+    );
+    expect(clash.tasks).toMatchObject({ url: "http://127.0.0.1:4000/mcp" });
     // No settings or secrets, only an address on the guard's gate.
     expect(servers.onepassword).toEqual({
       type: "http",

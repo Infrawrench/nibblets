@@ -404,6 +404,24 @@ export const Schedule = z.object({
 });
 export type Schedule = z.infer<typeof Schedule>;
 
+/**
+ * A long-running process the nibblet started with `task_start` (a dev
+ * server, a game server, a watcher): it outlives the turn that started it,
+ * but not the container.
+ */
+export const BackgroundTask = z.object({
+  id: z.string(),
+  name: z.string(),
+  command: z.string(),
+  cwd: z.string(),
+  status: z.enum(["running", "exited"]),
+  /** Null while it runs, or when a signal ended it. */
+  exitCode: z.int().nullable(),
+  startedAt: Timestamp,
+  endedAt: Timestamp.nullable(),
+});
+export type BackgroundTask = z.infer<typeof BackgroundTask>;
+
 export const CreateSchedule = z
   .object({
     nibbletId: z.string(),

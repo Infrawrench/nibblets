@@ -7,6 +7,7 @@ import { procedure } from "./rpc.ts";
 import { Snapshot, SnapshotActivity, SnapshotTimeline } from "./snapshots.ts";
 import { AppUpdate, HarnessUpdates } from "./updates.ts";
 import {
+  BackgroundTask,
   CreateNibblet,
   CreateSchedule,
   Memory,
@@ -63,6 +64,9 @@ export const contract = {
       }),
       Ok,
     ),
+    /** What it has running in the background, from `task_start`. Empty while it's asleep. */
+    tasks: procedure(Id, z.array(BackgroundTask)),
+    stopTask: procedure(z.object({ id: z.string(), taskId: z.string() }), Ok),
   },
   harnesses: {
     /** A harness's models: the fixed lists for Claude and Codex, the host's live list for OpenCode. */
@@ -180,6 +184,8 @@ export const LiveMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("nibblet_deleted"), id: z.string() }),
   z.object({ type: z.literal("item"), item: StoredItem }),
   z.object({ type: z.literal("schedules_changed"), nibbletId: z.string() }),
+  /** Its background tasks, whenever one starts or ends (empty when its container's gone). */
+  z.object({ type: z.literal("tasks"), nibbletId: z.string(), tasks: z.array(BackgroundTask) }),
   /** The thread was replaced (a snapshot was restored): drop it and fetch again from the start. */
   z.object({ type: z.literal("thread_reset"), nibbletId: z.string() }),
   z.object({
@@ -189,3 +195,25 @@ export const LiveMessage = z.discriminatedUnion("type", [
   }),
 ]);
 export type LiveMessage = z.infer<typeof LiveMessage>;
+
+const TerminalSize = { cols: z.int().min(1).max(1000), rows: z.int().min(1).max(1000) };
+
+/**
+ * What the browser sends over a terminal's WebSocket, at
+ * `/api/nibblets/:id/terminal?cols=&rows=[&task=]`.
+ */
+export const TerminalInput = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("input"), data: z.string().max(65_536) }),
+  z.object({ type: z.literal("resize"), ...TerminalSize }),
+  /** How much output it has drawn since the last ack, so more can come. */
+  z.object({ type: z.literal("ack"), chars: z.int().min(0) }),
+]);
+export type TerminalInput = z.infer<typeof TerminalInput>;
+
+/** What comes back. The socket closes after `exit` or `error`. */
+export const TerminalEvent = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("output"), data: z.string() }),
+  z.object({ type: z.literal("exit"), code: z.int().nullable() }),
+  z.object({ type: z.literal("error"), message: z.string() }),
+]);
+export type TerminalEvent = z.infer<typeof TerminalEvent>;

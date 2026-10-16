@@ -8,6 +8,7 @@ import {
   History,
   PanelRight,
   Settings2,
+  SquareTerminal,
   X,
 } from "lucide-react";
 import { harnesses } from "@nibblet/protocol";
@@ -23,6 +24,7 @@ import { HarnessIcon } from "./HarnessIcon.tsx";
 import { ThreadView } from "./thread/ThreadView.tsx";
 import { Composer } from "./thread/Composer.tsx";
 import { BrowserPanel } from "./panels/BrowserPanel.tsx";
+import { TerminalPanel } from "./panels/TerminalPanel.tsx";
 import { SchedulesPanel } from "./panels/SchedulesPanel.tsx";
 import { MemoryPanel } from "./panels/MemoryPanel.tsx";
 import { SnapshotsPanel } from "./panels/SnapshotsPanel.tsx";
@@ -134,6 +136,7 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
             onChange={(p) => setPanel(p === panel ? null : p)}
             options={[
               { value: "browser", label: <Globe />, title: "Browser" },
+              { value: "terminal", label: <SquareTerminal />, title: "Terminal" },
               { value: "schedules", label: <CalendarClock />, title: "Schedules" },
               { value: "memory", label: <Brain />, title: "Memory" },
               { value: "snapshots", label: <History />, title: "Snapshots" },
@@ -181,6 +184,9 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
             {panel === "browser" ? (
               <BrowserPanel connection={connection} nibblet={nibblet} />
             ) : null}
+            {panel === "terminal" ? (
+              <TerminalPanel connection={connection} nibblet={nibblet} />
+            ) : null}
             {panel === "schedules" ? (
               <SchedulesPanel connection={connection} nibblet={nibblet} />
             ) : null}
@@ -200,6 +206,7 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
 
 const panelTitles: Record<PanelTab, string> = {
   browser: "Browser",
+  terminal: "Terminal",
   schedules: "Schedules",
   memory: "Memory",
   snapshots: "Snapshots",

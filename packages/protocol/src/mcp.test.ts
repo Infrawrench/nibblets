@@ -32,9 +32,12 @@ describe("McpServerList", () => {
     expect(McpServerList.safeParse([one("nibblet")]).success).toBe(false);
     expect(McpServerList.safeParse([one("computer")]).success).toBe(false);
     expect(McpServerList.safeParse([one("host_files")]).success).toBe(false);
+    expect(McpServerList.safeParse([one("files")]).success).toBe(false);
+    expect(McpServerList.safeParse([one("tasks")]).success).toBe(false);
+    expect(McpServerList.safeParse([one("onepassword")]).success).toBe(false);
     expect(McpServerList.safeParse([one("Bad Name")]).success).toBe(false);
     expect(McpServerList.safeParse([one("a"), one("a")]).success).toBe(false);
-    expect(McpServerList.safeParse([one("files"), one("web-search_2")]).success).toBe(true);
+    expect(McpServerList.safeParse([one("todo"), one("web-search_2")]).success).toBe(true);
   });
 });
 

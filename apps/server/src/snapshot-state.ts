@@ -3,7 +3,8 @@ import {
   Effort,
   HarnessId,
   Heartbeat,
-  McpServerList,
+  isReservedMcpName,
+  McpServerDef,
   Resources,
   ThreadItem,
   ToolRules,
@@ -27,7 +28,10 @@ const AgentState = z.object({
   browser: z.boolean(),
   hostTools: z.array(z.string()),
   cliCredentials: z.array(z.string()),
-  mcpServers: McpServerList,
+  // Taken before a built-in claimed a server's name: restored without it.
+  mcpServers: z
+    .array(McpServerDef)
+    .transform((list) => list.filter((server) => !isReservedMcpName(server.name))),
   toolApprovals: ToolRules,
   statusText: z.string().nullable(),
   statusEmoji: z.string().nullable(),

@@ -797,6 +797,8 @@ export function createMockServer(): ServerConnection {
         save({ ...get(id), status: "idle", statusDetail: null });
         return { ok: true };
       },
+      tasks: async () => [],
+      stopTask: async () => ({ ok: true }),
       decide: async ({ id, approvalId, approve, reason }) => {
         const found = items.get(id)?.find((s) => s.item.id === approvalId)?.item;
         if (found?.type === "approval" && found.status === "pending") {

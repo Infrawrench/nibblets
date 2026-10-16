@@ -26,6 +26,7 @@ export const keys = {
   thread: (server: string, id: string) => ["thread", server, id] as const,
   schedules: (server: string, id: string) => ["schedules", server, id] as const,
   snapshots: (server: string, id: string) => ["snapshots", server, id] as const,
+  tasks: (server: string, id: string) => ["tasks", server, id] as const,
   memories: (server: string, id: string | null, query: string) =>
     ["memories", server, id, query] as const,
   hostTools: (server: string) => ["hostTools", server] as const,
@@ -286,6 +287,9 @@ export function applyLive(qc: QueryClient, server: string, m: LiveMessage): void
       return;
     case "schedules_changed":
       void qc.invalidateQueries({ queryKey: keys.schedules(server, m.nibbletId) });
+      return;
+    case "tasks":
+      qc.setQueryData(keys.tasks(server, m.nibbletId), m.tasks);
       return;
     case "thread_reset":
       // A restore replaced the thread: what's cached can't be patched, only fetched again.

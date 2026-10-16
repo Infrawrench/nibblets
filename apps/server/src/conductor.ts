@@ -9,6 +9,7 @@ import {
   type TurnSource,
   type Resources,
   type GuardConfig,
+  isReservedMcpName,
   type McpServerDef,
 } from "@nibblet/protocol";
 import { z } from "zod";
@@ -29,6 +30,7 @@ import { onePasswordLogin } from "./onepassword.ts";
 import { opencodeLogin } from "./opencode.ts";
 import { kimiLogin } from "./kimi.ts";
 import { runnerName, type Orchestrator } from "./docker.ts";
+import { TerminalHub } from "./terminals.ts";
 import { guardToken, hashToken, newId, viewToken, type Store } from "./store.ts";
 
 export interface RunnerLink {
@@ -94,6 +96,12 @@ export class Conductor {
   private readonly providerLimits: ProviderLimits;
   /** Vault names last shared with each runner, for its system prompt. */
   private readonly onePasswordVaults = new Map<string, SharedVault[]>();
+  /** The user's terminals in the containers, and the background tasks each reports. */
+  readonly terminals = new TerminalHub((nibbletId, message) => {
+    const link = this.links.get(nibbletId);
+    link?.send(message);
+    return link !== undefined;
+  });
   serverName = "nibblet";
 
   constructor(store: Store, docker: Orchestrator, config: Config) {
@@ -296,6 +304,7 @@ export class Conductor {
     this.failActive(nibbletId, "interrupted", "Stopped");
     this.links.get(nibbletId)?.close();
     this.links.delete(nibbletId);
+    this.terminals.runnerGone(nibbletId);
     // Mark it stopped first, so the container's exit event reads as expected.
     const stopped = await this.store.updateNibblet(nibbletId, {
       status: "stopped",
@@ -460,7 +469,9 @@ export class Conductor {
   // Runner connections
 
   async attach(nibbletId: string, link: RunnerLink): Promise<void> {
-    this.links.get(nibbletId)?.close();
+    const previous = this.links.get(nibbletId);
+    previous?.close();
+    if (previous && previous !== link) this.terminals.runnerGone(nibbletId);
     this.links.set(nibbletId, link);
     const row = await this.store.nibbletRow(nibbletId);
     const onePassword = await onePasswordLogin(this.config, this.store, nibbletId, (m) =>
@@ -504,9 +515,11 @@ export class Conductor {
 
   /** Its own MCP servers, less any the host's tools now cover. */
   private async ownMcpServers(row: { hostTools: string[]; mcpServers: McpServerDef[] }) {
+    // One saved before its name was taken by a built-in would replace the built-in.
+    const own = row.mcpServers.filter((server) => !isReservedMcpName(server.name));
     return row.hostTools.length > 0 && this.config.HOST_MCP_URL
-      ? dropOverlaps(row.mcpServers, row.hostTools, (await hostTools(this.config)).servers)
-      : row.mcpServers;
+      ? dropOverlaps(own, row.hostTools, (await hostTools(this.config)).servers)
+      : own;
   }
 
   /**
@@ -529,6 +542,7 @@ export class Conductor {
   async detach(nibbletId: string, link: RunnerLink): Promise<void> {
     if (this.links.get(nibbletId) !== link) return;
     this.links.delete(nibbletId);
+    this.terminals.runnerGone(nibbletId);
     this.failActive(nibbletId, "failed", "Lost touch with its container");
   }
 
@@ -588,6 +602,11 @@ export class Conductor {
           .catch((err: unknown) => console.error(`approval for ${nibbletId} failed`, err));
         return;
       }
+      case "terminal_output":
+      case "terminal_exit":
+      case "tasks":
+        this.terminals.fromRunner(nibbletId, message);
+        return;
       case "log": {
         const line = `[${nibbletId}] ${message.message}`;
         if (message.level === "error") console.error(line);
@@ -761,6 +780,7 @@ export class Conductor {
     const nibblet = await this.store.getNibblet(nibbletId).catch(() => null);
     if (!nibblet || nibblet.status === "stopped") return;
     this.links.delete(nibbletId);
+    this.terminals.runnerGone(nibbletId);
     this.failActive(nibbletId, "failed", "Its container stopped");
     const logs = await this.docker.runnerLogs(nibbletId, 20);
     const tail = logs.trim().split("\n").slice(-3).join(" ");

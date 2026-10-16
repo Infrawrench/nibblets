@@ -1,10 +1,14 @@
 import { mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { McpServerSpec } from "@nibblet/harness";
 import { GATE_PORT, RunnerEnv } from "@nibblet/protocol";
 import { Connection } from "./connection.ts";
 import { RunnerFiles } from "./files.ts";
 import { plugins } from "./plugins.ts";
 import { Runner } from "./runner.ts";
+import { BackgroundTasks } from "./tasks.ts";
+import { Terminals } from "./terminals.ts";
 
 const env = RunnerEnv.parse(process.env);
 const workdir = process.env.NIBBLET_WORKDIR ?? process.cwd();
@@ -32,6 +36,21 @@ const files = new RunnerFiles({
   currentTurn: () => runner.currentTurnId(),
 });
 mcpServers.files = await files.startMcp();
+
+// Servers and the like that outlive a turn, and the user's own terminals.
+// Task logs go with the tasks when the container stops, so they stay out of
+// the home folder and its snapshots.
+const tasks = new BackgroundTasks({
+  workdir,
+  logDir: join(tmpdir(), `nibblet-tasks-${process.getuid?.() ?? 0}`),
+  onChange: (list) => connection?.send({ type: "tasks", tasks: list }),
+});
+mcpServers.tasks = await tasks.startMcp();
+const terminals = new Terminals({
+  workdir,
+  send: (msg) => connection?.send(msg),
+  taskLog: (id) => tasks.logPath(id),
+});
 
 // `/mcp` and `/hostmcp/<name>` live side by side on the nibblet server.
 const hostMcpBase = env.NIBBLET_MCP_URL.replace(/\/mcp\/?$/, "/hostmcp");
@@ -62,7 +81,26 @@ const runner: Runner = new Runner({
 connection = new Connection({
   url: env.NIBBLET_SERVER_WS,
   token: env.NIBBLET_TOKEN,
-  onMessage: (msg) => runner.handle(msg),
+  onMessage: (msg) => {
+    switch (msg.type) {
+      case "terminal_open":
+      case "terminal_input":
+      case "terminal_resize":
+      case "terminal_close":
+      case "terminal_ack":
+        terminals.handle(msg);
+        return;
+      case "task_stop":
+        try {
+          tasks.stop(msg.taskId);
+        } catch (err) {
+          log("warn", err instanceof Error ? err.message : String(err));
+        }
+        return;
+      default:
+        runner.handle(msg);
+    }
+  },
   onOpen: () => {
     const versions = Object.values(plugins).map((p) => p.version());
     connection?.send({
@@ -70,7 +108,10 @@ connection = new Connection({
       harnessVersion: versions.join(", "),
       activeTurnId: runner.currentTurnId(),
     });
+    connection?.send({ type: "tasks", tasks: tasks.list() });
   },
+  // The server that held the terminals has gone; whoever was typing is cut off anyway.
+  onClose: () => terminals.closeAll(),
 });
 connection.connect();
 console.log(`runner: nibblet ${env.NIBBLET_ID} connecting to ${env.NIBBLET_SERVER_WS}`);
@@ -79,6 +120,8 @@ async function shutdown(): Promise<void> {
   connection?.close();
   await runner.close().catch(() => {});
   await files.close().catch(() => {});
+  terminals.closeAll();
+  await tasks.close().catch(() => {});
   process.exit(0);
 }
 process.on("SIGTERM", () => void shutdown());

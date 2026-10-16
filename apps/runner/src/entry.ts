@@ -198,7 +198,8 @@ async function main(): Promise<void> {
     // Also once both have exited and nothing's left to wait for, before the timeout.
     process.exitCode = code;
     for (const child of [guard, runner]) if (child.exitCode === null) child.kill("SIGTERM");
-    setTimeout(() => process.exit(code), 3000).unref();
+    // Long enough for the runner to give background tasks their SHUTDOWN_GRACE_MS.
+    setTimeout(() => process.exit(code), 10_000).unref();
   };
   guard.on("exit", (code) => {
     log(`the guard stopped (${code})`);

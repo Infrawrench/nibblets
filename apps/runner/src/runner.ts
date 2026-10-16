@@ -244,7 +244,9 @@ export function mcpServersFor(
   const out: Record<string, McpServerSpec> = { ...deps.mcpServers };
   for (const name of config.hostMcp) out[`host_${name}`] = deps.hostMcp(name);
   // The browser, 1Password and its own servers: through the guard's gate, by name.
+  // A built-in keeps its name, whatever else asks for it.
   for (const name of config.gated)
-    out[name] = { type: "http", url: deps.gateUrl(name), headers: {} };
+    if (!(name in deps.mcpServers))
+      out[name] = { type: "http", url: deps.gateUrl(name), headers: {} };
   return out;
 }

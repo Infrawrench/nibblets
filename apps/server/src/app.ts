@@ -1,6 +1,13 @@
 import { upgradeWebSocket } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { contract, createDispatcher, RunnerToServer, type LiveMessage } from "@nibblet/protocol";
+import {
+  contract,
+  createDispatcher,
+  RunnerToServer,
+  TerminalInput,
+  type LiveMessage,
+  type TerminalEvent,
+} from "@nibblet/protocol";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -180,6 +187,60 @@ export function createApp(services: Services, bus: Bus) {
 
   app.all("/mcp", mcpHandler(services));
   app.all("/hostmcp/:name", hostMcpHandler(services));
+
+  // A terminal in the nibblet's container, as its agent's user, carried over the runner's socket.
+  app.get(
+    "/api/nibblets/:id/terminal",
+    requireTicket,
+    upgradeWebSocket((c) => {
+      const nibbletId = c.req.param("id") ?? "";
+      const size = (name: string, fallback: number) => {
+        const n = Number(c.req.query(name));
+        return Number.isInteger(n) && n >= 1 && n <= 1000 ? n : fallback;
+      };
+      const taskId = c.req.query("task") || null;
+      let terminalId: string | null = null;
+      return {
+        onOpen(_event, ws) {
+          const send = (event: TerminalEvent) => ws.send(JSON.stringify(event));
+          terminalId = conductor.terminals.openTerminal(
+            nibbletId,
+            { cols: size("cols", 80), rows: size("rows", 24) },
+            taskId,
+            {
+              output: (data) => send({ type: "output", data }),
+              exit: (code) => {
+                terminalId = null;
+                send({ type: "exit", code });
+                ws.close(1000, "exited");
+              },
+            },
+          );
+          if (!terminalId) {
+            send({ type: "error", message: "It's asleep. Wake it to open a terminal." });
+            ws.close(1000, "not running");
+          }
+        },
+        onMessage(event) {
+          if (!terminalId) return;
+          let raw: unknown;
+          try {
+            raw = JSON.parse(String(event.data));
+          } catch {
+            return;
+          }
+          const msg = TerminalInput.safeParse(raw);
+          if (!msg.success) return;
+          if (msg.data.type === "input") conductor.terminals.input(terminalId, msg.data.data);
+          else if (msg.data.type === "ack") conductor.terminals.ack(terminalId, msg.data.chars);
+          else conductor.terminals.resize(terminalId, msg.data);
+        },
+        onClose() {
+          if (terminalId) conductor.terminals.close(terminalId);
+        },
+      };
+    }),
+  );
 
   // OpenComputerUse's view server inside the container: the live browser and taking control.
   app.get("/api/nibblets/:id/computer/*", async (c, next) => {

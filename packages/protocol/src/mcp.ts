@@ -2,27 +2,39 @@ import { z } from "zod";
 import { WebUrl } from "./urls.ts";
 
 /** Names the runner already uses for its own MCP servers. */
-const RESERVED = new Set(["nibblet", "computer"]);
+const RESERVED = new Set(["nibblet", "computer", "onepassword", "files", "tasks"]);
 
-export const McpServerName = z
+/** Whether a name belongs to one of the built-in servers. */
+export function isReservedMcpName(name: string): boolean {
+  return RESERVED.has(name) || name.startsWith("host_");
+}
+
+const NameFormat = z
   .string()
-  .regex(/^[a-z0-9][a-z0-9_-]{0,39}$/, "Use lowercase letters, digits, - and _ (up to 40)")
-  .refine((n) => !RESERVED.has(n) && !n.startsWith("host_"), "That name is taken by a built-in");
+  .regex(/^[a-z0-9][a-z0-9_-]{0,39}$/, "Use lowercase letters, digits, - and _ (up to 40)");
+
+/** A name for a new server: one the built-ins don't use. */
+export const McpServerName = NameFormat.refine(
+  (n) => !isReservedMcpName(n),
+  "That name is taken by a built-in",
+);
 
 /**
  * An MCP server added to one nibblet. Remote ones are reached from inside
  * its container; stdio ones run inside its container (`npx -y …`).
  * Header and env values are treated as secrets: see `maskMcpServers`.
+ * A stored one may have a name a built-in has since taken (the runner
+ * leaves it out), so only `McpServerList`, for what's saved, refuses those.
  */
 export const McpServerDef = z.discriminatedUnion("type", [
   z.object({
-    name: McpServerName,
+    name: NameFormat,
     type: z.literal("http"),
     url: WebUrl,
     headers: z.record(z.string(), z.string()).default({}),
   }),
   z.object({
-    name: McpServerName,
+    name: NameFormat,
     type: z.literal("stdio"),
     command: z.string().min(1),
     args: z.array(z.string()).default([]),
@@ -37,6 +49,10 @@ export const McpServerList = z
   .refine(
     (list) => new Set(list.map((s) => s.name)).size === list.length,
     "Server names must be unique",
+  )
+  .refine(
+    (list) => !list.some((s) => isReservedMcpName(s.name)),
+    "That name is taken by a built-in",
   );
 
 /** Stands in for a stored secret in anything the API returns. */
