@@ -44,8 +44,8 @@ export interface Computer {
  * else can be holding it.
  */
 export async function clearProfileLock(home: string): Promise<void> {
-  const config = process.env.XDG_CONFIG_HOME || path.join(home, ".config");
-  const profile = path.join(config, "chromium");
+  // Chromium's default; the entry never gives the guard an XDG_CONFIG_HOME.
+  const profile = path.join(home, ".config", "chromium");
   for (const name of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) {
     // They're symlinks, mostly to things that are gone: rm doesn't follow them.
     await rm(path.join(profile, name), { force: true });
