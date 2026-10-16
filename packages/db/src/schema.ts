@@ -9,6 +9,8 @@ import type {
   McpServerDef,
   ToolRule,
   NibbletStatus,
+  NibbletTailscale,
+  TailnetNode,
   ThreadItem,
 } from "@nibblet/protocol";
 import {
@@ -62,6 +64,9 @@ export const nibblets = pgTable("nibblets", {
   /** Unmasked: the API masks header and env values on the way out. */
   mcpServers: jsonb("mcp_servers").$type<McpServerDef[]>().notNull().default([]),
   toolApprovals: jsonb("tool_approvals").$type<ToolRule[]>().notNull().default([]),
+  /** Unmasked, like `mcpServers`: the API masks the auth key on the way out. */
+  tailscale: jsonb("tailscale").$type<NibbletTailscale>(),
+  tailnetNode: jsonb("tailnet_node").$type<TailnetNode>(),
   statusText: text("status_text"),
   statusEmoji: text("status_emoji"),
   statusUpdatedAt: timestamp("status_updated_at", { withTimezone: true }),

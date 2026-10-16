@@ -3,6 +3,7 @@ import {
   CredentialStatus,
   type HarnessId,
   mergeMcpServers,
+  mergeTailscale,
   RpcError,
   ServerInfo,
   type Contract,
@@ -125,8 +126,19 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         const model = patch.model ?? before.model;
         await checkModel(harness, model);
         const harnessChanged = harness !== before.harness;
-        const { mcpServers, ...rest } = patch;
+        const { mcpServers, tailscale: tailscalePatch, ...rest } = patch;
         const row = await store.nibbletRow(id);
+        const tailscale =
+          tailscalePatch === undefined
+            ? undefined
+            : tailscalePatch && mergeTailscale(tailscalePatch, row.tailscale);
+        if (tailscale && before.parentId)
+          throw new RpcError(
+            "bad_request",
+            "A sub-agent is on the tailnet as its parent's machine",
+          );
+        if (tailscale && !tailscale.authKey)
+          throw new RpcError("bad_request", "Paste an auth key from the Tailscale admin console");
         let merged = mcpServers ? mergeMcpServers(mcpServers, row.mcpServers) : null;
         // Ticking a host tool retires the nibblet's own copy of the same server.
         const enabled = patch.hostTools ?? row.hostTools;
@@ -138,15 +150,17 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         const updated = await store.updateNibblet(id, {
           ...rest,
           ...(merged ? { mcpServers: merged } : {}),
+          ...(tailscale !== undefined ? { tailscale } : {}),
           // A different harness can't resume the old one's session.
           ...(harnessChanged ? { harnessSessionId: null } : {}),
         });
-        // The browser and the SSH agent are fixed when the container is made.
+        // The browser, the SSH agent and Tailscale are fixed when the container is made.
         const sshBefore = before.cliCredentials.includes("ssh");
         const sshAfter = (patch.cliCredentials ?? before.cliCredentials).includes("ssh");
         const needsRestart =
           (patch.browser !== undefined && patch.browser !== before.browser) ||
-          sshBefore !== sshAfter;
+          sshBefore !== sshAfter ||
+          (tailscale !== undefined && JSON.stringify(tailscale) !== JSON.stringify(row.tailscale));
         if (needsRestart && before.status !== "stopped") return conductor.start(id);
         if (patch.resources) await conductor.applyResources(id, patch.resources);
         await conductor.reconfigure(id);

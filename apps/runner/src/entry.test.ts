@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { firewallRules, nameservers, ownSubnet, safeId } from "./entry.ts";
+import {
+  firewallRules,
+  nameservers,
+  ownSubnet,
+  safeId,
+  tailnetPorts,
+  tailnetRules,
+} from "./entry.ts";
 
 describe("a sub-agent's id", () => {
   it("is taken as the server makes them", () => {
@@ -66,5 +73,29 @@ describe("the container's firewall", () => {
       "search dns.podman\nnameserver 10.89.1.1\n# nameserver 9.9.9.9\nnameserver ::1\noptions ndots:0\n";
     expect(nameservers(conf)).toEqual(["10.89.1.1"]);
     expect(nameservers("nameserver 127.0.0.11\noptions ndots:0")).toEqual(["127.0.0.11"]);
+  });
+});
+
+describe("the tailnet's firewall", () => {
+  const mine = ["-A", "OUTPUT", "-o", "lo", "-m", "owner", "--uid-owner", "1200"];
+
+  it("lets Tailscale's user reach the shared ports and the nameservers on loopback, and nothing else", () => {
+    expect(tailnetRules(1200, [3000], ["127.0.0.11"])).toEqual([
+      [...mine, "-d", "127.0.0.11", "-j", "ACCEPT"],
+      [...mine, "-p", "tcp", "--dport", "3000", "-j", "ACCEPT"],
+      [...mine, "-p", "udp", "--dport", "3000", "-j", "ACCEPT"],
+      [...mine, "-j", "REJECT"],
+    ]);
+  });
+
+  it("shuts everything off when nothing is shared", () => {
+    expect(tailnetRules(1200, [])).toEqual([[...mine, "-j", "REJECT"]]);
+  });
+
+  it("takes only ports a user could have shared", () => {
+    expect(tailnetPorts("3000, 8080")).toEqual([3000, 8080]);
+    // The gate, the browser, its view, the proxy, sub-agents' ports, and junk.
+    expect(tailnetPorts("7810,7800,7900,1055,25000,0,abc,")).toEqual([]);
+    expect(tailnetPorts(undefined)).toEqual([]);
   });
 });

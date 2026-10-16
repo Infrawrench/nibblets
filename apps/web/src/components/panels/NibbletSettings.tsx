@@ -15,6 +15,7 @@ import { Switch } from "../ui/Switch.tsx";
 import { NibbletTools } from "../tools/NibbletTools.tsx";
 import { NibbletVaults } from "../onepassword/OnePasswordSection.tsx";
 import { ResourcesSection } from "./ResourcesSection.tsx";
+import { TailscaleSection } from "./TailscaleSection.tsx";
 
 export function NibbletSettings({
   connection,
@@ -178,6 +179,8 @@ export function NibbletSettings({
       />
 
       <NibbletVaults connection={connection} nibblet={nibblet} />
+
+      <TailscaleSection connection={connection} nibblet={nibblet} />
 
       <ResourcesSection connection={connection} nibblet={nibblet} />
 

@@ -12,6 +12,11 @@
  * reaching the cloud metadata address, or anything on the runners' network
  * but the server and the credential proxy: not other nibblets, not the tunnel.
  *
+ * When the nibblet is on the user's tailnet, it also starts Tailscale as a
+ * third user (TAILSCALE_UID; see tailscale.ts), and fences in what that user
+ * can reach on loopback, which is where whatever comes in from the tailnet
+ * is handed over: only the ports the user shared.
+ *
  * `entry.ts subagent`, run by the server with `docker exec`, starts a
  * sub-agent's own guard and runner in its parent's container, beside the
  * parent's: the same files, tools and servers, but its own browser (with its
@@ -34,7 +39,17 @@ import { createServer } from "node:net";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { AGENT_GID, AGENT_UID, GUARD_GID, GUARD_ONLY_ENV, GUARD_UID } from "@nibblet/protocol";
+import {
+  AGENT_GID,
+  AGENT_UID,
+  GUARD_GID,
+  GUARD_ONLY_ENV,
+  GUARD_UID,
+  TAILSCALE_GID,
+  TAILSCALE_UID,
+  TailnetPort,
+} from "@nibblet/protocol";
+import { TAILSCALE_RUN, TAILSCALE_STATE } from "./tailscale.ts";
 
 const run = promisify(execFile);
 const HOME = "/home/nibblet";
@@ -115,6 +130,65 @@ async function firewall(): Promise<void> {
     // Some engines won't let a container set its own rules; carry on without.
     log(`couldn't set the firewall: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/** The ports the tailnet may reach, from `NIBBLET_TAILSCALE_PORTS`: only ones a user could have shared. */
+export function tailnetPorts(value: string | undefined): number[] {
+  return (value ?? "")
+    .split(",")
+    .map((p) => Number(p.trim()))
+    .filter((p) => TailnetPort.safeParse(p).success);
+}
+
+/**
+ * What Tailscale's user may reach on loopback: the shared ports and the
+ * nameservers (Docker's is on loopback, and its port isn't 53 by the time
+ * these rules see it), and nothing else. Whatever comes in from the tailnet
+ * is handed to 127.0.0.1 (or ::1) by this user, so this is what the tailnet
+ * can reach. The gate, the browser, and the runner's own servers stay out.
+ */
+export function tailnetRules(
+  uid: number,
+  ports: readonly number[],
+  dnsServers: readonly string[] = [],
+): string[][] {
+  const mine = ["-A", "OUTPUT", "-o", "lo", "-m", "owner", "--uid-owner", String(uid)];
+  return [
+    ...dnsServers.map((ip) => [...mine, "-d", ip, "-j", "ACCEPT"]),
+    ...ports.flatMap((port) =>
+      ["tcp", "udp"].map((proto) => [
+        ...mine,
+        "-p",
+        proto,
+        "--dport",
+        String(port),
+        "-j",
+        "ACCEPT",
+      ]),
+    ),
+    [...mine, "-j", "REJECT"],
+  ];
+}
+
+/** Sets the tailnet's rules; says why not when it can't, since Tailscale mustn't start without them. */
+async function tailnetFirewall(ports: readonly number[]): Promise<string | null> {
+  const dnsServers = nameservers(await readFile("/etc/resolv.conf", "utf8").catch(() => ""));
+  try {
+    for (const rule of tailnetRules(TAILSCALE_UID, ports, dnsServers)) await run("iptables", rule);
+  } catch (err) {
+    return `Couldn't fence off the container from the tailnet, so it hasn't joined: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  try {
+    for (const rule of tailnetRules(TAILSCALE_UID, ports)) await run("ip6tables", rule);
+  } catch (err) {
+    // Without IPv6 in the container, nothing comes in over it to fence off.
+    const ipv6 = (await readFile("/proc/net/if_inet6", "utf8").catch(() => "")).trim();
+    if (ipv6) {
+      return `Couldn't fence off the container from the tailnet over IPv6, so it hasn't joined: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+  log(`tailnet may reach ${ports.length ? `ports ${ports.join(", ")}` : "nothing"}`);
+  return null;
 }
 
 const exists = (p: string) =>
@@ -267,16 +341,69 @@ async function startPair(pair: Pair, onStop: () => Promise<void> = async () => {
   process.on("SIGINT", () => stop(0));
 }
 
+/** Tailscale's own folders: its state (its own volume) and its control socket's, which only it can open. */
+async function tailscaleFolders(): Promise<void> {
+  await ownedDir(TAILSCALE_STATE, TAILSCALE_UID, TAILSCALE_GID, 0o700);
+  await run("chown", ["-R", `${TAILSCALE_UID}:${TAILSCALE_GID}`, TAILSCALE_STATE]);
+  await ownedDir(TAILSCALE_RUN, TAILSCALE_UID, TAILSCALE_GID, 0o700);
+}
+
+/** Starts Tailscale, which outlives neither the container nor a failure to fence it in. */
+/**
+ * Starts Tailscale, to join, or (`leave`) to sign out the machine a nibblet
+ * taken off the tailnet left behind, so its key isn't kept for nothing.
+ */
+async function startTailscale(leave = false): Promise<ChildProcess | null> {
+  const ports = leave ? [] : tailnetPorts(process.env.NIBBLET_TAILSCALE_PORTS);
+  const blocked = await tailnetFirewall(ports);
+  // Leaving is tidying up: not worth being on the tailnet unfenced for.
+  if (leave && blocked) return null;
+  if (!blocked) await tailscaleFolders();
+  const child = as(
+    TAILSCALE_UID,
+    TAILSCALE_GID,
+    [TAILSCALE_GID],
+    "tailscale.ts",
+    {
+      ...pick(["PATH", "LANG", "TZ", "NODE_ENV", "NIBBLET_ID", "NIBBLET_SERVER_URL"]),
+      NIBBLET_GUARD_TOKEN: process.env.NIBBLET_GUARD_TOKEN ?? "",
+      ...(blocked ? { NIBBLET_TAILSCALE_BLOCKED: blocked } : {}),
+      ...(leave ? { NIBBLET_TAILSCALE_LEAVE: "1" } : {}),
+      HOME: TAILSCALE_STATE,
+      USER: "tailscale",
+    },
+    { group: true },
+  );
+  // The nibblet carries on without it: the user sees why on its settings.
+  child.on("exit", (code) => log(`tailscale stopped (${code})`));
+  return child;
+}
+
 async function main(): Promise<void> {
   await firewall();
   await folders();
-  await startPair({
-    guardHome: GUARD_HOME,
-    env: {},
-    guardEnv: {},
-    runnerEnv: {},
-    runtimeDir: `/tmp/guard-${GUARD_UID}`,
-  });
+  const tailscale =
+    process.env.NIBBLET_TAILSCALE === "1"
+      ? await startTailscale()
+      : (await exists(path.join(TAILSCALE_STATE, "tailscaled.state")))
+        ? await startTailscale(true)
+        : null;
+  await startPair(
+    {
+      guardHome: GUARD_HOME,
+      env: {},
+      guardEnv: {},
+      runnerEnv: {},
+      runtimeDir: `/tmp/guard-${GUARD_UID}`,
+    },
+    async () => {
+      try {
+        if (tailscale?.pid && tailscale.exitCode === null) process.kill(-tailscale.pid, "SIGTERM");
+      } catch {
+        // Gone.
+      }
+    },
+  );
 }
 
 /**

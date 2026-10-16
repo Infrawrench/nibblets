@@ -2,6 +2,7 @@ import { Readable, Writable } from "node:stream";
 import Docker from "dockerode";
 import {
   CONTAINER_SSH_AUTH_SOCK,
+  CONTAINER_TAILSCALE_STATE,
   DEFAULT_MEMORY_MB,
   defaultResources,
   HARNESS_CLI_DIR,
@@ -19,6 +20,8 @@ const NIBBLET = "nibblet.id";
 
 export const runnerName = (nibbletId: string): string => `nibblet-${nibbletId}`;
 export const homeVolume = (nibbletId: string): string => `nibblet-home-${nibbletId}`;
+/** Tailscale's state, out of the agent's reach (and out of snapshots, which are of its home). */
+export const tailscaleVolume = (nibbletId: string): string => `nibblet-tailscale-${nibbletId}`;
 /** Docker's limit fields for a nibblet's resources. Swap is capped at the memory limit. */
 export function limits(r: Resources): { Memory: number; MemorySwap: number; NanoCpus: number } {
   const memory = (r.memoryMb ?? DEFAULT_MEMORY_MB) * 1024 * 1024;
@@ -99,12 +102,18 @@ export class Orchestrator {
   async startRunner(
     nibbletId: string,
     env: RunnerEnv & GuardEnv,
-    opts: { sshAgent: boolean; resources: Resources } = {
+    opts: { sshAgent: boolean; resources: Resources; tailscale?: boolean } = {
       sshAgent: false,
       resources: defaultResources,
     },
   ): Promise<string> {
     const home = await this.ensureHome(nibbletId);
+    // Mounted while it's on the tailnet, and after, so its entry can sign the machine out.
+    const tailscale = opts.tailscale
+      ? await this.ensureVolume(tailscaleVolume(nibbletId), "tailscale", nibbletId)
+      : (await this.volumeExists(tailscaleVolume(nibbletId)))
+        ? tailscaleVolume(nibbletId)
+        : null;
     await this.carryOverHome(nibbletId, home);
     await this.removeContainer(runnerName(nibbletId), { graceful: true });
     const container = await this.docker.createContainer({
@@ -128,6 +137,9 @@ export class Orchestrator {
         Mounts: [
           { Type: "volume", Source: home, Target: RUNNER_HOME },
           { Type: "volume", Source: HARNESS_CLI_VOLUME, Target: HARNESS_CLI_DIR, ReadOnly: true },
+          ...(tailscale
+            ? [{ Type: "volume" as const, Source: tailscale, Target: CONTAINER_TAILSCALE_STATE }]
+            : []),
         ],
         // The host's agent, never its keys: the container can sign, not copy.
         ...(opts.sshAgent && this.config.HOST_SSH_AUTH_SOCK
@@ -419,18 +431,27 @@ kill -KILL "$pid" 2>/dev/null; true`,
   }
 
   /** The nibblet's home volume, created on first use. */
-  private async ensureHome(nibbletId: string): Promise<string> {
-    const name = homeVolume(nibbletId);
+  private ensureHome(nibbletId: string): Promise<string> {
+    return this.ensureVolume(homeVolume(nibbletId), "home", nibbletId);
+  }
+
+  private async ensureVolume(name: string, role: string, nibbletId: string): Promise<string> {
+    if (await this.volumeExists(name)) return name;
+    await this.docker.createVolume({
+      Name: name,
+      Labels: { [MANAGED]: "true", [ROLE]: role, [NIBBLET]: nibbletId },
+    });
+    return name;
+  }
+
+  private async volumeExists(name: string): Promise<boolean> {
     try {
       await this.docker.getVolume(name).inspect();
+      return true;
     } catch (err) {
       if (!isNotFound(err)) throw err;
-      await this.docker.createVolume({
-        Name: name,
-        Labels: { [MANAGED]: "true", [ROLE]: "home", [NIBBLET]: nibbletId },
-      });
+      return false;
     }
-    return name;
   }
 
   /**
@@ -563,12 +584,14 @@ kill -KILL "$pid" 2>/dev/null; true`,
     }
   }
 
-  /** Deletes a nibblet's home volume; only for when the nibblet itself is deleted. */
+  /** Deletes a nibblet's home volume, and Tailscale's; only for when the nibblet itself is deleted. */
   async removeHome(nibbletId: string): Promise<void> {
-    try {
-      await this.docker.getVolume(homeVolume(nibbletId)).remove();
-    } catch (err) {
-      if (!isNotFound(err)) throw err;
+    for (const name of [homeVolume(nibbletId), tailscaleVolume(nibbletId)]) {
+      try {
+        await this.docker.getVolume(name).remove();
+      } catch (err) {
+        if (!isNotFound(err)) throw err;
+      }
     }
   }
 

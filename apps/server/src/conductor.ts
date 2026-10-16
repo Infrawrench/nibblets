@@ -9,7 +9,11 @@ import {
   type TurnSource,
   type Resources,
   type GuardConfig,
+  type NibbletTailscale,
+  type TailnetNode,
+  type TailscaleLogin,
   isReservedMcpName,
+  tailnetHostname,
   VIEW_PORT,
   type McpServerDef,
 } from "@nibblet/protocol";
@@ -348,16 +352,24 @@ export class Conductor {
       resume: true,
     });
     const token = await this.store.rotateToken(nibbletId);
+    const { tailscale } = await this.store.nibbletRow(nibbletId);
     await this.store.updateNibblet(nibbletId, {
       status: "starting",
       statusDetail: null,
       harnessSessionId: null,
+      tailnetNode: tailscale
+        ? { state: "starting", dnsName: null, ips: [], tailnet: null, detail: null }
+        : null,
     });
     try {
       const containerId = await this.docker.startRunner(
         nibbletId,
-        this.runnerEnv(nibbletId, token, nibblet.browser),
-        { sshAgent: nibblet.cliCredentials.includes("ssh"), resources: nibblet.resources },
+        this.runnerEnv(nibbletId, token, nibblet.browser, tailscale),
+        {
+          sshAgent: nibblet.cliCredentials.includes("ssh"),
+          resources: nibblet.resources,
+          tailscale: tailscale !== null,
+        },
       );
       const started = await this.store.updateNibblet(nibbletId, { containerId });
       for (const id of working) {
@@ -374,7 +386,12 @@ export class Conductor {
   }
 
   /** The environment a runner and its guard start with. */
-  private runnerEnv(nibbletId: string, token: string, browser: boolean) {
+  private runnerEnv(
+    nibbletId: string,
+    token: string,
+    browser: boolean,
+    tailscale: NibbletTailscale | null = null,
+  ) {
     return {
       NIBBLET_ID: nibbletId,
       NIBBLET_TOKEN: token,
@@ -383,6 +400,9 @@ export class Conductor {
       NIBBLET_CREDPROXY_URL: this.config.CREDPROXY_URL,
       NIBBLET_CREDPROXY_KEY: this.config.CREDPROXY_KEY,
       NIBBLET_BROWSER: browser ? ("1" as const) : ("0" as const),
+      // For the entry, which fences off the rest; the auth key is fetched, never put here.
+      NIBBLET_TAILSCALE: tailscale ? ("1" as const) : ("0" as const),
+      NIBBLET_TAILSCALE_PORTS: tailscale?.ports.join(",") ?? "",
       // For the guard alone; the container's entry keeps these from the runner.
       NIBBLET_SERVER_URL: this.config.NIBBLET_INTERNAL_URL,
       NIBBLET_VIEW_TOKEN: viewToken(this.config.NIBBLET_OWNER_TOKEN, nibbletId, hashToken(token)),
@@ -529,6 +549,7 @@ export class Conductor {
       statusDetail: null,
       containerId: null,
       harnessSessionId: null,
+      tailnetNode: null,
     });
     this.views.delete(nibbletId);
     if (stopped.parentId) {
@@ -773,6 +794,30 @@ export class Conductor {
     };
   }
 
+  /**
+   * What its container's Tailscale joins the tailnet with: fetched with the
+   * guard's token, by a user in the container that isn't the agent's. Null
+   * when it isn't to join.
+   */
+  async tailscaleLogin(nibbletId: string): Promise<TailscaleLogin | null> {
+    const row = await this.store.nibbletRow(nibbletId);
+    if (!row.tailscale || row.parentId) return null;
+    return {
+      authKey: row.tailscale.authKey,
+      hostname: row.tailscale.hostname || tailnetHostname(row.name),
+      ports: row.tailscale.ports,
+    };
+  }
+
+  /** What its container's Tailscale says about its machine on the tailnet. */
+  async setTailnetNode(nibbletId: string, node: TailnetNode): Promise<void> {
+    const row = await this.store.nibbletRow(nibbletId);
+    // A report from a container that's on its way out doesn't bring it back.
+    if (!row.tailscale || row.status === "stopped") return;
+    if (JSON.stringify(row.tailnetNode) === JSON.stringify(node)) return;
+    await this.store.updateNibblet(nibbletId, { tailnetNode: node });
+  }
+
   async detach(nibbletId: string, link: RunnerLink): Promise<void> {
     if (this.links.get(nibbletId) !== link) return;
     this.links.delete(nibbletId);
@@ -914,6 +959,10 @@ export class Conductor {
     const parent = nibblet.parentId
       ? await this.store.getNibblet(nibblet.parentId).catch(() => null)
       : null;
+    // A sub-agent is on the tailnet as its host container's machine.
+    const host = nibblet.parentId
+      ? await this.store.nibbletRow(await this.hostOf(nibblet)).catch(() => null)
+      : row;
     return systemPrompt({
       nibblet,
       serverName: this.serverName,
@@ -922,6 +971,10 @@ export class Conductor {
       parent,
       now: new Date(),
       onePasswordVaults: this.onePasswordVaults.get(nibbletId),
+      tailnet:
+        host?.tailscale && host.tailnetNode?.state === "running"
+          ? { node: host.tailnetNode, ports: host.tailscale.ports }
+          : null,
     });
   }
 
@@ -1021,11 +1074,11 @@ export class Conductor {
     await this.subagentsGone(nibbletId, "Its parent's container stopped");
     const logs = await this.docker.runnerLogs(nibbletId, 20);
     const tail = logs.trim().split("\n").slice(-3).join(" ");
-    await this.store.setStatus(
-      nibbletId,
-      "error",
-      `Its container exited${code === null ? "" : ` with code ${code}`}${tail ? `: ${tail}` : ""}`,
-    );
+    await this.store.updateNibblet(nibbletId, {
+      status: "error",
+      statusDetail: `Its container exited${code === null ? "" : ` with code ${code}`}${tail ? `: ${tail}` : ""}`,
+      tailnetNode: null,
+    });
   }
 
   private failActive(nibbletId: string, status: "failed" | "interrupted", reason: string): void {

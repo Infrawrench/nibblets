@@ -51,6 +51,8 @@ describe("toNibblet", () => {
       snapshotPolicy: { everyMinutes: 1440, keep: 7 },
       heartbeats: [],
       toolApprovals: [],
+      tailscale: { authKey: "tskey-auth-secret", hostname: "", ports: [3000] },
+      tailnetNode: null,
       statusText: null,
       statusEmoji: null,
       statusUpdatedAt: null,
@@ -79,5 +81,6 @@ describe("toNibblet", () => {
     expect(text).not.toContain("hash");
     expect(nibblet.mcpServers[0]).toMatchObject({ headers: { authorization: MASKED } });
     expect(nibblet.cliCredentials).toEqual(["gh"]);
+    expect(nibblet.tailscale).toEqual({ authKey: MASKED, hostname: "", ports: [3000] });
   });
 });

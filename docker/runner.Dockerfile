@@ -50,6 +50,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends gnupg \
  && apt-get install -y --no-install-recommends 1password-cli \
  && rm -rf /var/lib/apt/lists/*
 
+# Tailscale, from Tailscale's own apt repository, for nibblets the user puts
+# on their tailnet (see apps/runner/src/tailscale.ts); netcat for SSH to go
+# through its proxy. Installed always, run only when a nibblet has a key.
+RUN curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg \
+      > /usr/share/keyrings/tailscale-archive-keyring.gpg \
+ && curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.tailscale-keyring.list \
+      > /etc/apt/sources.list.d/tailscale.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends tailscale netcat-openbsd \
+ && rm -rf /var/lib/apt/lists/*
+
 ARG OCU_VERSION=0.8.0
 ARG TARGETARCH
 RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
@@ -102,17 +113,21 @@ RUN sed -i 's/^  node-pty: true$/  node-pty: false/' pnpm-workspace.yaml \
  && grep -q '^  node-pty: false$' pnpm-workspace.yaml \
  && pnpm install --prod --frozen-lockfile --filter @nibblet/runner...
 
-# Two users (see apps/runner/src/entry.ts): the agent, which runs the
-# harness and whatever it does, and the guard, which holds the secrets and
-# the "ask me first" gate. The entry starts as root to set up the firewall
-# and folders, then runs each as its own user with no capabilities.
+# Three users (see apps/runner/src/entry.ts): the agent, which runs the
+# harness and whatever it does; the guard, which holds the secrets and the
+# "ask me first" gate; and Tailscale, for nibblets on a tailnet. The entry
+# starts as root to set up the firewall and folders, then runs each as its
+# own user with no capabilities.
 RUN apt-get update && apt-get install -y --no-install-recommends iptables \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --gid 1002 nibblet \
  && useradd --create-home --uid 1001 --gid 1002 --shell /bin/bash nibblet \
  && groupadd --gid 1100 guard \
  && useradd --uid 1100 --gid 1100 --no-create-home --home-dir /home/nibblet/.guard --shell /usr/sbin/nologin guard \
+ && groupadd --gid 1200 tailscale \
+ && useradd --uid 1200 --gid 1200 --no-create-home --home-dir /var/lib/nibblet-tailscale --shell /usr/sbin/nologin tailscale \
  && mkdir -p /home/nibblet/work \
+ && install -d -m 700 -o 1200 -g 1200 /var/lib/nibblet-tailscale \
  && chown -R nibblet:nibblet /home/nibblet
 WORKDIR /home/nibblet/work
 ENV NODE_ENV=production \

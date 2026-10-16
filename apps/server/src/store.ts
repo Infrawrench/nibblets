@@ -10,6 +10,7 @@ import {
 } from "@nibblet/db";
 import {
   HamsterLook,
+  MASKED,
   maskMcpServers,
   McpServerList,
   ToolRules,
@@ -80,6 +81,8 @@ export function toNibblet(row: NibbletRow): Nibblet {
     cliCredentials: row.cliCredentials,
     mcpServers: maskMcpServers(row.mcpServers),
     toolApprovals: row.toolApprovals,
+    tailscale: row.tailscale ? { ...row.tailscale, authKey: MASKED } : null,
+    tailnetNode: row.tailnetNode,
     statusText: row.statusText,
     statusEmoji: row.statusEmoji,
     statusUpdatedAt: iso(row.statusUpdatedAt),

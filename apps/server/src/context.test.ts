@@ -30,6 +30,8 @@ const nibblet: Nibblet = {
   cliCredentials: [],
   mcpServers: [],
   toolApprovals: [],
+  tailscale: null,
+  tailnetNode: null,
   statusText: "Watching the deploy",
   statusEmoji: null,
   statusUpdatedAt: null,
@@ -130,6 +132,30 @@ describe("systemPrompt", () => {
     expect(prompt).toContain("[user] Hello");
     expect(prompt).toContain("[you] Hi!");
     expect(prompt).toContain("computer");
+  });
+
+  it("tells it where it is on the tailnet, what's shared, and how to reach out", () => {
+    const base = { nibblet, serverName: "home", memories: [], history: null, parent: null };
+    const now = new Date("2026-10-13T12:00:00Z");
+    expect(systemPrompt({ ...base, now })).not.toContain("## Tailscale");
+    const prompt = systemPrompt({
+      ...base,
+      now,
+      tailnet: {
+        node: {
+          state: "running",
+          dnsName: "pip.tail1234.ts.net",
+          ips: ["100.64.0.7"],
+          tailnet: "example.com",
+          detail: null,
+        },
+        ports: [3000, 8080],
+      },
+    });
+    expect(prompt).toContain("## Tailscale");
+    expect(prompt).toContain("http://pip.tail1234.ts.net:3000");
+    expect(prompt).toContain("ports 3000, 8080");
+    expect(prompt).toContain("127.0.0.1:1055");
   });
 
   it("skips streaming replies in recaps", () => {

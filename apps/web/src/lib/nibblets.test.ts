@@ -24,6 +24,8 @@ const nibblet = (id: string, parentId: string | null, active: string): Nibblet =
   resources: { cpus: null, memoryMb: null },
   snapshotPolicy: { everyMinutes: 1440, keep: 7 },
   toolApprovals: [],
+  tailscale: null,
+  tailnetNode: null,
   statusText: null,
   statusEmoji: null,
   statusUpdatedAt: null,

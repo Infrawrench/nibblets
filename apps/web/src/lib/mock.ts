@@ -6,8 +6,10 @@ import {
   defaultSnapshotPolicy,
   harnesses,
   opencodeModel,
+  MASKED,
   maskMcpServers,
   mergeMcpServers,
+  tailnetHostname,
   randomHamsterLook,
   type Contract,
   type OnePasswordGrants,
@@ -137,6 +139,8 @@ export function createMockServer(): ServerConnection {
     cliCredentials: [],
     mcpServers: [],
     toolApprovals: [],
+    tailscale: null,
+    tailnetNode: null,
     statusText: null,
     statusEmoji: null,
     statusUpdatedAt: null,
@@ -768,6 +772,18 @@ export function createMockServer(): ServerConnection {
             ? keepSecrets(id, mergeMcpServers(patch.mcpServers, secrets.get(id) ?? []))
             : current.mcpServers,
           toolApprovals: patch.toolApprovals ?? current.toolApprovals,
+          ...(patch.tailscale !== undefined
+            ? {
+                tailscale: patch.tailscale && { ...patch.tailscale, authKey: MASKED },
+                tailnetNode: patch.tailscale && {
+                  state: "running" as const,
+                  dnsName: `${patch.tailscale.hostname || tailnetHostname(current.name)}.tail1234.ts.net`,
+                  ips: ["100.101.102.103"],
+                  tailnet: "example.com",
+                  detail: null,
+                },
+              }
+            : {}),
           resources: patch.resources ?? current.resources,
           snapshotPolicy: patch.snapshotPolicy ?? current.snapshotPolicy,
           updatedAt: now(),

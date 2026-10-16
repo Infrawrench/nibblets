@@ -221,6 +221,14 @@ export const RunnerEnv = z.object({
   NIBBLET_GATE_PORT: z.coerce.number().int().optional(),
   NIBBLET_VIEW_PORT: z.coerce.number().int().optional(),
   NIBBLET_STATE_DIR: z.string().optional(),
+  /**
+   * Set when the container joins the user's tailnet, for its entry: it lets
+   * the tailnet reach the ports in `NIBBLET_TAILSCALE_PORTS` (comma
+   * separated) and nothing else, then starts Tailscale. Sub-agents use their
+   * host container's.
+   */
+  NIBBLET_TAILSCALE: z.enum(["0", "1"]).default("0"),
+  NIBBLET_TAILSCALE_PORTS: z.string().default(""),
 });
 export type RunnerEnv = z.infer<typeof RunnerEnv>;
 
