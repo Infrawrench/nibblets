@@ -7,12 +7,60 @@ import { TUNNEL_IMAGE } from "./tunnel.ts";
 
 const MANAGED = "nibblet.managed";
 const ROLE = "nibblet.role";
+const NIBBLET = "nibblet.id";
+
+const borrowProxyName = (nibbletId: string): string => `nibblet-borrow-proxy-${nibbletId}`;
+/** The port the borrow proxy listens on inside its container; the host port is chosen by Docker. */
+const BORROW_PROXY_PORT = 8888;
+/**
+ * A tiny forward proxy for a borrowed window: plain HTTP requests are
+ * forwarded, HTTPS is tunnelled with CONNECT. It only ever listens on the
+ * nibblet's network and is reached from the host's loopback through Docker's
+ * published port, so it takes no authentication of its own.
+ */
+const BORROW_PROXY_SCRIPT = `
+const http = require("http");
+const net = require("net");
+const { URL } = require("url");
+const port = Number(process.env.PORT || 8888);
+const server = http.createServer((req, res) => {
+  let target;
+  try { target = new URL(req.url); } catch { res.writeHead(400).end(); return; }
+  const up = http.request(
+    {
+      host: target.hostname,
+      port: target.port || 80,
+      method: req.method,
+      path: target.pathname + target.search,
+      headers: req.headers,
+    },
+    (r) => { res.writeHead(r.statusCode || 502, r.headers); r.pipe(res); },
+  );
+  up.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+  req.pipe(up);
+});
+server.on("connect", (req, client, head) => {
+  const i = req.url.lastIndexOf(":");
+  const host = req.url.slice(0, i);
+  const p = Number(req.url.slice(i + 1)) || 443;
+  const up = net.connect(p, host, () => {
+    client.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+    if (head && head.length) up.write(head);
+    up.pipe(client);
+    client.pipe(up);
+  });
+  up.on("error", () => client.destroy());
+  client.on("error", () => up.destroy());
+});
+server.listen(port, "0.0.0.0");
+`;
 
 /**
  * The server's handle on the stack's Docker engine, for what isn't a
  * nibblet's machine (those are `DockerMachines`, a machine plugin): the
  * runners' network, throwaway runner containers for short jobs, the
- * cloudflared container for tunnels, and tidying up old images.
+ * cloudflared container for tunnels, the proxy for a borrowed browser, and
+ * tidying up old images.
  */
 export class Orchestrator {
   readonly docker: Docker;
@@ -172,7 +220,66 @@ export class Orchestrator {
     return removed;
   }
 
-  /** Removes a container of the stack's (the tunnel's), if it's there, whatever it's doing. */
+  /**
+   * The user-agent the nibblet's Chromium presents, worked out from the
+   * runner image's Chromium version, so a borrowed window on the host can
+   * look like the nibblet. Null if the version can't be read.
+   */
+  async browserUserAgent(): Promise<string | null> {
+    const result = await this.runOnce(["/usr/bin/chromium", "--version"], "", 30_000).catch(
+      () => null,
+    );
+    if (result?.code !== 0) return null;
+    const major = /\b(\d+)\.\d+\.\d+/.exec(result.stdout)?.[1];
+    if (!major) return null;
+    return (
+      `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) ` +
+      `Chrome/${major}.0.0.0 Safari/537.36`
+    );
+  }
+
+  /**
+   * An HTTP/HTTPS proxy on the nibblet's own Docker network, published on the
+   * host's loopback, so a borrowed window egresses from the same place the
+   * nibblet would (its public IP). It runs while the nibblet is stopped for a
+   * borrow; a Tailscale exit node isn't reproduced, since that lived in the
+   * stopped container. Returns the host port and how to stop it.
+   */
+  async startBorrowProxy(nibbletId: string): Promise<{ port: number; stop: () => Promise<void> }> {
+    const name = borrowProxyName(nibbletId);
+    await this.removeContainer(name);
+    const container = await this.docker.createContainer({
+      name,
+      Image: this.config.NIBBLET_RUNNER_IMAGE,
+      Cmd: ["node", "-e", BORROW_PROXY_SCRIPT],
+      Env: [`PORT=${BORROW_PROXY_PORT}`],
+      Labels: { [MANAGED]: "true", [ROLE]: "borrow-proxy", [NIBBLET]: nibbletId },
+      ExposedPorts: { [`${BORROW_PROXY_PORT}/tcp`]: {} },
+      HostConfig: {
+        NetworkMode: this.config.NIBBLET_NETWORK,
+        CapDrop: ["ALL"],
+        SecurityOpt: ["no-new-privileges:true"],
+        PidsLimit: 128,
+        RestartPolicy: { Name: "no" },
+        // The host (where the borrowed window runs) reaches it on loopback only.
+        PortBindings: { [`${BORROW_PROXY_PORT}/tcp`]: [{ HostIp: "127.0.0.1", HostPort: "" }] },
+      },
+    });
+    const stop = () => this.removeContainer(name);
+    try {
+      await container.start();
+      const info = await container.inspect();
+      const bound = info.NetworkSettings.Ports?.[`${BORROW_PROXY_PORT}/tcp`]?.[0]?.HostPort;
+      const port = bound ? Number(bound) : NaN;
+      if (!Number.isInteger(port)) throw new Error("the proxy didn't get a host port");
+      return { port, stop };
+    } catch (err) {
+      await stop().catch(() => undefined);
+      throw err;
+    }
+  }
+
+  /** Removes a container of the stack's (the tunnel's, a borrow proxy), if it's there, whatever it's doing. */
   async removeContainer(name: string): Promise<void> {
     try {
       await this.docker.getContainer(name).remove({ force: true });

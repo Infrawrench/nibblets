@@ -67,6 +67,17 @@ export const RUNNER_HARDENING = {
 
 /** The runner image's user home, which holds its working folder. */
 const RUNNER_HOME = "/home/nibblet";
+/** The folder the browser profile (`chromium/`) sits in, inside the guard's home. */
+const PROFILE_PARENT = `${RUNNER_HOME}/.guard/.config`;
+/** The guard owns its home and profile (uid:gid from the runner image). */
+const GUARD_OWNER = "1100:1100";
+/** Caches in the profile that rebuild themselves, so aren't worth borrowing. */
+const PROFILE_ARCHIVE_EXCLUDES = [
+  "chromium/*/Cache",
+  "chromium/*/Code Cache",
+  "chromium/*/GPUCache",
+  "chromium/*/Service Worker/CacheStorage",
+];
 /** Where a sub-agent's entry leaves its pid in its host's container (SUBAGENT_PIDS in the runner). */
 const SUBAGENT_PIDS = "/run/nibblet-subagents";
 const ENTRY = "/app/apps/runner/src/entry.ts";
@@ -78,6 +89,7 @@ const CAPABILITIES: MachineCapabilities = {
   tailscale: true,
   sshAgent: true,
   liveResources: true,
+  localSignIn: true,
 };
 
 export interface DockerMachinesOptions {
@@ -451,6 +463,48 @@ export class DockerMachines implements MachinePlugin {
       readOnly: false,
       stdin: archive,
     });
+  }
+
+  /**
+   * Writes just the browser profile (the guard's `~/.config/chromium`), as a
+   * gzipped tar rooted at `chromium/`, to `out`. The nibblet must be stopped
+   * first (a borrow stops it), so nothing is browsing while it's copied; the
+   * caches that rebuild themselves are left out. An empty profile is made if
+   * the nibblet never browsed, so the window still opens.
+   */
+  async archiveProfile(nibbletId: string, out: Writable): Promise<void> {
+    const volume = await this.ensureHome(nibbletId);
+    // Quoted: "Code Cache" has a space, and the shell would split it.
+    const excludes = PROFILE_ARCHIVE_EXCLUDES.map((e) => `'--exclude=${e}'`).join(" ");
+    await this.inHome(
+      volume,
+      [
+        "sh",
+        "-c",
+        `cd ${PROFILE_PARENT} && mkdir -p chromium && tar --numeric-owner ${excludes} -czf - chromium`,
+      ],
+      { readOnly: false, stdout: out },
+    );
+  }
+
+  /**
+   * Replaces the browser profile from a tar made by `archiveProfile` (rooted
+   * at `chromium/`), handing ownership back to the guard. The nibblet must be
+   * stopped; its guard clears any stale profile lock when it starts again.
+   */
+  async restoreProfile(nibbletId: string, archive: Readable): Promise<void> {
+    const volume = await this.ensureHome(nibbletId);
+    await this.inHome(
+      volume,
+      [
+        "sh",
+        "-c",
+        `mkdir -p ${PROFILE_PARENT} && rm -rf ${PROFILE_PARENT}/chromium && ` +
+          `tar -C ${PROFILE_PARENT} --no-same-owner -xzf - && ` +
+          `chown -R ${GUARD_OWNER} ${PROFILE_PARENT}/chromium`,
+      ],
+      { readOnly: false, stdin: archive },
+    );
   }
 
   /**

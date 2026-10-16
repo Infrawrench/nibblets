@@ -37,6 +37,8 @@ export const MachineCapabilities = z.object({
   sshAgent: z.boolean(),
   /** New CPU and memory limits apply while it runs, rather than when it next starts. */
   liveResources: z.boolean(),
+  /** Its browser's profile can be borrowed onto the host for a sign-in there. */
+  localSignIn: z.boolean(),
 });
 export type MachineCapabilities = z.infer<typeof MachineCapabilities>;
 

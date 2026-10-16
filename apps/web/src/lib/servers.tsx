@@ -32,6 +32,7 @@ export const keys = {
   bank: (server: string) => ["bank", server] as const,
   cards: (server: string, id: string) => ["cards", server, id] as const,
   allowances: (server: string, id: string) => ["allowances", server, id] as const,
+  borrow: (server: string, id: string) => ["borrow", server, id] as const,
   memories: (server: string, id: string | null, query: string) =>
     ["memories", server, id, query] as const,
   hostTools: (server: string) => ["hostTools", server] as const,
@@ -333,6 +334,12 @@ export function applyLive(qc: QueryClient, server: string, m: LiveMessage): void
     case "bank_changed":
       void qc.invalidateQueries({ queryKey: keys.bank(server) });
       return;
+    case "browser_borrow":
+      qc.setQueryData(keys.borrow(server, m.borrow.nibbletId), m.borrow);
+      return;
+    case "browser_borrow_ended":
+      qc.setQueryData(keys.borrow(server, m.nibbletId), null);
+      return;
   }
 }
 
@@ -363,6 +370,15 @@ export function useNibblets(connection: ServerConnection) {
   return useQuery({
     queryKey: keys.nibblets(connection.id),
     queryFn: () => connection.client.nibblets.list({}),
+  });
+}
+
+/** The nibblet's local-sign-in state: fetched once, then kept current by live updates. */
+export function useBorrow(connection: ServerConnection, id: string) {
+  return useQuery({
+    queryKey: keys.borrow(connection.id, id),
+    queryFn: () => connection.client.nibblets.browserBorrow({ id }),
+    staleTime: Infinity,
   });
 }
 

@@ -9,6 +9,7 @@ import { z } from "zod";
 import { createApp } from "./app.ts";
 import { Bus } from "./bus.ts";
 import { Conductor } from "./conductor.ts";
+import { Borrow } from "./borrow.ts";
 import { loadConfig } from "./config.ts";
 import { Orchestrator } from "./docker.ts";
 import { HypervisorClient, MachineRegistry, VirtualMachines } from "@nibblet/machine";
@@ -107,6 +108,16 @@ async function main(): Promise<void> {
   const geocoder = new Geocoder({ url: config.NIBBLET_GEOCODER_URL, version: VERSION });
   const locations = new LocationRequests({ store, geocoder, viewers: () => bus.viewers });
   conductor.locations = locations;
+  const borrow = new Borrow({
+    store,
+    docker,
+    machines,
+    config,
+    stop: (nibbletId) => conductor.stop(nibbletId),
+    start: (nibbletId) => conductor.start(nibbletId),
+    publish: (message) => bus.publish(message),
+  });
+  conductor.borrowed = (nibbletId) => borrow.borrowed(nibbletId);
   const scheduler = new Scheduler(store, conductor);
   const snapshots = new Snapshots({
     store,
@@ -159,6 +170,7 @@ async function main(): Promise<void> {
       locations,
       publicAddress,
       machines,
+      borrow,
     },
     bus,
   );
