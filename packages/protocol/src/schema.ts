@@ -2,6 +2,7 @@ import { z } from "zod";
 import { McpServerDef, McpServerList, ToolRules } from "./mcp.ts";
 import { Effort, HarnessId } from "./models.ts";
 import { SnapshotPolicy } from "./snapshots.ts";
+import { NibbletTailscale, TailnetNode } from "./tailscale.ts";
 
 const Timestamp = z.iso.datetime();
 
@@ -222,6 +223,10 @@ export const Nibblet = z.object({
   mcpServers: z.array(McpServerDef),
   /** MCP tools that wait for the user to approve each call. */
   toolApprovals: ToolRules,
+  /** Its own machine on the user's tailnet, or null for none. The auth key comes back masked. */
+  tailscale: NibbletTailscale.nullable(),
+  /** How that machine is doing, while its container is up. */
+  tailnetNode: TailnetNode.nullable(),
   /** A short line the nibblet keeps current about what it's doing, like a chat status. */
   statusText: z.string().nullable(),
   statusEmoji: z.string().nullable(),
@@ -266,6 +271,8 @@ export const UpdateNibblet = z.object({
   /** Values equal to `MASKED` keep the stored secret. */
   mcpServers: McpServerList.optional(),
   toolApprovals: ToolRules.optional(),
+  /** Null leaves the tailnet. An auth key equal to `MASKED` keeps the stored one. */
+  tailscale: NibbletTailscale.nullable().optional(),
   // No heartbeats: the nibblet sets its own with the `heartbeat_*` tools.
   resources: Resources.optional(),
   snapshotPolicy: SnapshotPolicy.optional(),

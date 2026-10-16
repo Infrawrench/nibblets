@@ -1,4 +1,10 @@
-import { GuardApprovalRequest, type GuardConfig, type JsonValue } from "@nibblet/protocol";
+import {
+  GuardApprovalRequest,
+  TailnetNode,
+  type GuardConfig,
+  type JsonValue,
+  type TailscaleLogin,
+} from "@nibblet/protocol";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { Context, Hono } from "hono";
 import type { Decision } from "./approvals.ts";
@@ -15,6 +21,9 @@ export interface GuardDeps {
   store: Pick<Store, "nibbletRow">;
   conductor: {
     guardConfig(nibbletId: string): Promise<GuardConfig>;
+    tailscaleLogin(nibbletId: string): Promise<TailscaleLogin | null>;
+    tailscaleAuthKey(nibbletId: string): Promise<string>;
+    setTailnetNode(nibbletId: string, node: TailnetNode): Promise<void>;
     activeTurnId(nibbletId: string): string | null;
     approvals: {
       request(
@@ -39,6 +48,9 @@ interface Pending {
  * gets its settings and asks the person about "ask me first" calls. Each
  * request carries the guard's own token, which the runner and the agent
  * never see.
+ *
+ * Tailscale in the container, run as a third user that holds the token too,
+ * fetches its auth key and reports how its machine is doing here as well.
  *
  * Approvals are long-polled: a request waits up to POLL_MS, then says it's
  * still waiting and the guard asks again by id, so waiting on a person
@@ -73,6 +85,34 @@ export function mountGuard(app: Hono, deps: GuardDeps): void {
     const id = await authorised(c);
     if (!id) return c.json({ error: "unauthorized" }, 401);
     return c.json(await deps.conductor.guardConfig(id));
+  });
+
+  app.get("/guard/:id/tailscale", async (c) => {
+    const id = await authorised(c);
+    if (!id) return c.json({ error: "unauthorized" }, 401);
+    const login = await deps.conductor.tailscaleLogin(id);
+    if (!login) return c.json({ error: "It isn't to join a tailnet" }, 404);
+    return c.json(login);
+  });
+
+  // A POST, since asking may make a key.
+  app.post("/guard/:id/tailscale/key", async (c) => {
+    const id = await authorised(c);
+    if (!id) return c.json({ error: "unauthorized" }, 401);
+    try {
+      return c.json({ authKey: await deps.conductor.tailscaleAuthKey(id) });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 409);
+    }
+  });
+
+  app.post("/guard/:id/tailscale", async (c) => {
+    const id = await authorised(c);
+    if (!id) return c.json({ error: "unauthorized" }, 401);
+    const body = TailnetNode.safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: "Send a TailnetNode" }, 400);
+    await deps.conductor.setTailnetNode(id, body.data);
+    return c.json({ ok: true });
   });
 
   app.post("/guard/:id/approval", async (c) => {

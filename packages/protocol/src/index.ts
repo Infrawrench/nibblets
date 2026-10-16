@@ -11,3 +11,4 @@ export * from "./onepassword.ts";
 export * from "./snapshots.ts";
 export * from "./updates.ts";
 export * from "./urls.ts";
+export * from "./tailscale.ts";

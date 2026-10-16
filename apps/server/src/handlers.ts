@@ -3,13 +3,16 @@ import {
   CredentialStatus,
   type HarnessId,
   mergeMcpServers,
+  mergeTailscale,
   RpcError,
   ServerInfo,
   type Contract,
   type Handlers,
 } from "@nibblet/protocol";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { cliStatuses } from "./clilogins.ts";
+import { readTailnetOAuth, setTailnetKeys, tailnetKeys } from "./tailnet-keys.ts";
 import { forgetGrants, onePasswordStatus, readGrants, setGrants } from "./onepassword.ts";
 import type { Conductor } from "./conductor.ts";
 import type { HarnessModelLists } from "./opencode.ts";
@@ -125,8 +128,22 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         const model = patch.model ?? before.model;
         await checkModel(harness, model);
         const harnessChanged = harness !== before.harness;
-        const { mcpServers, ...rest } = patch;
+        const { mcpServers, tailscale: tailscalePatch, ...rest } = patch;
         const row = await store.nibbletRow(id);
+        const tailscale =
+          tailscalePatch === undefined
+            ? undefined
+            : tailscalePatch && mergeTailscale(tailscalePatch, row.tailscale);
+        if (tailscale && before.parentId)
+          throw new RpcError(
+            "bad_request",
+            "A sub-agent is on the tailnet as its parent's machine",
+          );
+        if (tailscale && !tailscale.authKey && !(await readTailnetOAuth(store)))
+          throw new RpcError(
+            "bad_request",
+            "Paste an auth key, or set up an OAuth client in Settings to make them",
+          );
         let merged = mcpServers ? mergeMcpServers(mcpServers, row.mcpServers) : null;
         // Ticking a host tool retires the nibblet's own copy of the same server.
         const enabled = patch.hostTools ?? row.hostTools;
@@ -138,16 +155,23 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         const updated = await store.updateNibblet(id, {
           ...rest,
           ...(merged ? { mcpServers: merged } : {}),
+          ...(tailscale !== undefined ? { tailscale } : {}),
           // A different harness can't resume the old one's session.
           ...(harnessChanged ? { harnessSessionId: null } : {}),
         });
-        // The browser and the SSH agent are fixed when the container is made.
+        // The browser, the SSH agent and Tailscale are fixed when the container is made.
         const sshBefore = before.cliCredentials.includes("ssh");
         const sshAfter = (patch.cliCredentials ?? before.cliCredentials).includes("ssh");
+        // Deeply, since Postgres hands jsonb back with its keys in its own order.
+        const tailscaleChanged =
+          tailscale !== undefined && !isDeepStrictEqual(tailscale, row.tailscale);
         const needsRestart =
           (patch.browser !== undefined && patch.browser !== before.browser) ||
-          sshBefore !== sshAfter;
+          sshBefore !== sshAfter ||
+          tailscaleChanged;
         if (needsRestart && before.status !== "stopped") return conductor.start(id);
+        // Asleep, it signs its machine out now rather than whenever it next wakes.
+        if (tailscaleChanged && tailscale === null) void conductor.leaveTailnet(id);
         if (patch.resources) await conductor.applyResources(id, patch.resources);
         await conductor.reconfigure(id);
         return updated;
@@ -263,6 +287,8 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       status: () => tailscaleStatus(s.config),
       set: ({ serving }) => setTailscale(s.config, serving),
       login: () => tailscaleLogin(s.config),
+      keys: () => tailnetKeys(store),
+      setKeys: (input) => setTailnetKeys(store, input),
     },
 
     hostTools: {

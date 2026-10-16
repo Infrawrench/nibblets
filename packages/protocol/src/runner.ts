@@ -86,10 +86,7 @@ export const GuardApprovalDecision = z.object({
   reason: z.string().nullable(),
 });
 
-/** Where the guard's gate listens, inside each container. */
-export const GATE_PORT = 7810;
-/** Where OpenComputerUse's view server listens, for the server to proxy the browser. */
-export const VIEW_PORT = 7900;
+export { BROWSER_MCP_PORT, GATE_PORT, VIEW_PORT } from "./ports.ts";
 /** The container's users: the agent (and the runner) as one, the guard as another. */
 export const AGENT_UID = 1001;
 export const AGENT_GID = 1002;
@@ -221,6 +218,14 @@ export const RunnerEnv = z.object({
   NIBBLET_GATE_PORT: z.coerce.number().int().optional(),
   NIBBLET_VIEW_PORT: z.coerce.number().int().optional(),
   NIBBLET_STATE_DIR: z.string().optional(),
+  /**
+   * Set when the container joins the user's tailnet, for its entry: it lets
+   * the tailnet reach the ports in `NIBBLET_TAILSCALE_PORTS` (comma
+   * separated) and nothing else, then starts Tailscale. Sub-agents use their
+   * host container's.
+   */
+  NIBBLET_TAILSCALE: z.enum(["0", "1"]).default("0"),
+  NIBBLET_TAILSCALE_PORTS: z.string().default(""),
 });
 export type RunnerEnv = z.infer<typeof RunnerEnv>;
 

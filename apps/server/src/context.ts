@@ -1,10 +1,12 @@
-import type {
-  Heartbeat,
-  Memory,
-  Nibblet,
-  SharedVault,
-  ThreadItem,
-  TurnSource,
+import {
+  TAILSCALE_PROXY_PORT,
+  type Heartbeat,
+  type Memory,
+  type Nibblet,
+  type SharedVault,
+  type TailnetNode,
+  type ThreadItem,
+  type TurnSource,
 } from "@nibblet/protocol";
 
 export const QUIET_REPLY = "NO_REPLY";
@@ -90,6 +92,8 @@ export interface SystemPromptInput {
   now: Date;
   /** 1Password vaults shared with it, if any. */
   onePasswordVaults?: readonly SharedVault[];
+  /** Its container's machine on the user's tailnet, once it has joined. */
+  tailnet?: { node: TailnetNode; ports: readonly number[] } | null;
 }
 
 export function systemPrompt(input: SystemPromptInput): string {
@@ -155,6 +159,10 @@ export function systemPrompt(input: SystemPromptInput): string {
     );
   }
 
+  if (input.tailnet) {
+    parts.push(tailnetSection(input.tailnet.node, input.tailnet.ports));
+  }
+
   if (input.memories.length > 0) {
     const lines = input.memories.map(
       (m) => `- (${m.id}${m.nibbletId === null ? ", shared" : ""}) ${m.content}`,
@@ -170,4 +178,14 @@ export function systemPrompt(input: SystemPromptInput): string {
 
   parts.push(`Current time: ${input.now.toISOString()}.`);
   return parts.join("\n\n");
+}
+
+function tailnetSection(node: TailnetNode, ports: readonly number[]): string {
+  const name = node.dnsName ?? node.ips[0] ?? "your machine";
+  const where = [node.dnsName, ...node.ips].filter(Boolean).join(", ");
+  const shared =
+    ports.length > 0
+      ? `The user's other machines can reach servers you run on ${ports.length === 1 ? "port" : "ports"} ${ports.join(", ")} at ${name} (for example \`http://${name}:${ports[0]}\`), and nothing else in your container. Listen on \`0.0.0.0\` or \`127.0.0.1\`, and give the user that address rather than \`localhost\`. To share another port, the user adds it in your settings.`
+      : "Nothing in your container is reachable from the tailnet: if the user wants to open something you run from their other machines, they add its port in your settings.";
+  return `## Tailscale\n\nYour container is a machine on the user's tailnet${node.tailnet ? ` (${node.tailnet})` : ""}: ${where}. ${shared}\n\nTo reach machines on the tailnet, go through Tailscale's proxy at \`127.0.0.1:${TAILSCALE_PROXY_PORT}\`, which speaks HTTP and SOCKS5 and resolves tailnet names: \`curl -x http://127.0.0.1:${TAILSCALE_PROXY_PORT} http://some-machine:8080\`, \`ALL_PROXY=socks5h://127.0.0.1:${TAILSCALE_PROXY_PORT}\` for tools that take it, or for SSH \`-o ProxyCommand='nc -X 5 -x 127.0.0.1:${TAILSCALE_PROXY_PORT} %h %p'\`. Without it, tailnet names don't resolve and tailnet addresses aren't routed. The \`tailscale\` command isn't yours to use.`;
 }
