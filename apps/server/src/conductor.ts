@@ -17,6 +17,7 @@ import {
   VIEW_PORT,
   type McpServerDef,
 } from "@nibblet/protocol";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { cliLogins } from "./clilogins.ts";
 import type { Config } from "./config.ts";
@@ -32,6 +33,7 @@ import {
 } from "./limits.ts";
 import { dropOverlaps, hostTools } from "./hostmcp.ts";
 import { onePasswordLogin } from "./onepassword.ts";
+import { keyId, mintAuthKey, readTailnetOAuth } from "./tailnet-keys.ts";
 import { opencodeLogin } from "./opencode.ts";
 import { kimiLogin } from "./kimi.ts";
 import { runnerName, type Orchestrator } from "./docker.ts";
@@ -110,6 +112,8 @@ export class Conductor {
   private readonly subagentRuns = new Map<string, symbol>();
   /** Where a sub-agent's browser view is (`host:port`), as its runner said once connected. */
   private readonly views = new Map<string, string>();
+  /** Nibblets whose machine is being signed out of the tailnet, by a container of its own. */
+  private readonly leaving = new Map<string, Promise<void>>();
   /** Host containers being started for sub-agents, so siblings share one start. */
   private readonly hostStarts = new Map<string, Promise<unknown>>();
   /** Vault names last shared with each runner, for its system prompt. */
@@ -352,6 +356,8 @@ export class Conductor {
       resume: true,
     });
     const token = await this.store.rotateToken(nibbletId);
+    // Signing a machine out uses its Tailscale state too; one at a time.
+    await this.leaving.get(nibbletId);
     const { tailscale } = await this.store.nibbletRow(nibbletId);
     await this.store.updateNibblet(nibbletId, {
       status: "starting",
@@ -380,7 +386,11 @@ export class Conductor {
       return started;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await this.store.setStatus(nibbletId, "error", `Couldn't start its container: ${message}`);
+      await this.store.updateNibblet(nibbletId, {
+        status: "error",
+        statusDetail: `Couldn't start its container: ${message}`,
+        tailnetNode: null,
+      });
       throw new RpcError("unavailable", message);
     }
   }
@@ -574,6 +584,8 @@ export class Conductor {
         .removeSubagentState(await this.hostOf(nibblet), nibbletId)
         .catch((err: unknown) => console.warn(`couldn't remove ${nibbletId}'s state`, err));
     }
+    // Off the tailnet first, so its machine doesn't linger there with its name.
+    if (!nibblet.parentId) await this.leaveTailnet(nibbletId);
     await this.store.deleteNibblet(nibbletId);
     await this.docker
       .removeHome(nibbletId)
@@ -803,19 +815,54 @@ export class Conductor {
     const row = await this.store.nibbletRow(nibbletId);
     if (!row.tailscale || row.parentId) return null;
     return {
-      authKey: row.tailscale.authKey,
       hostname: row.tailscale.hostname || tailnetHostname(row.name),
       ports: row.tailscale.ports,
+      keyId: keyId(row.tailscale.authKey, await readTailnetOAuth(this.store)),
     };
+  }
+
+  /**
+   * A key for its container to sign in with, asked for only when it has to:
+   * its own, or a fresh one made with the OAuth client, so keys aren't made
+   * on every start for a machine that's already in.
+   */
+  async tailscaleAuthKey(nibbletId: string): Promise<string> {
+    const row = await this.store.nibbletRow(nibbletId);
+    if (!row.tailscale || row.parentId) throw new RpcError("not_found", "It isn't to join");
+    if (row.tailscale.authKey) return row.tailscale.authKey;
+    const oauth = await readTailnetOAuth(this.store);
+    if (!oauth) {
+      throw new RpcError(
+        "unavailable",
+        "It has no auth key, and there's no OAuth client in Settings to make one",
+      );
+    }
+    return mintAuthKey(oauth, row.name);
   }
 
   /** What its container's Tailscale says about its machine on the tailnet. */
   async setTailnetNode(nibbletId: string, node: TailnetNode): Promise<void> {
     const row = await this.store.nibbletRow(nibbletId);
-    // A report from a container that's on its way out doesn't bring it back.
-    if (!row.tailscale || row.status === "stopped") return;
-    if (JSON.stringify(row.tailnetNode) === JSON.stringify(node)) return;
+    // A report from a container that's gone, or on its way, doesn't bring it back.
+    if (!row.tailscale || row.status === "stopped" || row.status === "error") return;
+    if (isDeepStrictEqual(row.tailnetNode, node)) return;
     await this.store.updateNibblet(nibbletId, { tailnetNode: node });
+  }
+
+  /**
+   * Signs out the machine a nibblet that's asleep (or being deleted) left on
+   * the tailnet, in a short-lived container of its own. One that's awake
+   * does it itself when its container restarts.
+   */
+  leaveTailnet(nibbletId: string): Promise<void> {
+    const running = this.leaving.get(nibbletId);
+    if (running) return running;
+    const leaving = this.docker
+      .leaveTailnet(nibbletId)
+      .catch((err: unknown) => console.warn(`[${nibbletId}] couldn't sign out of the tailnet`, err))
+      .finally(() => this.leaving.delete(nibbletId));
+    this.leaving.set(nibbletId, leaving);
+    return leaving;
   }
 
   async detach(nibbletId: string, link: RunnerLink): Promise<void> {

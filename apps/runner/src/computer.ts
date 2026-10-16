@@ -21,11 +21,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import type { McpServerSpec } from "@nibblet/harness";
-import { VIEW_PORT } from "@nibblet/protocol";
+import { BROWSER_MCP_PORT, VIEW_PORT } from "@nibblet/protocol";
 
 // The tokens go in the environment (OCU_SERVE_TOKEN, OCU_VIEW_TOKEN), never
 // the command line, which every process in the container can read.
-const DEFAULT_PORTS = { mcp: 7800, view: VIEW_PORT };
+const DEFAULT_PORTS = { mcp: BROWSER_MCP_PORT, view: VIEW_PORT };
 
 export interface Computer {
   mcp: McpServerSpec;

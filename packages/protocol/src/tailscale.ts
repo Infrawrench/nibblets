@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { MASKED } from "./mcp.ts";
+import { BROWSER_MCP_PORT, GATE_PORT, VIEW_PORT } from "./ports.ts";
 
 /**
  * A nibblet on the user's tailnet: its container joins as a machine of its
@@ -28,7 +29,12 @@ export const CONTAINER_TAILSCALE_STATE = "/var/lib/nibblet-tailscale";
  */
 export const MAX_TAILNET_PORT = 19_999;
 /** Ports in the container the tailnet can never reach: the browser's MCP endpoint, `GATE_PORT`, `VIEW_PORT` and the proxy. */
-export const RESERVED_TAILNET_PORTS: readonly number[] = [7800, 7810, 7900, TAILSCALE_PROXY_PORT];
+export const RESERVED_TAILNET_PORTS: readonly number[] = [
+  BROWSER_MCP_PORT,
+  GATE_PORT,
+  VIEW_PORT,
+  TAILSCALE_PROXY_PORT,
+];
 
 export const TailnetPort = z
   .int()
@@ -46,9 +52,10 @@ export const TailnetHostname = z
 
 export const NibbletTailscale = z.object({
   /**
-   * A Tailscale auth key (`tskey-auth-…`). It's only needed to join: the
-   * machine stays signed in between restarts. A secret: the API shows it as
-   * `MASKED`, and an update that sends `MASKED` back keeps the stored key.
+   * A Tailscale auth key (`tskey-auth-…`), or empty to have one made with the
+   * server's OAuth client (`TailnetKeys`) when it joins. It's only needed to
+   * join: the machine stays signed in between restarts. A secret: the API
+   * shows it as `MASKED`, and an update that sends `MASKED` back keeps it.
    */
   authKey: z.string().max(500),
   /** Its machine name on the tailnet; empty for one made from its name. */
@@ -75,11 +82,38 @@ export type TailnetNode = z.infer<typeof TailnetNode>;
 
 /** What the container's Tailscale fetches from the server, at `/guard/:id/tailscale`. */
 export const TailscaleLogin = z.object({
-  authKey: z.string(),
   hostname: z.string(),
   ports: z.array(z.int()),
+  /**
+   * Stands for where its key comes from (its own key, or the OAuth client),
+   * so a change of key, perhaps to another tailnet, signs in again. Null when
+   * there's no key to be had: a machine that's already in stays in.
+   */
+  keyId: z.string().nullable(),
 });
 export type TailscaleLogin = z.infer<typeof TailscaleLogin>;
+
+/** A key to join with, fetched at `/guard/:id/tailscale/key` only when signing in. */
+export const TailscaleAuthKey = z.object({ authKey: z.string() });
+
+export const TailnetTag = z.string().regex(/^tag:[a-z][a-z0-9-]*$/i, "Tags look like tag:nibblet");
+
+/**
+ * A Tailscale OAuth client (with the Auth Keys write scope) the server makes
+ * a key with for each nibblet that joins without one of its own: single use,
+ * pre-approved, good for an hour, and tagged, as Tailscale requires of keys an
+ * OAuth client makes. The client's secret never leaves the server.
+ */
+export const TailnetOAuth = z.object({
+  clientId: z.string().trim().min(1).max(200),
+  /** `MASKED` in what the API returns; sending it back keeps the stored secret. */
+  clientSecret: z.string().trim().min(1).max(500),
+  tags: z.array(TailnetTag).min(1, "Give at least one tag").max(10),
+});
+export type TailnetOAuth = z.infer<typeof TailnetOAuth>;
+
+export const TailnetKeys = z.object({ oauth: TailnetOAuth.nullable() });
+export type TailnetKeys = z.infer<typeof TailnetKeys>;
 
 /** A machine name made from a nibblet's name, for when it isn't given one. */
 export function tailnetHostname(name: string): string {

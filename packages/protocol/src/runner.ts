@@ -86,10 +86,7 @@ export const GuardApprovalDecision = z.object({
   reason: z.string().nullable(),
 });
 
-/** Where the guard's gate listens, inside each container. */
-export const GATE_PORT = 7810;
-/** Where OpenComputerUse's view server listens, for the server to proxy the browser. */
-export const VIEW_PORT = 7900;
+export { BROWSER_MCP_PORT, GATE_PORT, VIEW_PORT } from "./ports.ts";
 /** The container's users: the agent (and the runner) as one, the guard as another. */
 export const AGENT_UID = 1001;
 export const AGENT_GID = 1002;

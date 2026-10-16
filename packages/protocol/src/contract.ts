@@ -5,6 +5,7 @@ import { ConnectStatus, TailscaleStatus } from "./connect.ts";
 import { OnePasswordGrants, OnePasswordStatus, VaultGrant } from "./onepassword.ts";
 import { procedure } from "./rpc.ts";
 import { Snapshot, SnapshotActivity, SnapshotTimeline } from "./snapshots.ts";
+import { TailnetKeys } from "./tailscale.ts";
 import { AppUpdate, HarnessUpdates } from "./updates.ts";
 import {
   BackgroundTask,
@@ -116,6 +117,10 @@ export const contract = {
     set: procedure(z.object({ serving: z.boolean() }), TailscaleStatus),
     /** Starts signing this computer in to Tailscale; the status carries the link to finish it. */
     login: procedure(z.object({}), TailscaleStatus),
+    /** How nibblets without an auth key of their own get one; the client secret comes back masked. */
+    keys: procedure(z.object({}), TailnetKeys),
+    /** Sets (checking it with Tailscale first) or, with null, forgets the OAuth client. */
+    setKeys: procedure(TailnetKeys, TailnetKeys),
   },
   hostTools: {
     /** The MCP servers on the host bridge, for ticking per nibblet. */

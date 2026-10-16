@@ -81,7 +81,10 @@ export function toNibblet(row: NibbletRow): Nibblet {
     cliCredentials: row.cliCredentials,
     mcpServers: maskMcpServers(row.mcpServers),
     toolApprovals: row.toolApprovals,
-    tailscale: row.tailscale ? { ...row.tailscale, authKey: MASKED } : null,
+    // Empty stays empty: it has no key of its own, and one's made when it joins.
+    tailscale: row.tailscale
+      ? { ...row.tailscale, authKey: row.tailscale.authKey ? MASKED : "" }
+      : null,
     tailnetNode: row.tailnetNode,
     statusText: row.statusText,
     statusEmoji: row.statusEmoji,

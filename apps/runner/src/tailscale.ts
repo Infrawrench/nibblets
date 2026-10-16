@@ -25,6 +25,7 @@ import {
   CONTAINER_TAILSCALE_STATE,
   TAILSCALE_PROXY_PORT,
   TAILSCALE_UID,
+  TailscaleAuthKey,
   TailscaleLogin,
   type TailnetNode,
 } from "@nibblet/protocol";
@@ -61,6 +62,8 @@ const node = (state: TailnetNode["state"], detail: string | null = null): Tailne
   detail,
 });
 
+type TailscaleClient = ReturnType<typeof tailscaleClient>;
+
 /** Talking to the server, with the guard's token. */
 export function tailscaleClient(env: TailscaleEnv, fetcher: typeof fetch = fetch) {
   const auth = { authorization: `Bearer ${env.NIBBLET_GUARD_TOKEN}` };
@@ -70,6 +73,17 @@ export function tailscaleClient(env: TailscaleEnv, fetcher: typeof fetch = fetch
       const res = await fetcher(url, { headers: auth, signal: AbortSignal.timeout(30_000) });
       if (!res.ok) throw new Error(`the server said ${res.status}`);
       return TailscaleLogin.parse(await res.json());
+    },
+    /** A key to sign in with: its own, or one the server makes. */
+    async authKey(): Promise<string> {
+      const res = await fetcher(`${url}/key`, {
+        method: "POST",
+        headers: auth,
+        signal: AbortSignal.timeout(30_000),
+      });
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) throw new Error(body?.error ?? `the server said ${res.status}`);
+      return TailscaleAuthKey.parse(body).authKey;
     },
     async report(state: TailnetNode): Promise<void> {
       const res = await fetcher(url, {
@@ -94,15 +108,18 @@ const Status = z.looseObject({
   CurrentTailnet: z.looseObject({ Name: z.string().optional() }).nullish(),
 });
 
-/** Its machine, from `tailscale status --json`. */
-export function nodeFromStatus(text: string): TailnetNode {
-  let json: unknown = null;
+function parseJson(text: string): unknown {
   try {
-    json = JSON.parse(text);
+    return JSON.parse(text);
   } catch {
     // Not up yet.
+    return null;
   }
-  const parsed = Status.safeParse(json);
+}
+
+/** Its machine, from `tailscale status --json`. */
+export function nodeFromStatus(text: string): TailnetNode {
+  const parsed = Status.safeParse(parseJson(text));
   if (!parsed.success) return node("starting");
   const { BackendState, Self, CurrentTailnet } = parsed.data;
   switch (BackendState) {
@@ -182,31 +199,48 @@ function startDaemon(): { child: ChildProcess; exited: boolean; tail: string } {
   return daemon;
 }
 
-/** Joins with the key, or with the machine it already is when the key hasn't changed. */
-async function up(login: TailscaleLogin): Promise<void> {
-  const mark = createHash("sha256").update(login.authKey).digest("hex");
-  const previous = await readFile(KEY_MARK, "utf8").catch(() => null);
-  if (previous !== null && previous.trim() !== mark) {
-    log("the auth key changed; signing in again");
+/** Where tailscaled has got to, once it's read its state: `Running`, `NeedsLogin` and so on. */
+async function backendState(): Promise<string> {
+  for (let i = 0; i < 50; i++) {
+    const text = await tailscale(["status", "--json"]).catch(() => "");
+    const state = Status.safeParse(parseJson(text)).data?.BackendState;
+    if (state && state !== "NoState") return state;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return "NoState";
+}
+
+/**
+ * Joins, or carries on as the machine it already is. A key is asked for only
+ * when it has to sign in, since the server may make one each time it's asked.
+ * A change of key (perhaps to another tailnet) signs out first.
+ */
+async function up(login: TailscaleLogin, server: TailscaleClient): Promise<void> {
+  const previous = (await readFile(KEY_MARK, "utf8").catch(() => null))?.trim() ?? null;
+  if (login.keyId && previous && previous !== login.keyId) {
+    log("its auth key changed; signing in again");
     await tailscale(["logout"]).catch((err: unknown) => log(`logout: ${why(err)}`));
   }
-  const keyFile = path.join(TAILSCALE_RUN, "authkey");
-  await writeFile(keyFile, login.authKey, { mode: 0o600 });
-  try {
-    await tailscale(
-      [
-        "up",
-        "--reset",
-        `--auth-key=file:${keyFile}`,
-        `--hostname=${login.hostname}`,
-        "--timeout=60s",
-      ],
-      90_000,
-    );
-  } finally {
-    await rm(keyFile, { force: true });
+  const state = await backendState();
+  if (state === "Running" || state === "Starting") {
+    // In already: `up --reset` could undo what its key set, like its tags.
+    await tailscale(["set", `--hostname=${login.hostname}`]);
+  } else if (state === "NeedsMachineAuth") {
+    // Signed in, waiting on the tailnet's admin to approve it.
+  } else {
+    const keyFile = path.join(TAILSCALE_RUN, "authkey");
+    const args = ["up", "--reset", `--hostname=${login.hostname}`, "--timeout=60s"];
+    if (state === "NeedsLogin" || state === "NoState") {
+      await writeFile(keyFile, await server.authKey(), { mode: 0o600 });
+      args.push(`--auth-key=file:${keyFile}`);
+    }
+    try {
+      await tailscale(args, 90_000);
+    } finally {
+      await rm(keyFile, { force: true });
+    }
   }
-  await writeFile(KEY_MARK, mark);
+  if (login.keyId) await writeFile(KEY_MARK, login.keyId);
 }
 
 /** Signs the machine out of the tailnet, and forgets it. */
@@ -228,8 +262,9 @@ async function leave(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // Run with nothing else (see the server's leaveTailnet), so before the rest is asked for.
+  if (process.env.NIBBLET_TAILSCALE_LEAVE) return leave();
   const env = TailscaleEnv.parse(process.env);
-  if (env.NIBBLET_TAILSCALE_LEAVE) return leave();
   const server = tailscaleClient(env);
   const report = (state: TailnetNode) =>
     server.report(state).catch((err: unknown) => log(`couldn't report: ${why(err)}`));
@@ -266,7 +301,7 @@ async function main(): Promise<void> {
   let reported = "";
   try {
     await waitForSocket(daemon);
-    await up(login);
+    await up(login, server);
   } catch (err) {
     failed = daemon.exited
       ? `tailscaled stopped: ${why({ stdout: daemon.tail.split("\n").slice(-3).join("\n") })}`
@@ -281,6 +316,7 @@ async function main(): Promise<void> {
 
   for (let restarts = 0; !stopping;) {
     if (daemon.exited) {
+      // Five in a row, not five in the life of the container.
       if (++restarts > 5) {
         await report(node("error", "tailscaled keeps stopping"));
         return;
@@ -289,9 +325,13 @@ async function main(): Promise<void> {
       daemon = startDaemon();
       await waitForSocket(daemon).catch(() => undefined);
     }
-    let state = await tailscale(["status", "--json"]).then(nodeFromStatus, () => null);
+    const text = await tailscale(["status", "--json"]).catch(() => null);
+    let state = text === null ? null : nodeFromStatus(text);
+    if (state) restarts = 0;
     if (state?.state === "running") failed = null;
-    else if (state && failed) state = node("error", failed);
+    // Waiting for the admin's approval says more than the timeout it led to.
+    else if (state && failed && !text?.includes('"NeedsMachineAuth"'))
+      state = node("error", failed);
     if (state && JSON.stringify(state) !== reported) {
       reported = JSON.stringify(state);
       if (state.state === "running") log(`on the tailnet as ${state.dnsName ?? state.ips[0]}`);

@@ -595,6 +595,35 @@ kill -KILL "$pid" 2>/dev/null; true`,
     }
   }
 
+  /**
+   * Signs out the machine a nibblet left on the tailnet, while its own
+   * container is down: the runner image's entry, with nothing but its
+   * Tailscale volume, fenced off like a runner. Nothing to do without the volume.
+   */
+  async leaveTailnet(nibbletId: string): Promise<void> {
+    const volume = tailscaleVolume(nibbletId);
+    if (!(await this.volumeExists(volume))) return;
+    const container = await this.docker.createContainer({
+      Image: this.config.NIBBLET_RUNNER_IMAGE,
+      Cmd: ["node", "/app/apps/runner/src/entry.ts", "tailscale-leave"],
+      Labels: { [MANAGED]: "true", [ROLE]: "tailscale-leave", [NIBBLET]: nibbletId },
+      HostConfig: {
+        NetworkMode: this.config.NIBBLET_NETWORK,
+        ...RUNNER_HARDENING,
+        Mounts: [{ Type: "volume", Source: volume, Target: CONTAINER_TAILSCALE_STATE }],
+      },
+    });
+    try {
+      await container.start();
+      await Promise.race([
+        container.wait(),
+        new Promise((resolve) => setTimeout(resolve, 60_000).unref()),
+      ]);
+    } finally {
+      await container.remove({ force: true }).catch(() => undefined);
+    }
+  }
+
   async stopRunner(nibbletId: string): Promise<void> {
     await this.carryOverHome(nibbletId, await this.ensureHome(nibbletId));
     await this.removeContainer(runnerName(nibbletId), { graceful: true });

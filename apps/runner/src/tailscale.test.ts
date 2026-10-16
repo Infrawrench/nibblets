@@ -42,28 +42,37 @@ describe("its machine on the tailnet", () => {
 });
 
 describe("talking to the server", () => {
-  it("fetches the login and reports with the guard's token", async () => {
+  const env = {
+    NIBBLET_ID: "nib_1",
+    NIBBLET_SERVER_URL: "http://server:8420",
+    NIBBLET_GUARD_TOKEN: "g",
+  };
+
+  it("fetches the login, a key when it must, and reports, with the guard's token", async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     const fetcher: typeof fetch = async (input, init) => {
       calls.push({ url: String(input), init });
+      if (String(input).endsWith("/key")) return Response.json({ authKey: "tskey-auth-x" });
       return init?.method === "POST"
         ? Response.json({ ok: true })
-        : Response.json({ authKey: "tskey-auth-x", hostname: "scamp", ports: [3000] });
+        : Response.json({ hostname: "scamp", ports: [3000], keyId: "abc" });
     };
-    const client = tailscaleClient(
-      { NIBBLET_ID: "nib_1", NIBBLET_SERVER_URL: "http://server:8420", NIBBLET_GUARD_TOKEN: "g" },
-      fetcher,
-    );
-    expect(await client.login()).toEqual({
-      authKey: "tskey-auth-x",
-      hostname: "scamp",
-      ports: [3000],
-    });
+    const client = tailscaleClient(env, fetcher);
+    expect(await client.login()).toEqual({ hostname: "scamp", ports: [3000], keyId: "abc" });
+    expect(await client.authKey()).toBe("tskey-auth-x");
     await client.report({ state: "starting", dnsName: null, ips: [], tailnet: null, detail: null });
-    expect(calls.map((c) => c.url)).toEqual([
-      "http://server:8420/guard/nib_1/tailscale",
-      "http://server:8420/guard/nib_1/tailscale",
+    expect(calls.map((c) => `${c.init?.method ?? "GET"} ${c.url}`)).toEqual([
+      "GET http://server:8420/guard/nib_1/tailscale",
+      "POST http://server:8420/guard/nib_1/tailscale/key",
+      "POST http://server:8420/guard/nib_1/tailscale",
     ]);
-    expect(new Headers(calls[1]?.init?.headers).get("authorization")).toBe("Bearer g");
+    for (const call of calls)
+      expect(new Headers(call.init?.headers).get("authorization")).toBe("Bearer g");
+  });
+
+  it("passes on why there's no key", async () => {
+    const fetcher: typeof fetch = async () =>
+      Response.json({ error: "no OAuth client" }, { status: 409 });
+    await expect(tailscaleClient(env, fetcher).authKey()).rejects.toThrow("no OAuth client");
   });
 });

@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { CircleAlert, CircleCheck, LoaderCircle, Network } from "lucide-react";
 import {
-  MASKED,
   tailnetHostname,
   TailnetPort,
   type Nibblet,
   type NibbletTailscale,
 } from "@nibblet/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
+import { keys } from "../../lib/servers.tsx";
 import { Button } from "../ui/Button.tsx";
 import { FieldRow, Input, SectionHeading } from "../ui/Field.tsx";
 import { Switch } from "../ui/Switch.tsx";
@@ -58,6 +59,10 @@ export function TailscaleSection({
   const [draft, setDraft] = useState<Draft>(() => draftOf(saved));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const oauth = useQuery({
+    queryKey: keys.tailnetKeys(connection.id),
+    queryFn: () => connection.client.tailscale.keys({}),
+  }).data?.oauth;
 
   useEffect(() => {
     setOpen(saved !== null);
@@ -76,6 +81,8 @@ export function TailscaleSection({
     draft.hostname !== saved.hostname ||
     ("ports" in ports && ports.ports.join(",") !== saved.ports.join(","));
   const running = nibblet.status !== "stopped";
+  // Its own key comes back masked; one the server makes for it, empty.
+  const ownKey = Boolean(saved?.authKey);
 
   const save = async () => {
     if ("error" in ports) return;
@@ -83,7 +90,7 @@ export function TailscaleSection({
     setError(null);
     try {
       await update({
-        authKey: draft.authKey.trim() || MASKED,
+        authKey: draft.authKey.trim() || saved?.authKey || "",
         hostname: draft.hostname.trim(),
         ports: ports.ports,
       });
@@ -119,21 +126,39 @@ export function TailscaleSection({
       </FieldRow>
       {open ? (
         <>
-          {saved && running ? <NodeStatus nibblet={nibblet} /> : null}
+          {saved && nibblet.tailnetNode && running && nibblet.status !== "error" ? (
+            <NodeStatus nibblet={nibblet} />
+          ) : null}
           <FieldRow label="Auth key">
             <Input
               type="password"
               autoComplete="off"
               value={draft.authKey}
               onChange={(e) => setDraft({ ...draft, authKey: e.target.value })}
-              placeholder={saved ? "Saved. Paste a new one to replace it" : "tskey-auth-…"}
+              placeholder={
+                ownKey
+                  ? "Saved. Paste a new one to replace it"
+                  : oauth
+                    ? "None needed: one's made for it"
+                    : "tskey-auth-…"
+              }
             />
             <span className="text-xs text-faint">
-              Make one in{" "}
-              <a href={KEYS_URL} target="_blank" rel="noreferrer" className="text-accent">
-                Tailscale's admin console
-              </a>
-              . It's only used to join: it stays signed in after that.
+              {oauth && !ownKey ? (
+                <>
+                  Your OAuth client in Settings makes one, tagged {oauth.tags.join(", ")}, when it
+                  joins. Paste one only to use your own.
+                </>
+              ) : (
+                <>
+                  Make one in{" "}
+                  <a href={KEYS_URL} target="_blank" rel="noreferrer" className="text-accent">
+                    Tailscale's admin console
+                  </a>
+                  , or set up an OAuth client in Settings to have them made for you. It's only used
+                  to join: it stays signed in after that.
+                </>
+              )}
             </span>
           </FieldRow>
           <FieldRow label="Machine name">
@@ -183,7 +208,12 @@ export function TailscaleSection({
               <Button
                 variant="primary"
                 size="sm"
-                disabled={!dirty || saving || "error" in ports || (!saved && !draft.authKey.trim())}
+                disabled={
+                  !dirty ||
+                  saving ||
+                  "error" in ports ||
+                  (!saved && !oauth && !draft.authKey.trim())
+                }
                 onClick={() => void save()}
               >
                 {saving ? "Saving…" : saved ? "Save" : "Join"}

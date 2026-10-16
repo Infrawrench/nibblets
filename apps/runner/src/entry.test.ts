@@ -78,9 +78,12 @@ describe("the container's firewall", () => {
 
 describe("the tailnet's firewall", () => {
   const mine = ["-A", "OUTPUT", "-o", "lo", "-m", "owner", "--uid-owner", "1200"];
+  // Its proxy's replies to the agent go out on loopback as Tailscale's user too.
+  const replies = [...mine, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"];
 
   it("lets Tailscale's user reach the shared ports and the nameservers on loopback, and nothing else", () => {
     expect(tailnetRules(1200, [3000], ["127.0.0.11"])).toEqual([
+      replies,
       [...mine, "-d", "127.0.0.11", "-j", "ACCEPT"],
       [...mine, "-p", "tcp", "--dport", "3000", "-j", "ACCEPT"],
       [...mine, "-p", "udp", "--dport", "3000", "-j", "ACCEPT"],
@@ -89,7 +92,7 @@ describe("the tailnet's firewall", () => {
   });
 
   it("shuts everything off when nothing is shared", () => {
-    expect(tailnetRules(1200, [])).toEqual([[...mine, "-j", "REJECT"]]);
+    expect(tailnetRules(1200, [])).toEqual([replies, [...mine, "-j", "REJECT"]]);
   });
 
   it("takes only ports a user could have shared", () => {

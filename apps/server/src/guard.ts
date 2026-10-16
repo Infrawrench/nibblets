@@ -22,6 +22,7 @@ export interface GuardDeps {
   conductor: {
     guardConfig(nibbletId: string): Promise<GuardConfig>;
     tailscaleLogin(nibbletId: string): Promise<TailscaleLogin | null>;
+    tailscaleAuthKey(nibbletId: string): Promise<string>;
     setTailnetNode(nibbletId: string, node: TailnetNode): Promise<void>;
     activeTurnId(nibbletId: string): string | null;
     approvals: {
@@ -92,6 +93,17 @@ export function mountGuard(app: Hono, deps: GuardDeps): void {
     const login = await deps.conductor.tailscaleLogin(id);
     if (!login) return c.json({ error: "It isn't to join a tailnet" }, 404);
     return c.json(login);
+  });
+
+  // A POST, since asking may make a key.
+  app.post("/guard/:id/tailscale/key", async (c) => {
+    const id = await authorised(c);
+    if (!id) return c.json({ error: "unauthorized" }, 401);
+    try {
+      return c.json({ authKey: await deps.conductor.tailscaleAuthKey(id) });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 409);
+    }
   });
 
   app.post("/guard/:id/tailscale", async (c) => {

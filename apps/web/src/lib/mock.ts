@@ -26,6 +26,7 @@ import {
   type StoredItem,
   type ThreadItem,
   type TailscaleStatus,
+  type TailnetOAuth,
   type AppUpdate,
   type HarnessUpdates,
 } from "@nibblet/protocol";
@@ -527,6 +528,7 @@ export function createMockServer(): ServerConnection {
   ]);
   const CENTRAL = "https://nibblets-connect.example.workers.dev";
   let connect: ConnectStatus = { state: "unlinked", centralUrl: CENTRAL };
+  let tailnetOAuth: TailnetOAuth | null = null;
   let tailscale: TailscaleStatus = {
     installed: true,
     running: true,
@@ -774,7 +776,10 @@ export function createMockServer(): ServerConnection {
           toolApprovals: patch.toolApprovals ?? current.toolApprovals,
           ...(patch.tailscale !== undefined
             ? {
-                tailscale: patch.tailscale && { ...patch.tailscale, authKey: MASKED },
+                tailscale: patch.tailscale && {
+                  ...patch.tailscale,
+                  authKey: patch.tailscale.authKey ? MASKED : "",
+                },
                 tailnetNode: patch.tailscale && {
                   state: "running" as const,
                   dnsName: `${patch.tailscale.hostname || tailnetHostname(current.name)}.tail1234.ts.net`,
@@ -997,6 +1002,11 @@ export function createMockServer(): ServerConnection {
         return tailscale;
       },
       login: async () => tailscale,
+      keys: async () => ({ oauth: tailnetOAuth && { ...tailnetOAuth, clientSecret: MASKED } }),
+      setKeys: async ({ oauth }) => {
+        tailnetOAuth = oauth;
+        return { oauth: oauth && { ...oauth, clientSecret: MASKED } };
+      },
     },
     harnesses: {
       models: async ({ harness }) =>

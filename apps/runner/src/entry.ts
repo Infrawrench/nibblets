@@ -154,6 +154,8 @@ export function tailnetRules(
 ): string[][] {
   const mine = ["-A", "OUTPUT", "-o", "lo", "-m", "owner", "--uid-owner", String(uid)];
   return [
+    // Replies, on connections it didn't start: the agent's to its proxy.
+    [...mine, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
     ...dnsServers.map((ip) => [...mine, "-d", ip, "-j", "ACCEPT"]),
     ...ports.flatMap((port) =>
       ["tcp", "udp"].map((proto) => [
@@ -348,17 +350,24 @@ async function tailscaleFolders(): Promise<void> {
   await ownedDir(TAILSCALE_RUN, TAILSCALE_UID, TAILSCALE_GID, 0o700);
 }
 
-/** Starts Tailscale, which outlives neither the container nor a failure to fence it in. */
 /**
  * Starts Tailscale, to join, or (`leave`) to sign out the machine a nibblet
- * taken off the tailnet left behind, so its key isn't kept for nothing.
+ * taken off the tailnet left behind, so its key isn't kept for nothing. It
+ * never takes the container down with it: what went wrong goes to the user.
  */
 async function startTailscale(leave = false): Promise<ChildProcess | null> {
   const ports = leave ? [] : tailnetPorts(process.env.NIBBLET_TAILSCALE_PORTS);
-  const blocked = await tailnetFirewall(ports);
+  let blocked = await tailnetFirewall(ports);
   // Leaving is tidying up: not worth being on the tailnet unfenced for.
   if (leave && blocked) return null;
-  if (!blocked) await tailscaleFolders();
+  if (!blocked) {
+    try {
+      await tailscaleFolders();
+    } catch (err) {
+      blocked = `Couldn't set up Tailscale's folders: ${err instanceof Error ? err.message : String(err)}`;
+      if (leave) return null;
+    }
+  }
   const child = as(
     TAILSCALE_UID,
     TAILSCALE_GID,
@@ -376,18 +385,23 @@ async function startTailscale(leave = false): Promise<ChildProcess | null> {
   );
   // The nibblet carries on without it: the user sees why on its settings.
   child.on("exit", (code) => log(`tailscale stopped (${code})`));
+  child.on("error", (err) => log(`tailscale: ${err.message}`));
   return child;
 }
 
 async function main(): Promise<void> {
   await firewall();
   await folders();
-  const tailscale =
+  const tailscale = await (
     process.env.NIBBLET_TAILSCALE === "1"
-      ? await startTailscale()
-      : (await exists(path.join(TAILSCALE_STATE, "tailscaled.state")))
-        ? await startTailscale(true)
-        : null;
+      ? startTailscale()
+      : exists(path.join(TAILSCALE_STATE, "tailscaled.state")).then((left) =>
+          left ? startTailscale(true) : null,
+        )
+  ).catch((err: unknown) => {
+    log(`couldn't start Tailscale: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  });
   await startPair(
     {
       guardHome: GUARD_HOME,
@@ -496,8 +510,20 @@ async function subagent(): Promise<void> {
   );
 }
 
+/** `entry.ts tailscale-leave`: just signs out the machine a nibblet left, in a container of its own. */
+async function leaveTailnet(): Promise<void> {
+  if (!(await exists(path.join(TAILSCALE_STATE, "tailscaled.state")))) return;
+  const child = await startTailscale(true);
+  if (child) await new Promise((resolve) => child.once("exit", resolve));
+}
+
+const commands: Record<string, () => Promise<void>> = {
+  subagent,
+  "tailscale-leave": leaveTailnet,
+};
+
 if (import.meta.main) {
-  (process.argv[2] === "subagent" ? subagent() : main()).catch((err: unknown) => {
+  (commands[process.argv[2] ?? ""] ?? main)().catch((err: unknown) => {
     console.error(`entry: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   });
