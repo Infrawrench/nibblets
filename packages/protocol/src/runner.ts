@@ -2,7 +2,15 @@ import { z } from "zod";
 import { Effort, HarnessId } from "./models.ts";
 import { CliLogin, McpServerDef, ToolRule } from "./mcp.ts";
 import { SharedVault } from "./onepassword.ts";
-import { BackgroundTask, FileRef, JsonValue, ThreadItem, TurnSource, Usage } from "./schema.ts";
+import {
+  BackgroundTask,
+  DesktopApp,
+  FileRef,
+  JsonValue,
+  ThreadItem,
+  TurnSource,
+  Usage,
+} from "./schema.ts";
 
 /**
  * The WebSocket between the server and the runner inside each nibblet's
@@ -86,7 +94,13 @@ export const GuardApprovalDecision = z.object({
   reason: z.string().nullable(),
 });
 
-export { BROWSER_MCP_PORT, GATE_PORT, VIEW_PORT } from "./ports.ts";
+export {
+  BROWSER_MCP_PORT,
+  DESKTOP_MCP_PORT,
+  DESKTOP_VIEW_PORT,
+  GATE_PORT,
+  VIEW_PORT,
+} from "./ports.ts";
 /** The container's users: the agent (and the runner) as one, the guard as another. */
 export const AGENT_UID = 1001;
 export const AGENT_GID = 1002;
@@ -147,6 +161,8 @@ export const ServerToRunner = z.discriminatedUnion("type", [
   }),
   /** The user stopping one of its background tasks. */
   z.object({ type: z.literal("task_stop"), taskId: z.string() }),
+  /** Look again for desktop apps, and send them in an `apps`. */
+  z.object({ type: z.literal("apps_scan") }),
 ]);
 export type ServerToRunner = z.infer<typeof ServerToRunner>;
 
@@ -188,6 +204,8 @@ export const RunnerToServer = z.discriminatedUnion("type", [
   }),
   /** Its background tasks, whenever they change and on every connect. */
   z.object({ type: z.literal("tasks"), tasks: z.array(BackgroundTask) }),
+  /** The desktop apps installed in its container, on every connect and whenever they change. */
+  z.object({ type: z.literal("apps"), apps: z.array(DesktopApp) }),
   z.object({
     type: z.literal("log"),
     level: z.enum(["debug", "info", "warn", "error"]),
@@ -218,6 +236,15 @@ export const RunnerEnv = z.object({
   NIBBLET_GATE_PORT: z.coerce.number().int().optional(),
   NIBBLET_VIEW_PORT: z.coerce.number().int().optional(),
   NIBBLET_STATE_DIR: z.string().optional(),
+  /** Set for a sub-agent, which uses its host container's desktop rather than starting one. */
+  NIBBLET_SUBAGENT: z.enum(["0", "1"]).default("0"),
+  /**
+   * The token the container's desktop (OpenComputerUse for apps, run as the
+   * agent's user on `DESKTOP_MCP_PORT` and `DESKTOP_VIEW_PORT`) takes. The
+   * agent may know it: everything on the desktop is the agent's already.
+   * Empty for no desktop.
+   */
+  NIBBLET_DESKTOP_TOKEN: z.string().default(""),
   /**
    * Set when the container joins the user's tailnet, for its entry: it lets
    * the tailnet reach the ports in `NIBBLET_TAILSCALE_PORTS` (comma

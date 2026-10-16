@@ -20,7 +20,8 @@
  * `entry.ts subagent`, run by the server with `docker exec`, starts a
  * sub-agent's own guard and runner in its parent's container, beside the
  * parent's: the same files, tools and servers, but its own browser (with its
- * own profile), gate, harness state and temporary folder.
+ * own profile), gate, harness state and temporary folder. It shares the
+ * parent's desktop (see desktop.ts), as it does its files.
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promises as dns } from "node:dns";

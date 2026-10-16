@@ -1,20 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Globe, Hand, Loader2, MousePointerClick, RefreshCw } from "lucide-react";
+import { Globe, Hand, Loader2, MousePointerClick } from "lucide-react";
 import type { Nibblet } from "@nibblet/protocol";
-import {
-  BrowserView,
-  listSessions,
-  openBrowser,
-  pointerButton,
-  viewUrl,
-  wheelPixels,
-  type ViewInput,
-  type ViewState,
-} from "../../lib/browserView.ts";
+import { listSessions, openBrowser } from "../../lib/browserView.ts";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { Button } from "../ui/Button.tsx";
 import { cn } from "../../lib/cn.ts";
+import { LiveView } from "./LiveView.tsx";
 
 /**
  * The nibblet's browser, live. Watching is always on; input is forwarded
@@ -83,7 +75,9 @@ export function BrowserPanel({
       key={session.session_id}
       connection={connection}
       nibbletId={nibblet.id}
+      kind="computer"
       sessionId={session.session_id}
+      label="Browser"
       onEnded={() => void qc.invalidateQueries({ queryKey: sessionsKey })}
       popout={popout}
       onPopOut={() =>
@@ -94,206 +88,6 @@ export function BrowserPanel({
         )
       }
     />
-  );
-}
-
-function LiveView({
-  connection,
-  nibbletId,
-  sessionId,
-  onEnded,
-  popout,
-  onPopOut,
-}: {
-  connection: ServerConnection;
-  nibbletId: string;
-  sessionId: string;
-  /** The browser was closed: go back to offering to open one. */
-  onEnded: () => void;
-  popout: boolean;
-  onPopOut: () => void;
-}) {
-  const stage = useRef<HTMLDivElement>(null);
-  const canvas = useRef<HTMLCanvasElement>(null);
-  const [view, setView] = useState<BrowserView | null>(null);
-  const [state, setState] = useState<ViewState>("connecting");
-  // Popping the browser out is a request to use it, so start in control.
-  const [control, setControl] = useState(popout);
-  const [title, setTitle] = useState<string | null>(null);
-  const [generation, setGeneration] = useState(0);
-
-  useEffect(() => {
-    const v = new BrowserView(viewUrl(connection, nibbletId, sessionId));
-    const offs = [
-      v.onState((s) => {
-        setState(s);
-        if (s === "ended") onEnded();
-      }),
-      v.onFrame((frame) => {
-        const el = canvas.current;
-        const ctx = el?.getContext("2d");
-        if (!el || !ctx) return;
-        // Keyframes carry the whole window; anything else is a patch over it.
-        if (
-          frame.keyframe &&
-          (el.width !== frame.windowWidth || el.height !== frame.windowHeight)
-        ) {
-          el.width = frame.windowWidth;
-          el.height = frame.windowHeight;
-        }
-        ctx.drawImage(frame.bitmap, frame.x, frame.y);
-        frame.bitmap.close();
-      }),
-      v.onMessage((m) => {
-        if (m.type === "hello" || m.type === "windows") {
-          // Chromium is restarted on a blank page if every tab is closed;
-          // follow its new window rather than sit on an empty view.
-          const first = m.windows[0];
-          if (m.window === null && first) v.send({ type: "window", id: first.id });
-          const watched = m.windows.find((w) => w.id === (m.window ?? first?.id));
-          setTitle(watched?.title ?? null);
-        }
-      }),
-    ];
-    setView(v);
-    return () => {
-      offs.forEach((off) => off());
-      v.close();
-    };
-  }, [connection, nibbletId, sessionId, generation]);
-
-  // A pop-out window sizes the browser's display to itself, so the page is
-  // drawn at the size it's shown rather than shrunk to fit.
-  useEffect(() => {
-    if (!popout || !view || state !== "open") return;
-    const el = stage.current;
-    if (!el) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const fit = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        const width = Math.max(640, Math.min(4096, Math.floor(el.clientWidth)));
-        const height = Math.max(400, Math.min(4096, Math.floor(el.clientHeight)));
-        view.send({ type: "resize", width, height });
-      }, 250);
-    };
-    const observer = new ResizeObserver(fit);
-    observer.observe(el);
-    return () => {
-      observer.disconnect();
-      clearTimeout(timer);
-    };
-  }, [popout, view, state]);
-
-  /** Canvas pixels from a pointer event, since the canvas is scaled to fit. */
-  const toWindow = (e: { clientX: number; clientY: number }) => {
-    const el = canvas.current;
-    if (!el) return { x: 0, y: 0 };
-    const r = el.getBoundingClientRect();
-    return {
-      x: Math.round(((e.clientX - r.left) / r.width) * el.width),
-      y: Math.round(((e.clientY - r.top) / r.height) * el.height),
-    };
-  };
-  const send = (input: ViewInput) => {
-    if (control) view?.send(input);
-  };
-
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line px-3">
-        <span
-          className={cn(
-            "size-1.5 rounded-full",
-            state === "open"
-              ? "bg-ok"
-              : state === "connecting"
-                ? "animate-pulse bg-warning"
-                : "bg-danger",
-          )}
-        />
-        <span className="min-w-0 flex-1 truncate text-xs text-dim">{title ?? "Browser"}</span>
-        {state !== "open" ? (
-          <Button
-            size="icon"
-            variant="ghost"
-            title="Reconnect"
-            onClick={() => setGeneration((g) => g + 1)}
-          >
-            <RefreshCw />
-          </Button>
-        ) : null}
-        {popout ? null : (
-          <Button size="icon" variant="ghost" title="Open in its own window" onClick={onPopOut}>
-            <ExternalLink />
-          </Button>
-        )}
-        <Button
-          size="sm"
-          variant={control ? "primary" : "secondary"}
-          onClick={() => setControl((c) => !c)}
-        >
-          {control ? <Hand /> : <MousePointerClick />}
-          {control ? "You're in control" : "Take control"}
-        </Button>
-      </div>
-      <div
-        ref={stage}
-        className={cn(
-          "flex min-h-0 flex-1 items-center justify-center bg-deep",
-          popout ? "overflow-hidden" : "p-2",
-        )}
-      >
-        <canvas
-          ref={canvas}
-          tabIndex={0}
-          className={cn(
-            "max-h-full max-w-full rounded border border-line bg-black/5 shadow-sm outline-none",
-            control ? "cursor-default ring-2 ring-accent" : "cursor-not-allowed",
-          )}
-          onContextMenu={(e) => control && e.preventDefault()}
-          onPointerMove={(e) =>
-            send({
-              type: "pointer",
-              action: "move",
-              ...toWindow(e),
-              button: pointerButton(e.button),
-            })
-          }
-          onPointerDown={(e) => {
-            e.currentTarget.focus();
-            send({
-              type: "pointer",
-              action: "down",
-              ...toWindow(e),
-              button: pointerButton(e.button),
-            });
-          }}
-          onPointerUp={(e) =>
-            send({ type: "pointer", action: "up", ...toWindow(e), button: pointerButton(e.button) })
-          }
-          onWheel={(e) => send({ type: "wheel", ...toWindow(e), ...wheelPixels(e) })}
-          onKeyDown={(e) => {
-            if (!control || e.nativeEvent.isComposing) return;
-            e.preventDefault();
-            send({ type: "key", action: "down", code: e.code, key: e.key });
-          }}
-          onKeyUp={(e) => {
-            if (!control) return;
-            e.preventDefault();
-            send({ type: "key", action: "up", code: e.code, key: e.key });
-          }}
-          onPaste={(e) => {
-            if (!control) return;
-            e.preventDefault();
-            send({ type: "text", text: e.clipboardData.getData("text") });
-          }}
-        />
-      </div>
-      {state === "connecting" ? (
-        <div className="p-2 text-center text-2xs text-faint">Connecting…</div>
-      ) : null}
-    </div>
   );
 }
 

@@ -1,4 +1,4 @@
-import type { BackgroundTask, RunnerToServer, ServerToRunner } from "@nibblet/protocol";
+import type { BackgroundTask, DesktopApp, RunnerToServer, ServerToRunner } from "@nibblet/protocol";
 import { randomBytes } from "node:crypto";
 
 /** Where a terminal's output goes: the browser that opened it. */
@@ -7,12 +7,15 @@ export interface TerminalSink {
   exit(code: number | null): void;
 }
 
-type FromRunner = Extract<RunnerToServer, { type: "terminal_output" | "terminal_exit" | "tasks" }>;
+type FromRunner = Extract<
+  RunnerToServer,
+  { type: "terminal_output" | "terminal_exit" | "tasks" | "apps" }
+>;
 
 /**
  * The user's terminals in nibblets' containers, carried over each runner's
- * socket, and the background tasks each runner reports. A runner can only
- * write to terminals opened on it.
+ * socket, and the background tasks and desktop apps each runner reports. A
+ * runner can only write to terminals opened on it.
  */
 export class TerminalHub {
   private readonly send: (nibbletId: string, message: ServerToRunner) => boolean;
@@ -20,6 +23,9 @@ export class TerminalHub {
   private readonly tasks = new Map<string, BackgroundTask[]>();
   /** Told whenever a nibblet's tasks change, to pass on to the UI. */
   onTasks: (nibbletId: string, tasks: BackgroundTask[]) => void = () => {};
+  private readonly apps = new Map<string, DesktopApp[]>();
+  /** Told whenever a nibblet's apps change, to pass on to the UI. */
+  onApps: (nibbletId: string, apps: DesktopApp[]) => void = () => {};
 
   /** `send` returns false when the nibblet has no runner connected. */
   constructor(send: (nibbletId: string, message: ServerToRunner) => boolean) {
@@ -72,6 +78,11 @@ export class TerminalHub {
       this.onTasks(nibbletId, message.tasks);
       return;
     }
+    if (message.type === "apps") {
+      this.apps.set(nibbletId, message.apps);
+      this.onApps(nibbletId, message.apps);
+      return;
+    }
     const t = this.open.get(message.terminalId);
     if (!t || t.nibbletId !== nibbletId) return;
     if (message.type === "terminal_output") {
@@ -85,6 +96,7 @@ export class TerminalHub {
   /** Its runner disconnected: its terminals are gone, and so may its tasks be. */
   runnerGone(nibbletId: string): void {
     if (this.tasks.delete(nibbletId)) this.onTasks(nibbletId, []);
+    if (this.apps.delete(nibbletId)) this.onApps(nibbletId, []);
     for (const [id, t] of this.open) {
       if (t.nibbletId !== nibbletId) continue;
       this.open.delete(id);
@@ -94,6 +106,15 @@ export class TerminalHub {
 
   tasksOf(nibbletId: string): BackgroundTask[] {
     return this.tasks.get(nibbletId) ?? [];
+  }
+
+  appsOf(nibbletId: string): DesktopApp[] {
+    return this.apps.get(nibbletId) ?? [];
+  }
+
+  /** Asks its runner to look for apps again; what it finds comes back as `apps`. */
+  scanApps(nibbletId: string): boolean {
+    return this.send(nibbletId, { type: "apps_scan" });
   }
 
   stopTask(nibbletId: string, taskId: string): boolean {

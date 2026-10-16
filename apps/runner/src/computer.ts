@@ -5,7 +5,8 @@
  * One OCU process runs for the life of the container so the agent (over
  * MCP) and the person watching (over the view socket on port 7900, proxied
  * by the server) see the same sessions. If `serve` mode doesn't come up,
- * the harness gets OCU over stdio instead, which works but has no view.
+ * the harness gets OCU over stdio instead, which works but has no view
+ * (unless that's turned off, as it is for the desktop).
  *
  * The MCP endpoint listens on loopback only, with a token that never leaves
  * the container. The view server listens on 0.0.0.0:7900 and takes
@@ -14,6 +15,9 @@
  *
  * A sub-agent runs its own beside its parent's, in the same container, on
  * the ports it's given: its own browser, with its own profile.
+ *
+ * The runner starts another, the desktop (see desktop.ts), for the agent's
+ * other apps, as the agent's own user.
  *
  * Overrides: `OCU_CMD` (default `opencomputeruse`), `OCU_ARGS` (space
  * separated), `OCU_MCP_URL`.
@@ -52,38 +56,71 @@ export async function clearProfileLock(home: string): Promise<void> {
   }
 }
 
+export interface ComputerOptions {
+  /** The MCP endpoint's token; a new one, kept in this process, unless given. */
+  token?: string;
+  /** Its environment, and so the apps' it starts; this process's unless given. */
+  env?: NodeJS.ProcessEnv;
+  /** Where it, and the apps it starts, run. */
+  cwd?: string;
+  /** Its arguments, rather than `OCU_ARGS` or `serveArgs`. */
+  args?: string[];
+  /** Whether the harness should run OCU over stdio when `serve` doesn't come up, rather than none. */
+  stdio?: boolean;
+}
+
+/**
+ * `serve`'s arguments: MCP on loopback (it listens on every address unless
+ * told otherwise) and the view on every address, for the server.
+ */
+export function serveArgs(ports: { mcp: number; view: number }): string[] {
+  return [
+    "serve",
+    "--port",
+    String(ports.mcp),
+    "--listen-on",
+    "127.0.0.1",
+    "--view-listen",
+    `0.0.0.0:${ports.view}`,
+  ];
+}
+
 export async function startComputer(
   viewToken: string,
   log: (level: "info" | "warn", message: string) => void,
   ports: { mcp: number; view: number } = DEFAULT_PORTS,
-): Promise<Computer> {
-  const token = randomBytes(24).toString("base64url");
+  opts: ComputerOptions = {},
+): Promise<Computer | null> {
+  const token = opts.token ?? randomBytes(24).toString("base64url");
   const command = process.env.OCU_CMD ?? "opencomputeruse";
-  const args = (
-    process.env.OCU_ARGS ?? `serve --port ${ports.mcp} --view-listen 0.0.0.0:${ports.view}`
-  )
-    .split(" ")
-    .filter(Boolean);
+  const args = opts.args ?? process.env.OCU_ARGS?.split(" ").filter(Boolean) ?? serveArgs(ports);
   const tokens = { OCU_SERVE_TOKEN: token, OCU_VIEW_TOKEN: viewToken };
   const url = process.env.OCU_MCP_URL ?? `http://127.0.0.1:${ports.mcp}/mcp`;
-  const stdio: Computer = {
-    mcp: {
-      type: "stdio",
-      command,
-      args: ["mcp", "--view-listen", `0.0.0.0:${ports.view}`],
-      env: { OCU_LINUX_DISPLAY: "wayland", OCU_VIEW_TOKEN: viewToken },
-    },
-    stop() {},
-  };
+  const stdio: Computer | null =
+    opts.stdio === false
+      ? null
+      : {
+          mcp: {
+            type: "stdio",
+            command,
+            args: ["mcp", "--view-listen", `0.0.0.0:${ports.view}`],
+            env: { OCU_LINUX_DISPLAY: "wayland", OCU_VIEW_TOKEN: viewToken },
+          },
+          stop() {},
+        };
 
   let child: ChildProcess;
   try {
     child = spawn(command, args, {
       stdio: ["ignore", "inherit", "inherit"],
-      env: { ...process.env, ...tokens, OCU_LINUX_DISPLAY: "wayland" },
+      env: { ...(opts.env ?? process.env), ...tokens, OCU_LINUX_DISPLAY: "wayland" },
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
     });
   } catch (err) {
-    log("warn", `OpenComputerUse serve failed to start (${String(err)}); using stdio`);
+    log(
+      "warn",
+      `OpenComputerUse serve failed to start (${String(err)})${stdio ? "; using stdio" : ""}`,
+    );
     return stdio;
   }
   let exited = false;
@@ -97,7 +134,7 @@ export async function startComputer(
   });
 
   if (!(await waitForHttp(url, () => exited))) {
-    log("warn", "OpenComputerUse serve mode didn't come up; using stdio");
+    log("warn", `OpenComputerUse serve mode didn't come up${stdio ? "; using stdio" : ""}`);
     if (!exited) child.kill();
     return stdio;
   }
@@ -108,7 +145,8 @@ export async function startComputer(
   };
 }
 
-async function waitForHttp(
+/** Waits for an HTTP server at `url` to answer at all, until `gaveUp` or the timeout. */
+export async function waitForHttp(
   url: string,
   gaveUp: () => boolean,
   timeoutMs = 15_000,

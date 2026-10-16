@@ -11,6 +11,7 @@ import {
   BackgroundTask,
   CreateNibblet,
   CreateSchedule,
+  DesktopApp,
   Memory,
   Nibblet,
   Schedule,
@@ -68,6 +69,12 @@ export const contract = {
     /** What it has running in the background, from `task_start`. Empty while it's asleep. */
     tasks: procedure(Id, z.array(BackgroundTask)),
     stopTask: procedure(z.object({ id: z.string(), taskId: z.string() }), Ok),
+    /**
+     * The desktop apps installed in its container, as last reported; asks
+     * it to look again, and pushes what it finds as an `apps` live message.
+     * Empty while it's asleep.
+     */
+    apps: procedure(Id, z.array(DesktopApp)),
   },
   harnesses: {
     /** A harness's models: the fixed lists for Claude and Codex, the host's live list for OpenCode. */
@@ -191,6 +198,8 @@ export const LiveMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("schedules_changed"), nibbletId: z.string() }),
   /** Its background tasks, whenever one starts or ends (empty when its container's gone). */
   z.object({ type: z.literal("tasks"), nibbletId: z.string(), tasks: z.array(BackgroundTask) }),
+  /** The desktop apps installed in its container, whenever they change. */
+  z.object({ type: z.literal("apps"), nibbletId: z.string(), apps: z.array(DesktopApp) }),
   /** The thread was replaced (a snapshot was restored): drop it and fetch again from the start. */
   z.object({ type: z.literal("thread_reset"), nibbletId: z.string() }),
   z.object({

@@ -2,7 +2,15 @@ import { z } from "zod";
 import { WebUrl } from "./urls.ts";
 
 /** Names the runner already uses for its own MCP servers. */
-const RESERVED = new Set(["nibblet", "computer", "onepassword", "files", "tasks"]);
+const RESERVED = new Set([
+  "nibblet",
+  "computer",
+  "onepassword",
+  "files",
+  "tasks",
+  "desktop",
+  "apps",
+]);
 
 /** Whether a name belongs to one of the built-in servers. */
 export function isReservedMcpName(name: string): boolean {

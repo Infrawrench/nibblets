@@ -201,6 +201,10 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         return ok;
       },
       tasks: async ({ id }) => conductor.terminals.tasksOf(id),
+      apps: async ({ id }) => {
+        conductor.terminals.scanApps(id);
+        return conductor.terminals.appsOf(id);
+      },
       stopTask: async ({ id, taskId }) => {
         if (!conductor.terminals.stopTask(id, taskId))
           throw new RpcError("bad_request", "It isn't running");

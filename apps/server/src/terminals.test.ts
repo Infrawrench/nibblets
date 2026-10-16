@@ -87,4 +87,30 @@ describe("TerminalHub", () => {
       ["nib_a", 0],
     ]);
   });
+
+  it("keeps each runner's apps, asks for them again, and forgets them when it goes", () => {
+    const { terminals, sent } = hub(["nib_a"]);
+    const changes: [string, number][] = [];
+    terminals.onApps = (id, apps) => changes.push([id, apps.length]);
+    const app = {
+      id: "foot",
+      name: "Foot",
+      comment: null,
+      icon: null,
+      command: "foot",
+      args: [],
+      categories: [],
+    };
+    terminals.fromRunner("nib_a", { type: "apps", apps: [app] });
+    expect(terminals.appsOf("nib_a")).toEqual([app]);
+    expect(terminals.scanApps("nib_a")).toBe(true);
+    expect(sent.at(-1)?.message).toEqual({ type: "apps_scan" });
+    expect(terminals.scanApps("nib_b")).toBe(false);
+    terminals.runnerGone("nib_a");
+    expect(terminals.appsOf("nib_a")).toEqual([]);
+    expect(changes).toEqual([
+      ["nib_a", 1],
+      ["nib_a", 0],
+    ]);
+  });
 });

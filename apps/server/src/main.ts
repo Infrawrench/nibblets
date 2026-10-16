@@ -52,6 +52,7 @@ async function main(): Promise<void> {
   conductor.serverName = await serverName(store, config.NIBBLET_HOST_NAME);
   conductor.terminals.onTasks = (nibbletId, tasks) =>
     bus.publish({ type: "tasks", nibbletId, tasks });
+  conductor.terminals.onApps = (nibbletId, apps) => bus.publish({ type: "apps", nibbletId, apps });
   const scheduler = new Scheduler(store, conductor);
   const snapshots = new Snapshots({
     store,

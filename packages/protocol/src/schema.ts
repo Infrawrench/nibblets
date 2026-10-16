@@ -429,6 +429,24 @@ export const BackgroundTask = z.object({
 });
 export type BackgroundTask = z.infer<typeof BackgroundTask>;
 
+/**
+ * A desktop app installed in a nibblet's container, from its XDG desktop
+ * entry, for the launcher the user and the agent share. `command` and
+ * `args` are what to start: the entry's `Exec` with its field codes gone.
+ */
+export const DesktopApp = z.object({
+  /** The desktop entry's id, like `org.xfce.mousepad`. */
+  id: z.string(),
+  name: z.string(),
+  comment: z.string().nullable(),
+  /** A `data:` URL of its icon, when one was found and small enough to send. */
+  icon: z.string().nullable(),
+  command: z.string(),
+  args: z.array(z.string()),
+  categories: z.array(z.string()),
+});
+export type DesktopApp = z.infer<typeof DesktopApp>;
+
 export const CreateSchedule = z
   .object({
     nibbletId: z.string(),

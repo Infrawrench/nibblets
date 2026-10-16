@@ -2,7 +2,7 @@ import { lstat, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { clearProfileLock } from "./computer.ts";
+import { clearProfileLock, serveArgs } from "./computer.ts";
 
 describe("the browser's profile lock", () => {
   let home = "";
@@ -32,5 +32,19 @@ describe("the browser's profile lock", () => {
     home = await mkdtemp(path.join(tmpdir(), "nibblet-guard-"));
     await clearProfileLock(home);
     await expect(lstat(path.join(home, ".config"))).rejects.toThrow();
+  });
+});
+
+describe("serve's arguments", () => {
+  it("keeps MCP on loopback, and puts only the view where the server can reach it", () => {
+    expect(serveArgs({ mcp: 7800, view: 7900 })).toEqual([
+      "serve",
+      "--port",
+      "7800",
+      "--listen-on",
+      "127.0.0.1",
+      "--view-listen",
+      "0.0.0.0:7900",
+    ]);
   });
 });

@@ -1,14 +1,12 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServerSpec, TurnAttachment } from "@nibblet/harness";
 import type { FileRef } from "@nibblet/protocol";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readdir, stat } from "node:fs/promises";
-import { createServer, type Server as HttpServer } from "node:http";
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { z } from "zod";
+import { serveMcp, toolReply } from "./mcp-http.ts";
 
 const MIME: Record<string, string> = {
   ".png": "image/png",
@@ -59,7 +57,7 @@ export interface RunnerFilesOptions {
  */
 export class RunnerFiles {
   private readonly opts: RunnerFilesOptions;
-  private http: HttpServer | null = null;
+  private closeMcp: (() => Promise<void>) | null = null;
 
   constructor(opts: RunnerFilesOptions) {
     this.opts = opts;
@@ -130,8 +128,7 @@ export class RunnerFiles {
 
   /** A local MCP server with `share_file`, for the harness to call. */
   async startMcp(): Promise<McpServerSpec> {
-    const http = createServer((req, res) => {
-      const server = new McpServer({ name: "files", version: "0.1.0" });
+    const served = await serveMcp("files", (server) => {
       server.registerTool(
         "share_file",
         {
@@ -145,34 +142,15 @@ export class RunnerFiles {
             caption: z.string().max(500).optional().describe("A line about what it is"),
           },
         },
-        async ({ path, name, caption }) => {
-          try {
-            return { content: [{ type: "text", text: await this.share(path, name, caption) }] };
-          } catch (err) {
-            const text = err instanceof Error ? err.message : String(err);
-            return { content: [{ type: "text", text }], isError: true };
-          }
-        },
+        ({ path, name, caption }) => toolReply(() => this.share(path, name, caption)),
       );
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined,
-        enableJsonResponse: true,
-      });
-      res.on("close", () => {
-        void transport.close();
-        void server.close();
-      });
-      void server.connect(transport).then(() => transport.handleRequest(req, res));
     });
-    this.http = http;
-    await new Promise<void>((done) => http.listen(0, "127.0.0.1", () => done()));
-    const address = http.address();
-    const port = typeof address === "object" && address ? address.port : 0;
-    return { type: "http", url: `http://127.0.0.1:${port}/mcp`, headers: {} };
+    this.closeMcp = served.close;
+    return served.spec;
   }
 
   async close(): Promise<void> {
-    await new Promise<void>((done) => (this.http ? this.http.close(() => done()) : done()));
+    await this.closeMcp?.();
   }
 }
 

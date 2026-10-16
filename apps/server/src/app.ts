@@ -240,87 +240,105 @@ export function createApp(services: Services, bus: Bus) {
     }),
   );
 
-  // OpenComputerUse's view server inside the container: the live browser and taking control.
-  app.get("/api/nibblets/:id/computer/*", async (c, next) => {
-    if (c.req.header("upgrade")?.toLowerCase() !== "websocket") return next();
-    // Every way out returns a response, the upgrade's included: Hono fails a
-    // request whose handler returns nothing.
-    const denied = await requireTicket(c, async () => {});
-    if (denied) return denied;
-    const id = c.req.param("id") ?? "";
-    const row = await store.nibbletRow(id).catch(() => null);
-    if (!row) return c.text("No such nibblet", 404);
-    const path = c.req.path.slice(`/api/nibblets/${id}/computer`.length);
-    // A sub-agent's browser is beside its parent's, in its parent's container.
-    const address = conductor.browserAddress(id, row.parentId);
-    if (!address) return c.text("The browser isn't running", 503);
-    const upstreamUrl = `ws://${address}${path}${new URL(c.req.url).search.replace(/([?&])ticket=[^&]*&?/, "$1")}`;
-    const token = viewToken(config.NIBBLET_OWNER_TOKEN, id, row.tokenHash);
-    const handler = upgradeWebSocket(() => {
-      let upstream: WebSocket | null = null;
-      const pending: (string | Buffer)[] = [];
-      return {
-        onOpen(_event, ws) {
-          upstream = new WebSocket(upstreamUrl, {
-            headers: { authorization: `Bearer ${token}` },
-          });
-          upstream.on("open", () => {
-            for (const m of pending.splice(0)) upstream?.send(m);
-          });
-          upstream.on("message", (data, isBinary) => {
-            const chunk = Buffer.isBuffer(data)
-              ? data
-              : Array.isArray(data)
-                ? Buffer.concat(data)
-                : Buffer.from(data);
-            ws.send(isBinary ? new Uint8Array(chunk) : chunk.toString("utf8"));
-          });
-          upstream.on("close", (code, reason) =>
-            ws.close(code === 1005 ? 1000 : code, reason.toString()),
-          );
-          upstream.on("error", () => ws.close(1011, "browser unavailable"));
-        },
-        onMessage(event) {
-          const data =
-            typeof event.data === "string"
-              ? event.data
-              : Buffer.from(event.data instanceof ArrayBuffer ? event.data : new ArrayBuffer(0));
-          if (upstream?.readyState === WebSocket.OPEN) upstream.send(data);
-          else pending.push(data);
-        },
-        onClose() {
-          upstream?.close();
-        },
-      };
-    });
-    return handler(c, next);
-  });
-
-  app.all("/api/nibblets/:id/computer/*", requireUser, async (c) => {
-    const id = c.req.param("id") ?? "";
-    const row = await store.nibbletRow(id).catch(() => null);
-    if (!row) return c.json({ error: "No such nibblet" }, 404);
-    const path = c.req.path.slice(`/api/nibblets/${id}/computer`.length);
-    const search = new URL(c.req.url).search;
-    const token = viewToken(config.NIBBLET_OWNER_TOKEN, id, row.tokenHash);
-    const address = conductor.browserAddress(id, row.parentId);
-    if (!address) return c.json({ error: "The browser isn't running" }, 503);
-    const res = await fetch(`http://${address}${path}${search}`, {
-      method: c.req.method,
-      headers: {
-        authorization: `Bearer ${token}`,
-        "content-type": c.req.header("content-type") ?? "application/json",
+  // OpenComputerUse's view servers inside the container, live, and taking
+  // control: the browser (the guard's) and the desktop with the other apps
+  // (the agent's). Each resolves to an address and the token it takes, or
+  // null when it isn't running.
+  const views: Record<
+    string,
+    { what: string; upstream: (id: string) => Promise<{ address: string; token: string } | null> }
+  > = {
+    computer: {
+      what: "browser",
+      upstream: async (id) => {
+        const row = await store.nibbletRow(id);
+        // A sub-agent's browser is beside its parent's, in its parent's container.
+        const address = conductor.browserAddress(id, row.parentId);
+        if (!address) return null;
+        return { address, token: viewToken(config.NIBBLET_OWNER_TOKEN, id, row.tokenHash) };
       },
-      body:
-        c.req.method === "GET" || c.req.method === "HEAD" ? undefined : await c.req.arrayBuffer(),
-      signal: AbortSignal.timeout(30_000),
-    }).catch(() => null);
-    if (!res) return c.json({ error: "The browser isn't running" }, 503);
-    return new Response(res.body, {
-      status: res.status,
-      headers: { "content-type": res.headers.get("content-type") ?? "application/json" },
+    },
+    desktop: { what: "desktop", upstream: (id) => conductor.desktop(id) },
+  };
+  for (const [segment, view] of Object.entries(views)) {
+    const notRunning = `The ${view.what} isn't running`;
+    app.get(`/api/nibblets/:id/${segment}/*`, async (c, next) => {
+      if (c.req.header("upgrade")?.toLowerCase() !== "websocket") return next();
+      // Every way out returns a response, the upgrade's included: Hono fails a
+      // request whose handler returns nothing.
+      const denied = await requireTicket(c, async () => {});
+      if (denied) return denied;
+      const id = c.req.param("id") ?? "";
+      const upstream = await view.upstream(id).catch(() => undefined);
+      if (upstream === undefined) return c.text("No such nibblet", 404);
+      if (!upstream) return c.text(notRunning, 503);
+      const path = c.req.path.slice(`/api/nibblets/${id}/${segment}`.length);
+      const upstreamUrl = `ws://${upstream.address}${path}${new URL(c.req.url).search.replace(/([?&])ticket=[^&]*&?/, "$1")}`;
+      const handler = upgradeWebSocket(() => {
+        let socket: WebSocket | null = null;
+        const pending: (string | Buffer)[] = [];
+        return {
+          onOpen(_event, ws) {
+            socket = new WebSocket(upstreamUrl, {
+              headers: { authorization: `Bearer ${upstream.token}` },
+            });
+            socket.on("open", () => {
+              for (const m of pending.splice(0)) socket?.send(m);
+            });
+            socket.on("message", (data, isBinary) => {
+              const chunk = Buffer.isBuffer(data)
+                ? data
+                : Array.isArray(data)
+                  ? Buffer.concat(data)
+                  : Buffer.from(data);
+              ws.send(isBinary ? new Uint8Array(chunk) : chunk.toString("utf8"));
+            });
+            socket.on("close", (code, reason) =>
+              ws.close(code === 1005 ? 1000 : code, reason.toString()),
+            );
+            socket.on("error", () => ws.close(1011, `${view.what} unavailable`));
+          },
+          onMessage(event) {
+            const data =
+              typeof event.data === "string"
+                ? event.data
+                : Buffer.from(event.data instanceof ArrayBuffer ? event.data : new ArrayBuffer(0));
+            if (socket?.readyState === WebSocket.OPEN) socket.send(data);
+            else pending.push(data);
+          },
+          onClose() {
+            socket?.close();
+          },
+        };
+      });
+      return handler(c, next);
     });
-  });
+
+    app.all(`/api/nibblets/:id/${segment}/*`, requireUser, async (c) => {
+      const id = c.req.param("id") ?? "";
+      const upstream = await view.upstream(id).catch(() => undefined);
+      if (upstream === undefined) return c.json({ error: "No such nibblet" }, 404);
+      if (!upstream) return c.json({ error: notRunning }, 503);
+      const path = c.req.path.slice(`/api/nibblets/${id}/${segment}`.length);
+      const search = new URL(c.req.url).search;
+      const res = await fetch(`http://${upstream.address}${path}${search}`, {
+        method: c.req.method,
+        headers: {
+          authorization: `Bearer ${upstream.token}`,
+          "content-type": c.req.header("content-type") ?? "application/json",
+        },
+        body:
+          c.req.method === "GET" || c.req.method === "HEAD" ? undefined : await c.req.arrayBuffer(),
+        // Starting an app waits for its first window.
+        signal: AbortSignal.timeout(60_000),
+      }).catch(() => null);
+      if (!res) return c.json({ error: notRunning }, 503);
+      return new Response(res.body, {
+        status: res.status,
+        headers: { "content-type": res.headers.get("content-type") ?? "application/json" },
+      });
+    });
+  }
 
   mountFiles(app, services.files, { store, config, bus, requireUser });
 

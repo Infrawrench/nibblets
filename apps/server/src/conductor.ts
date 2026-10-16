@@ -14,6 +14,7 @@ import {
   type TailscaleLogin,
   isReservedMcpName,
   tailnetHostname,
+  DESKTOP_VIEW_PORT,
   VIEW_PORT,
   type McpServerDef,
 } from "@nibblet/protocol";
@@ -38,7 +39,7 @@ import { opencodeLogin } from "./opencode.ts";
 import { kimiLogin } from "./kimi.ts";
 import { runnerName, type Orchestrator } from "./docker.ts";
 import { TerminalHub } from "./terminals.ts";
-import { guardToken, hashToken, newId, viewToken, type Store } from "./store.ts";
+import { desktopToken, guardToken, hashToken, newId, viewToken, type Store } from "./store.ts";
 
 export interface RunnerLink {
   send(message: ServerToRunner): void;
@@ -347,6 +348,22 @@ export class Conductor {
     return this.views.get(nibbletId) ?? null;
   }
 
+  /**
+   * Where the server reaches the desktop a nibblet's apps are on, and its
+   * token: its own container's, or for a sub-agent its host's. Null when
+   * there's no desktop, which comes and goes with the host's browser.
+   */
+  async desktop(nibbletId: string): Promise<{ address: string; token: string } | null> {
+    // One lookup for a nibblet with its own container; the proxy asks on every request.
+    let row = await this.store.nibbletRow(nibbletId);
+    while (row.parentId) row = await this.store.nibbletRow(row.parentId);
+    if (!row.browser) return null;
+    return {
+      address: `${runnerName(row.id)}:${DESKTOP_VIEW_PORT}`,
+      token: desktopToken(this.config.NIBBLET_OWNER_TOKEN, row.id, row.tokenHash),
+    };
+  }
+
   async start(nibbletId: string): Promise<Nibblet> {
     const nibblet = await this.store.getNibblet(nibbletId);
     if (nibblet.parentId) return this.startSubagent(nibblet);
@@ -370,7 +387,12 @@ export class Conductor {
     try {
       const containerId = await this.docker.startRunner(
         nibbletId,
-        this.runnerEnv(nibbletId, token, nibblet.browser, tailscale),
+        this.runnerEnv(nibbletId, token, nibblet.browser, {
+          tailscale,
+          desktop: nibblet.browser
+            ? desktopToken(this.config.NIBBLET_OWNER_TOKEN, nibbletId, hashToken(token))
+            : "",
+        }),
         {
           sshAgent: nibblet.cliCredentials.includes("ssh"),
           resources: nibblet.resources,
@@ -400,7 +422,11 @@ export class Conductor {
     nibbletId: string,
     token: string,
     browser: boolean,
-    tailscale: NibbletTailscale | null = null,
+    {
+      tailscale = null,
+      desktop,
+      subagent = false,
+    }: { tailscale?: NibbletTailscale | null; desktop: string; subagent?: boolean },
   ) {
     return {
       NIBBLET_ID: nibbletId,
@@ -413,6 +439,9 @@ export class Conductor {
       // For the entry, which fences off the rest; the auth key is fetched, never put here.
       NIBBLET_TAILSCALE: tailscale ? ("1" as const) : ("0" as const),
       NIBBLET_TAILSCALE_PORTS: tailscale?.ports.join(",") ?? "",
+      // Its container's desktop, which the runner starts (or a sub-agent's joins).
+      NIBBLET_DESKTOP_TOKEN: desktop,
+      NIBBLET_SUBAGENT: subagent ? ("1" as const) : ("0" as const),
       // For the guard alone; the container's entry keeps these from the runner.
       NIBBLET_SERVER_URL: this.config.NIBBLET_INTERNAL_URL,
       NIBBLET_VIEW_TOKEN: viewToken(this.config.NIBBLET_OWNER_TOKEN, nibbletId, hashToken(token)),
@@ -443,10 +472,15 @@ export class Conductor {
       // The run it replaces ends quietly.
       this.subagentRuns.set(nibbletId, run);
       this.views.delete(nibbletId);
+      // Its host's desktop, if the host has one.
+      const desktop = await this.desktop(nibbletId);
       await this.docker.startSubagent(
         host,
         nibbletId,
-        this.runnerEnv(nibbletId, token, nibblet.browser),
+        this.runnerEnv(nibbletId, token, nibblet.browser, {
+          desktop: desktop?.token ?? "",
+          subagent: true,
+        }),
         (code, tail) => void this.onSubagentExit(nibbletId, run, code, tail),
       );
       return await this.store.getNibblet(nibbletId);
@@ -933,6 +967,7 @@ export class Conductor {
       case "terminal_output":
       case "terminal_exit":
       case "tasks":
+      case "apps":
         this.terminals.fromRunner(nibbletId, message);
         return;
       case "log": {
@@ -1018,6 +1053,8 @@ export class Conductor {
       parent,
       now: new Date(),
       onePasswordVaults: this.onePasswordVaults.get(nibbletId),
+      // Its container's, which comes with the host's browser.
+      desktop: host?.browser ?? false,
       tailnet:
         host?.tailscale && host.tailnetNode?.state === "running"
           ? { node: host.tailnetNode, ports: host.tailscale.ports }

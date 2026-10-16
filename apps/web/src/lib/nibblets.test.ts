@@ -5,7 +5,7 @@ import {
   randomHamsterLook,
   type Nibblet,
 } from "@nibblet/protocol";
-import { orderNibblets } from "./nibblets.ts";
+import { hostOf, orderNibblets } from "./nibblets.ts";
 import { optionLabel, withField } from "../components/hamster/HamsterEditor.tsx";
 import { bellyFill, markingFill } from "../components/hamster/palette.ts";
 
@@ -53,6 +53,19 @@ describe("orderNibblets", () => {
       "old:0",
       "orphan:0",
     ]);
+  });
+});
+
+describe("hostOf", () => {
+  it("finds the top of a sub-agent's tree, whose container it runs in", () => {
+    const top = { ...nibblet("top", null, "2026-10-01"), browser: false };
+    const child = { ...nibblet("child", "top", "2026-10-01"), browser: true };
+    const grandchild = nibblet("grandchild", "child", "2026-10-01");
+    const all = [top, child, grandchild];
+    expect(hostOf(grandchild, all)).toBe(top);
+    expect(hostOf(top, all)).toBe(top);
+    // A parent the list doesn't have yet: the nearest one it does.
+    expect(hostOf(grandchild, [grandchild, child])).toBe(child);
   });
 });
 

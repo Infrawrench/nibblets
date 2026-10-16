@@ -3,21 +3,30 @@ import { safeJson, type ServerConnection } from "./connection.ts";
 
 /*
  * OpenComputerUse's view protocol (0.7+), as served inside each nibblet's
- * container. The nibblet server proxies `/api/nibblets/:id/computer/*`
- * (HTTP and WebSocket) to it and adds OCU's token; HTTP here carries the
- * usual Bearer header and WebSockets take `?ticket=`.
+ * container, twice: the browser (`computer`, the guard's) and the desktop
+ * with the other apps (`desktop`, the agent's). The nibblet server proxies
+ * `/api/nibblets/:id/{computer,desktop}/*` (HTTP and WebSocket) to them and
+ * adds their tokens; HTTP here carries the usual Bearer header and
+ * WebSockets take `?ticket=`.
  *
- *   GET  computer/sessions                 → { sessions: [Session] }
- *   POST computer/sessions {app, display}  → 201 Session
- *   WS   computer/sessions/{id}/view
- *        server → client  text:   hello | windows | error | ended
- *        server → client  binary: 20-byte little-endian header, then a JPEG or PNG
- *        client → server  text:   ViewInput
+ *   GET    {kind}/sessions                       → { sessions: [Session] }
+ *   POST   {kind}/sessions {app, args, display}  → 201 Session
+ *   DELETE {kind}/sessions/{id}                  → { ok }
+ *   WS     {kind}/sessions/{id}/view
+ *          server → client  text:   hello | windows | error | ended
+ *          server → client  binary: 20-byte little-endian header, then a JPEG or PNG
+ *          client → server  text:   ViewInput
  */
 
+/** Which of the container's OpenComputerUse servers. */
+export type ComputerKind = "computer" | "desktop";
+
 export const paths = {
-  sessions: "computer/sessions",
-  view: (sessionId: string) => `computer/sessions/${encodeURIComponent(sessionId)}/view`,
+  sessions: (kind: ComputerKind) => `${kind}/sessions`,
+  session: (kind: ComputerKind, sessionId: string) =>
+    `${kind}/sessions/${encodeURIComponent(sessionId)}`,
+  view: (kind: ComputerKind, sessionId: string) =>
+    `${kind}/sessions/${encodeURIComponent(sessionId)}/view`,
 };
 
 /** A wrapper in the runner image that adds the flags Chromium needs in a container. */
@@ -103,28 +112,71 @@ function nibbletPath(nibbletId: string, path: string): string {
   return `/api/nibblets/${encodeURIComponent(nibbletId)}/${path}`;
 }
 
+async function failure(res: Response, what: string): Promise<Error> {
+  const body: unknown = await res.json().catch(() => null);
+  const detail =
+    body && typeof body === "object" && "error" in body && typeof body.error === "string"
+      ? body.error
+      : `${res.status}`;
+  return new Error(`${what} (${detail})`);
+}
+
 export async function listSessions(
   conn: ServerConnection,
   nibbletId: string,
+  kind: ComputerKind = "computer",
 ): Promise<OcuSession[]> {
-  const res = await conn.request(nibbletPath(nibbletId, paths.sessions));
-  if (!res.ok) throw new Error(`Couldn't list browser sessions (${res.status})`);
+  const res = await conn.request(nibbletPath(nibbletId, paths.sessions(kind)));
+  if (!res.ok) {
+    throw await failure(
+      res,
+      kind === "computer" ? "Couldn't list browser sessions" : "Couldn't list apps",
+    );
+  }
   return z.object({ sessions: z.array(OcuSession) }).parse(await res.json()).sessions;
 }
 
 export async function openBrowser(conn: ServerConnection, nibbletId: string): Promise<OcuSession> {
-  const res = await conn.request(nibbletPath(nibbletId, paths.sessions), {
+  const res = await conn.request(nibbletPath(nibbletId, paths.sessions("computer")), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ app: BROWSER_APP, display: "wayland" }),
   });
-  if (!res.ok) throw new Error(`Couldn't open the browser (${res.status})`);
+  if (!res.ok) throw await failure(res, "Couldn't open the browser");
   return OcuSession.parse(await res.json());
+}
+
+/** Opens a desktop app on the nibblet's desktop, where it and the nibblet both see it. */
+export async function launchApp(
+  conn: ServerConnection,
+  nibbletId: string,
+  app: { name: string; command: string; args: string[] },
+): Promise<OcuSession> {
+  const res = await conn.request(nibbletPath(nibbletId, paths.sessions("desktop")), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ app: app.command, args: app.args, display: "wayland" }),
+  });
+  if (!res.ok) throw await failure(res, `Couldn't open ${app.name}`);
+  return OcuSession.parse(await res.json());
+}
+
+/** Closes a session: the app, and every window it has open. */
+export async function endSession(
+  conn: ServerConnection,
+  nibbletId: string,
+  kind: ComputerKind,
+  sessionId: string,
+): Promise<void> {
+  const res = await conn.request(nibbletPath(nibbletId, paths.session(kind, sessionId)), {
+    method: "DELETE",
+  });
+  if (!res.ok) throw await failure(res, "Couldn't close it");
 }
 
 export type ViewState = "connecting" | "open" | "closed" | "ended" | "error";
 
-/** A live view of one OCU session. Images are decoded off the main thread. */
+/** A live view of one OCU session, the browser's or an app's. Images are decoded off the main thread. */
 export class BrowserView {
   private socket: WebSocket | null = null;
   private closed = false;
@@ -202,8 +254,9 @@ export function viewUrl(
   conn: ServerConnection,
   nibbletId: string,
   sessionId: string,
+  kind: ComputerKind = "computer",
 ): Promise<string> {
-  return conn.socketUrl(nibbletPath(nibbletId, paths.view(sessionId)));
+  return conn.socketUrl(nibbletPath(nibbletId, paths.view(kind, sessionId)));
 }
 
 export function pointerButton(button: number): PointerButton {

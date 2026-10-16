@@ -20,3 +20,13 @@ export function orderNibblets(nibblets: readonly Nibblet[]): { nibblet: Nibblet;
   walk(null, 0);
   return out;
 }
+
+/** The nibblet whose container this one runs in: itself, or for a sub-agent the top of its tree. */
+export function hostOf(nibblet: Nibblet, all: readonly Nibblet[]): Nibblet {
+  let host = nibblet;
+  for (let parent = all.find((n) => n.id === host.parentId); parent;) {
+    host = parent;
+    parent = all.find((n) => n.id === host.parentId);
+  }
+  return host;
+}
