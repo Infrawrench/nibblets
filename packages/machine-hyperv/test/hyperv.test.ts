@@ -35,7 +35,10 @@ describe("Hyper-V", () => {
   });
 
   it("never puts a value in a script: they go as parameters", async () => {
-    const { ps, calls } = fake([{ state: "Running" }, { ok: true }]);
+    const { ps, calls } = fake([
+      { "nibblet-nib_x'; Remove-Item C:\\ -Recurse #": "Running" },
+      { ok: true },
+    ]);
     const hyperv = new HyperV({ powershell: ps });
     const vm = { id: "nib_x'; Remove-Item C:\\ -Recurse #", dir: "C:\\vms\\x" };
     expect(await hyperv.running(ctx, vm)).toBe(true);
