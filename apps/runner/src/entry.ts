@@ -48,6 +48,7 @@ import {
   GUARD_GID,
   GUARD_ONLY_ENV,
   GUARD_UID,
+  HOME_ARCHIVE_EXCLUDES,
   TAILSCALE_GID,
   TAILSCALE_UID,
   TailnetPort,
@@ -119,7 +120,9 @@ export function firewallRules(
 async function firewall(): Promise<void> {
   const subnet = ownSubnet();
   const allowed: string[] = [];
-  for (const host of ["server", "credproxy"]) {
+  // The host too: a container's is outside its subnet anyway, but a VM's is
+  // its gateway, inside it, and OpenCode's local providers (Ollama) are there.
+  for (const host of ["server", "credproxy", "host.docker.internal"]) {
     const found = await dns.lookup(host, { family: 4, all: true }).catch(() => []);
     allowed.push(...found.map((a) => a.address));
   }
@@ -520,9 +523,74 @@ async function leaveTailnet(): Promise<void> {
   if (child) await new Promise((resolve) => child.once("exit", resolve));
 }
 
+/** `entry.ts stop-subagent <id>`: SIGTERM to a sub-agent's entry, then SIGKILL once its tasks have had their time. */
+async function stopSubagent(): Promise<void> {
+  const id = safeId(process.argv[3]);
+  const pid = Number(await readFile(path.join(SUBAGENT_PIDS, `${id}.pid`), "utf8").catch(() => ""));
+  if (!(pid > 0)) return;
+  const alive = () => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return;
+  }
+  for (let i = 0; i < 48 && alive(); i++) await new Promise((r) => setTimeout(r, 250));
+  if (alive()) process.kill(pid, "SIGKILL");
+}
+
+/** `entry.ts remove-subagent <id>`: what a sub-agent kept in its host's home. */
+async function removeSubagent(): Promise<void> {
+  const id = safeId(process.argv[3]);
+  await rm(path.join(SUBAGENT_STATE, id), { recursive: true, force: true });
+  await rm(path.join(SUBAGENT_GUARD_HOMES, id), { recursive: true, force: true });
+}
+
+/** `entry.ts archive-home`: the home folder as a gzipped tar on stdout, without its caches. */
+async function archiveHome(): Promise<void> {
+  await inherit("tar", [
+    "-C",
+    path.dirname(HOME),
+    "-czf",
+    "-",
+    ...HOME_ARCHIVE_EXCLUDES.map((e) => `--exclude=${e}`),
+    path.basename(HOME),
+  ]);
+}
+
+/** `entry.ts restore-home`: empties the home folder and unpacks one from stdin over it. */
+async function restoreHome(): Promise<void> {
+  await inherit("sh", [
+    "-c",
+    `find ${HOME} -mindepth 1 -delete && tar -C ${path.dirname(HOME)} -xzpf -`,
+  ]);
+}
+
+/** Runs a command with this process's stdio, failing as it fails. */
+function inherit(cmd: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: "inherit" });
+    child.once("error", reject);
+    child.once("close", (code) =>
+      code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`)),
+    );
+  });
+}
+
+/** What the server runs in a nibblet's machine; see EntryCommand in protocol. */
 const commands: Record<string, () => Promise<void>> = {
   subagent,
   "tailscale-leave": leaveTailnet,
+  "stop-subagent": stopSubagent,
+  "remove-subagent": removeSubagent,
+  "archive-home": archiveHome,
+  "restore-home": restoreHome,
 };
 
 if (import.meta.main) {

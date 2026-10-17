@@ -19,6 +19,7 @@ import {
   DEFAULT_MEMORY_MB,
   HARNESS_CLI_DIR,
   HARNESS_CLI_VOLUME,
+  HOME_ARCHIVE_EXCLUDES,
   type GuestOs,
   type MachineBackend,
   type MachineCapabilities,
@@ -43,19 +44,6 @@ export function limits(r: Resources): { Memory: number; MemorySwap: number; Nano
     NanoCpus: r.cpus === null ? 0 : Math.round(r.cpus * 1e9),
   };
 }
-
-/** Caches inside a home folder that rebuild themselves, so aren't worth snapshotting. */
-export const HOME_ARCHIVE_EXCLUDES = [
-  "nibblet/.cache",
-  "nibblet/.npm/_cacache",
-  // The browser's profile, in the guard's home (and where it was before the guard).
-  ...["nibblet/.guard/.config/chromium", "nibblet/.config/chromium"].flatMap((profile) => [
-    `${profile}/*/Cache`,
-    `${profile}/*/Code Cache`,
-    `${profile}/*/GPUCache`,
-    `${profile}/*/Service Worker/CacheStorage`,
-  ]),
-];
 
 /**
  * How a runner container is locked down. Its entry runs as root only to set

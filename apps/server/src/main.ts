@@ -11,7 +11,10 @@ import { Bus } from "./bus.ts";
 import { Conductor } from "./conductor.ts";
 import { loadConfig } from "./config.ts";
 import { Orchestrator } from "./docker.ts";
-import { MachineRegistry } from "@nibblet/machine";
+import { HypervisorClient, MachineRegistry, VirtualMachines } from "@nibblet/machine";
+import { meta as apple } from "@nibblet/machine-apple/meta";
+import { meta as hyperv } from "@nibblet/machine-hyperv/meta";
+import { meta as kvm } from "@nibblet/machine-kvm/meta";
 import { createEmbedder } from "./embeddings.ts";
 import { serverName } from "./handlers.ts";
 import { HarnessModelLists } from "./opencode.ts";
@@ -37,6 +40,9 @@ const VERSION = z
     JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")),
   ).version;
 
+/** The host's hypervisor plugins, which run in the host bridge; the server only needs their names. */
+const hypervisors = [apple, hyperv, kvm];
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const db = connect(config.DATABASE_URL);
@@ -58,7 +64,27 @@ async function main(): Promise<void> {
 
   // Where nibblets run: containers on this engine, and virtual machines on
   // whatever hypervisors the host bridge offers.
-  const machines = new MachineRegistry([docker.machines()]);
+  const bridge = { url: config.HOST_MCP_URL, token: config.HOST_MCP_TOKEN };
+  const runnerImage = async () => {
+    const name = config.NIBBLET_RUNNER_IMAGE;
+    const found = await docker.docker
+      .getImage(name)
+      .inspect()
+      .catch(() => null);
+    return found ? { name, id: found.Id } : null;
+  };
+  const machines = new MachineRegistry([
+    docker.machines(),
+    ...hypervisors.map(
+      (meta) =>
+        new VirtualMachines({
+          meta,
+          client: new HypervisorClient(bridge, meta.id),
+          runnerImage,
+          version: VERSION,
+        }),
+    ),
+  ]);
   const conductor = new Conductor(store, machines, config);
   conductor.serverName = await serverName(store, config.NIBBLET_HOST_NAME);
   conductor.terminals.onTasks = (nibbletId, tasks) =>

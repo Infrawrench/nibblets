@@ -1,0 +1,18 @@
+{
+  "name": "@nibblet/machine-hyperv",
+  "version": "0.3.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./meta": "./src/meta.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@nibblet/machine": "workspace:*",
+    "@nibblet/protocol": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}
