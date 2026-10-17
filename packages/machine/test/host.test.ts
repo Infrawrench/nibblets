@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { isoName, makeIso, SETUP_LABEL, windowsSetupFiles } from "../src/host/index.ts";
+import {
+  BOOTSTRAP_PS1,
+  INSTALL_DONE,
+  INSTALL_SAYS,
+  installSaid,
+  isoName,
+  makeIso,
+  SETUP_LABEL,
+  SETUP_PS1,
+  windowsSetupFiles,
+} from "../src/host/index.ts";
 
 /** Reads an image back the way a reader would: the descriptor, the root directory, a file. */
 function readIso(image: Uint8Array) {
@@ -80,5 +90,22 @@ describe("Windows' setup disc", () => {
     const second = password(new TextDecoder().decode(again[0]?.data));
     expect(first).toBeTruthy();
     expect(first).not.toBe(second);
+  });
+});
+
+describe("what Windows says while its image is made", () => {
+  it("is the last line it said on COM1, among whatever else is there", () => {
+    const recorded = `${INSTALL_SAYS}Installing Node.js\r\n\u0000noise\r\n${INSTALL_SAYS}Building its helpers\r\n`;
+    expect(installSaid(recorded)).toBe("Building its helpers");
+    expect(installSaid("")).toBeNull();
+  });
+
+  it("says each step, and that it's done, from setup and the bootstrap", () => {
+    expect(SETUP_PS1).toContain("Say 'Setting up its bootstrap'");
+    expect(BOOTSTRAP_PS1).toContain(`Say '${INSTALL_DONE}'`);
+    // Before it shuts down, so a hypervisor hears it.
+    expect(BOOTSTRAP_PS1.indexOf(INSTALL_DONE)).toBeLessThan(
+      BOOTSTRAP_PS1.indexOf("Stop-Computer"),
+    );
   });
 });

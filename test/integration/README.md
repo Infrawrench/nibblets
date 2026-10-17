@@ -45,7 +45,9 @@ guest has one (Linux, for now).
 
 For Podman, point `DOCKER_HOST` at its socket and set
 `NIBBLET_TEST_DOCKER_SOCKET` to it, with the images loaded into Podman.
-`NIBBLET_TEST_VERBOSE=1` prints the stack's and the bridge's output.
+`NIBBLET_TEST_VERBOSE=1` prints the stack's and the bridge's output, and
+`NIBBLET_TEST_MACHINES_DIR` keeps the VMs and images there afterwards (with,
+for Windows on KVM, its installer's last screen).
 
 CI runs Linux in Docker, Podman and KVM on every push, and Windows on KVM
 in the Machines workflow (for changes to machines, weekly, or by hand,

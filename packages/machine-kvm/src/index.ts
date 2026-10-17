@@ -18,6 +18,8 @@ import { GUEST_PORT_NAME, type GuestImage, type GuestOs } from "@nibblet/protoco
 import {
   alive,
   connectTo,
+  INSTALL_DONE,
+  installSaid,
   linuxDiskFile,
   livePid,
   makeIso,
@@ -295,7 +297,7 @@ export class Kvm implements HypervisorPlugin {
   }
 
   /** Windows, installed by itself from the user's ISO and the setup disc. */
-  async prepareImage(_ctx: HostContext, guest: GuestOs, job: ImageJob): Promise<void> {
+  async prepareImage(ctx: HostContext, guest: GuestOs, job: ImageJob): Promise<void> {
     if (guest !== "windows") throw new Error(`KVM doesn't make ${guest} images itself`);
     if (!job.source || !existsSync(job.source)) {
       throw new Error("Give the path to a Windows ISO on this computer");
@@ -306,6 +308,10 @@ export class Kvm implements HypervisorPlugin {
     const setup = join(job.dir, "setup.iso");
     const vars = join(job.dir, "efi-vars.fd");
     const control = { qmp: join(job.dir, "install-qmp.sock"), pid: join(job.dir, "install.pid") };
+    // What setup and the bootstrap say on COM1, and the screen now and then:
+    // kept beside the images, so they're there to see if it doesn't finish.
+    const said = join(job.dir, "install-com1.log");
+    const screen = join(ctx.dir, "windows-install.png");
     await writeFile(
       setup,
       makeIso(
@@ -346,6 +352,10 @@ export class Kvm implements HypervisorPlugin {
       "user,id=net0",
       "-device",
       "e1000e,netdev=net0,romfile=",
+      "-chardev",
+      `file,id=said,path=${said}`,
+      "-device",
+      "isa-serial,chardev=said,index=0",
     ]);
     const pid = await livePid(control.pid);
     // Windows' boot loader asks for a key before it boots from a DVD.
@@ -356,12 +366,32 @@ export class Kvm implements HypervisorPlugin {
       ]).catch(() => undefined);
     }
     const started = Date.now();
+    let last: string | null = null;
     try {
-      while (pid && alive(pid)) {
+      for (let tick = 0; pid && alive(pid); tick++) {
         await sleep(15_000);
+        const now = installSaid(await tailFile(said));
+        if (now !== last) ctx.log(`Windows' install: ${now}`);
+        last = now;
+        // PNG needs QEMU 7.1; an older one just doesn't save it.
+        if (tick % 4 === 0) {
+          await qmp(control.qmp, [
+            { execute: "screendump", arguments: { filename: screen, format: "png" } },
+          ]).catch(() => undefined);
+        }
         const minutes = Math.round((Date.now() - started) / 60_000);
-        if (minutes > INSTALL_HOURS * 60) throw new Error("Windows took too long to install");
-        job.progress(null, `Installing Windows and the runner (${minutes} minutes so far)`);
+        if (minutes > INSTALL_HOURS * 60) {
+          throw new Error(
+            `Windows took too long to install: ${last ? `it last said "${last}"` : "its setup never got as far as Nibblets'"}. Its screen is in ${screen}`,
+          );
+        }
+        job.progress(null, `${last ?? "Installing Windows"} (${minutes} minutes so far)`);
+      }
+      last = installSaid(await tailFile(said));
+      if (last !== INSTALL_DONE) {
+        throw new Error(
+          `Windows' installer stopped before it was done: ${last ? `it last said "${last}"` : "its setup never got as far as Nibblets'"}. Its screen is in ${screen}`,
+        );
       }
     } finally {
       if (pid && alive(pid)) process.kill(pid, "SIGKILL");

@@ -14,6 +14,35 @@ import type { IsoFile } from "./iso.ts";
 
 export const SETUP_LABEL = "NIBBLETSETUP";
 
+/**
+ * How far making the image has got, as setup and the bootstrap say it on
+ * COM1: lines that start with this. A hypervisor that records COM1 while it
+ * installs can show them as progress, and say where it stopped if it does.
+ */
+export const INSTALL_SAYS = "nibblets: ";
+/** The last thing it says, once the runner is in: then it shuts down. */
+export const INSTALL_DONE = "Done: shutting down to finish its image";
+
+/** The last thing setup or the bootstrap said, from what COM1 recorded. */
+export function installSaid(recorded: string): string | null {
+  const lines = recorded
+    .split(/\r?\n/)
+    .filter((l) => l.startsWith(INSTALL_SAYS))
+    .map((l) => l.slice(INSTALL_SAYS.length).trim());
+  return lines.at(-1) ?? null;
+}
+
+/** PowerShell for saying how far it's got on COM1; nothing hears it once the image is made. */
+const SAY_PS1 = `function Say($what) {
+  try {
+    $port = New-Object System.IO.Ports.SerialPort 'COM1', 115200
+    $port.WriteTimeout = 2000
+    $port.Open()
+    $port.WriteLine("${INSTALL_SAYS}$what")
+    $port.Close()
+  } catch {}
+}`;
+
 /** What to install and where from: a release of this repository. */
 export interface WindowsSetup {
   /** `owner/repo` on GitHub. */
@@ -124,6 +153,9 @@ ${component(
 
 /** At `specialize`: the bootstrap onto C:, and a task to run it at every startup, as SYSTEM. */
 export const SETUP_PS1 = `$ErrorActionPreference = 'Stop'
+${SAY_PS1}
+trap { Say "Setting up its bootstrap failed: $($_.Exception.Message)"; break }
+Say 'Setting up its bootstrap'
 $media = (Get-Volume -FileSystemLabel ${SETUP_LABEL}).DriveLetter + ':\\'
 New-Item -ItemType Directory -Force -Path C:\\Nibblets | Out-Null
 Copy-Item ($media + 'BOOTSTRAP.PS1') C:\\Nibblets\\bootstrap.ps1
@@ -136,6 +168,7 @@ $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfil
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName 'Nibblets agent' -Action $action -Trigger $trigger -Settings $settings -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
+Say 'Finishing Windows setup'
 `;
 
 /**
@@ -148,6 +181,8 @@ $ProgressPreference = 'SilentlyContinue'
 $root = 'C:\\Nibblets'
 $log = "$root\\bootstrap.log"
 Start-Transcript -Path $log -Append | Out-Null
+${SAY_PS1}
+trap { Say "Its bootstrap failed: $($_.Exception.Message)"; break }
 $install = Get-Content "$root\\install.json" -Raw | ConvertFrom-Json
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -160,6 +195,7 @@ function Get-Download($url, $to) {
 }
 
 if (-not (Test-Path "$root\\node\\node.exe")) {
+  Say 'Installing Node.js'
   $base = 'https://nodejs.org/dist/latest-v24.x'
   Get-Download "$base/SHASUMS256.txt" "$root\\node-sums.txt"
   $line = Get-Content "$root\\node-sums.txt" | Where-Object { $_ -match "node-v24\\.[0-9.]+-win-$arch\\.zip$" } | Select-Object -First 1
@@ -174,6 +210,7 @@ if (-not (Test-Path "$root\\node\\node.exe")) {
 $want = "$($install.repo)@$($install.ref)"
 $have = if (Test-Path "$root\\app\\.nibblets") { Get-Content "$root\\app\\.nibblets" -Raw } else { '' }
 if ($have.Trim() -ne $want) {
+  Say "Downloading the runner ($want)"
   Get-Download "https://github.com/$($install.repo)/archive/$($install.ref).zip" "$root\\app.zip"
   if (Test-Path "$root\\app-unpacked") { Remove-Item -Recurse -Force "$root\\app-unpacked" }
   Expand-Archive "$root\\app.zip" "$root\\app-unpacked" -Force
@@ -183,9 +220,11 @@ if ($have.Trim() -ne $want) {
   $env:Path = "$root\\node;$env:Path"
   $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = '0'
   Push-Location "$root\\app"
+  Say "Installing the runner's packages"
   & "$root\\node\\corepack.cmd" pnpm install --prod --frozen-lockfile --filter '@nibblet/runner...'
   if ($LASTEXITCODE -ne 0) { throw 'Installing the runner failed' }
   Pop-Location
+  Say 'Building its helpers'
   New-Item -ItemType Directory -Force -Path "$root\\bin" | Out-Null
   foreach ($helper in 'runas', 'serial') {
     $source = Get-Content "$root\\app\\apps\\runner\\src\\machine\\windows\\$helper.cs" -Raw
@@ -198,6 +237,7 @@ if ($have.Trim() -ne $want) {
 
 if (Test-Path "$root\\preparing") {
   Remove-Item -Force "$root\\preparing"
+  Say '${INSTALL_DONE}'
   Stop-Transcript | Out-Null
   Stop-Computer -Force
   exit 0
