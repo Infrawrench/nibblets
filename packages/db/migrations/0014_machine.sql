@@ -1,0 +1,1 @@
+ALTER TABLE "nibblets" ADD COLUMN "machine" jsonb DEFAULT '{"backend":"docker","guest":"linux"}'::jsonb NOT NULL;

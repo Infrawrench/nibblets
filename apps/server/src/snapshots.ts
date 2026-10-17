@@ -20,7 +20,7 @@ import { newId, type Store } from "./store.ts";
 
 type SnapshotRow = typeof snapshotsTable.$inferSelect;
 
-/** What snapshots need from Docker: copying a home folder out and back in. */
+/** What snapshots need from a nibblet's machine: copying its home folder out and back in. */
 export interface HomeArchiver {
   archiveHome(nibbletId: string, out: Writable): Promise<void>;
   restoreHome(nibbletId: string, archive: Readable): Promise<void>;
@@ -43,7 +43,7 @@ export interface ScheduleArmer {
 export interface SnapshotDeps {
   store: Store;
   bus: Bus;
-  docker: HomeArchiver;
+  homes: HomeArchiver;
   conductor: Quieter;
   scheduler: ScheduleArmer;
   dataDir: string;
@@ -173,7 +173,7 @@ export class Snapshots {
         const old = await this.d.store.listSchedules(nibbletId);
         for (const s of old) this.d.scheduler.disarm(s.id);
 
-        await this.d.docker.restoreHome(nibbletId, createReadStream(this.file(target, "home")));
+        await this.d.homes.restoreHome(nibbletId, createReadStream(this.file(target, "home")));
         await importState(this.d.store.db, nibbletId, state);
 
         for (const s of await this.d.store.listSchedules(nibbletId))
@@ -234,7 +234,7 @@ export class Snapshots {
       const state = await exportState(this.d.store.db, nibbletId);
       await writeFile(statePath, gzipSync(JSON.stringify(state)));
       const out = createWriteStream(homePath);
-      await this.d.docker.archiveHome(nibbletId, out);
+      await this.d.homes.archiveHome(nibbletId, out);
       out.end();
       await finished(out);
       const sizeBytes = (await stat(statePath)).size + (await stat(homePath)).size;

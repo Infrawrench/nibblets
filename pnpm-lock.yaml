@@ -336,6 +336,12 @@ importers:
       '@nibblet/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@nibblet/machine':
+        specifier: workspace:*
+        version: link:../../packages/machine
+      '@nibblet/machine-docker':
+        specifier: workspace:*
+        version: link:../../packages/machine-docker
       '@nibblet/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -609,6 +615,31 @@ importers:
       zod:
         specifier: ^4.6.7
         version: 4.6.7
+
+  packages/machine:
+    dependencies:
+      '@nibblet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  packages/machine-docker:
+    dependencies:
+      '@nibblet/machine':
+        specifier: workspace:*
+        version: link:../machine
+      '@nibblet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      dockerode:
+        specifier: ^5.0.1
+        version: 5.0.1(supports-color@10.2.2)
+    devDependencies:
+      '@types/dockerode':
+        specifier: ^4.0.2
+        version: 4.0.2
 
   packages/protocol:
     dependencies:
@@ -7258,12 +7289,32 @@ snapshots:
       - electron-builder-squirrel-windows
       - supports-color
 
+  docker-modem@5.0.7(supports-color@10.2.2):
+    dependencies:
+      debug: 4.4.3(supports-color@10.2.2)
+      readable-stream: 3.6.2
+      split-ca: 1.0.1
+      ssh2: 1.17.0
+    transitivePeerDependencies:
+      - supports-color
+
   docker-modem@5.0.7(supports-color@7.2.0):
     dependencies:
       debug: 4.4.3(supports-color@7.2.0)
       readable-stream: 3.6.2
       split-ca: 1.0.1
       ssh2: 1.17.0
+    transitivePeerDependencies:
+      - supports-color
+
+  dockerode@5.0.1(supports-color@10.2.2):
+    dependencies:
+      '@balena/dockerignore': 1.0.2
+      '@grpc/grpc-js': 1.14.6
+      '@grpc/proto-loader': 0.7.15
+      docker-modem: 5.0.7(supports-color@10.2.2)
+      protobufjs: 7.6.6
+      tar-fs: 2.1.5
     transitivePeerDependencies:
       - supports-color
 

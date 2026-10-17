@@ -11,6 +11,7 @@ import {
   type Db,
 } from "@nibblet/db";
 import {
+  DEFAULT_MACHINE,
   HamsterLook,
   MASKED,
   maskMcpServers,
@@ -108,6 +109,7 @@ export function toNibblet(row: NibbletRow): Nibblet {
     resources: row.resources,
     monthlyBudgetUsd: row.monthlyBudgetUsd,
     snapshotPolicy: row.snapshotPolicy,
+    machine: row.machine,
     browser: row.browser,
     hostTools: row.hostTools,
     cliCredentials: row.cliCredentials,
@@ -262,6 +264,7 @@ export class Store {
         promptName: input.promptName ?? null,
         plain: input.plain ?? false,
         parentId,
+        machine: input.machine ?? DEFAULT_MACHINE,
         browser: input.browser ?? true,
         hostTools: input.hostTools ?? [],
         cliCredentials: input.cliCredentials ?? [],

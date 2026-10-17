@@ -19,6 +19,8 @@
     "@nibblet/bank-slash": "workspace:*",
     "@nibblet/bank-stripe": "workspace:*",
     "@nibblet/db": "workspace:*",
+    "@nibblet/machine": "workspace:*",
+    "@nibblet/machine-docker": "workspace:*",
     "@nibblet/protocol": "workspace:*",
     "croner": "^10.0.1",
     "dockerode": "^5.0.1",

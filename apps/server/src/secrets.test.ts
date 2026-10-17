@@ -62,6 +62,7 @@ describe("toNibblet", () => {
       statusEmoji: null,
       statusUpdatedAt: null,
       awaitingApproval: false,
+      machine: { backend: "docker", guest: "linux" },
       browser: false,
       hostTools: ["files"],
       cliCredentials: ["gh"],

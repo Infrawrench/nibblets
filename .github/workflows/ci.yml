@@ -65,6 +65,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Test against the runner image
-        run: pnpm vitest run apps/server/src/docker-home.test.ts
+        run: pnpm vitest run packages/machine-docker/test/home.test.ts
         env:
           NIBBLET_TEST_DOCKER: "1"

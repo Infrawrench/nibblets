@@ -11,6 +11,7 @@ import { LocationFix } from "./location.ts";
 import { CliStatuses, HostTools } from "./mcp.ts";
 import { HarnessId, HarnessModels } from "./models.ts";
 import { ConnectStatus, ProxyUrl, PublicAddress, TailscaleStatus } from "./connect.ts";
+import { MachineBackend, PrepareMachineImage } from "./machines.ts";
 import { OnePasswordGrants, OnePasswordStatus, VaultGrant } from "./onepassword.ts";
 import { procedure } from "./rpc.ts";
 import { Snapshot, SnapshotActivity, SnapshotTimeline } from "./snapshots.ts";
@@ -95,6 +96,17 @@ export const contract = {
      * Empty while it's asleep.
      */
     apps: procedure(Id, z.array(DesktopApp)),
+  },
+  machines: {
+    /** Where nibblets can run on this server: containers, and the host's hypervisors. */
+    list: procedure(z.object({}), z.array(MachineBackend)),
+    /**
+     * Makes the image a guest's virtual machines start from, in the
+     * background; `list` shows how it's going. Linux's is made by itself
+     * the first time one starts, but Windows needs an installer, and macOS
+     * a download the size of macOS.
+     */
+    prepare: procedure(PrepareMachineImage, Ok),
   },
   harnesses: {
     /** A harness's models: the fixed lists for Claude and Codex, the host's live list for OpenCode. */

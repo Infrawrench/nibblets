@@ -35,6 +35,7 @@ const nibblet: Nibblet = {
       lastRunAt: null,
     },
   ],
+  machine: { backend: "docker", guest: "linux" },
   browser: true,
   hostTools: [],
   cliCredentials: [],
