@@ -14,6 +14,7 @@ import { z } from "zod";
 import { cliStatuses } from "./clilogins.ts";
 import { readTailnetOAuth, setTailnetKeys, tailnetKeys } from "./tailnet-keys.ts";
 import { forgetGrants, onePasswordStatus, readGrants, setGrants } from "./onepassword.ts";
+import type { MachineRegistry } from "@nibblet/machine";
 import type { Conductor } from "./conductor.ts";
 import type { HarnessModelLists } from "./opencode.ts";
 import {
@@ -48,6 +49,7 @@ export interface Services {
   notifier: Notifier;
   harnessUpdates: HarnessUpdater;
   appUpdates: AppUpdater;
+  machines: MachineRegistry;
 }
 
 const ok = { ok: true } as const;
@@ -110,6 +112,9 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       get: ({ id }) => store.getNibblet(id),
       create: async ({ message, ...input }) => {
         await checkModel(input.harness, input.model);
+        await s.machines.check(input.machine).catch((err: unknown) => {
+          throw new RpcError("bad_request", err instanceof Error ? err.message : String(err));
+        });
         if (input.mcpServers?.length && input.hostTools?.length) {
           const host = await hostTools(s.config);
           input = {
@@ -139,6 +144,8 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
             "bad_request",
             "A sub-agent is on the tailnet as its parent's machine",
           );
+        if (tailscale && !conductor.capabilities(row).tailscale)
+          throw new RpcError("bad_request", "Its machine can't join a tailnet yet");
         if (tailscale && !tailscale.authKey && !(await readTailnetOAuth(store)))
           throw new RpcError(
             "bad_request",
@@ -212,6 +219,17 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       },
       decide: async ({ id, approvalId, approve, reason }) => {
         await conductor.approvals.decide(id, approvalId, approve, reason);
+        return ok;
+      },
+    },
+
+    machines: {
+      list: () => s.machines.describe(),
+      prepare: async ({ backend, guest, source }) => {
+        await s.machines.check({ backend, guest }).catch((err: unknown) => {
+          throw new RpcError("bad_request", err instanceof Error ? err.message : String(err));
+        });
+        await s.machines.get({ backend }).prepare(guest, source);
         return ok;
       },
     },

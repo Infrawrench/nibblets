@@ -37,6 +37,7 @@ export const keys = {
   tailnetKeys: (server: string) => ["tailnetKeys", server] as const,
   harnessUpdates: (server: string) => ["harnessUpdates", server] as const,
   appUpdate: (server: string) => ["appUpdate", server] as const,
+  machines: (server: string) => ["machines", server] as const,
   centralServers: () => ["central", "servers"] as const,
   route: (server: string, routes: string) => ["central", "route", server, routes] as const,
 };

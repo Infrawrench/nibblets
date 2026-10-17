@@ -1,5 +1,6 @@
 import type {
   Effort,
+  MachineChoice,
   HamsterLook,
   HarnessId,
   Heartbeat,
@@ -58,6 +59,11 @@ export const nibblets = pgTable("nibblets", {
     .$type<SnapshotPolicy>()
     .notNull()
     .default({ everyMinutes: 24 * 60, keep: 7 }),
+  /** Which machine plugin it runs on, and the guest; every nibblet before there was a choice was a container. */
+  machine: jsonb("machine")
+    .$type<MachineChoice>()
+    .notNull()
+    .default({ backend: "docker", guest: "linux" }),
   browser: boolean("browser").notNull().default(true),
   hostTools: text("host_tools").array().notNull().default([]),
   cliCredentials: text("cli_credentials").array().notNull().default([]),

@@ -20,6 +20,24 @@ const Env = z.object({
   NIBBLET_DATA_DIR: z.string().default("/data"),
   NIBBLET_WEB_DIST: z.string().optional(),
   DOCKER_SOCKET: z.string().optional(),
+  /**
+   * Which stack this server is, when an engine has more than one (a test
+   * stack beside a real one): it only tidies up its own nibblets' containers.
+   */
+  NIBBLET_STACK: z
+    .string()
+    .regex(/^[\w.-]+$/)
+    .default("nibblet"),
+  /** Whether to remove old releases' images: off for a stack that isn't the engine's only one. */
+  NIBBLET_PRUNE_IMAGES: z
+    .enum(["0", "1"])
+    .default("1")
+    .transform((v) => v === "1"),
+  /** Whether to install newer harness CLIs, into a volume every stack on the engine shares. */
+  NIBBLET_HARNESS_UPDATES: z
+    .enum(["0", "1"])
+    .default("1")
+    .transform((v) => v === "1"),
   /** The host MCP bridge (desktop app or `packages/host-mcp` CLI). Empty turns host tools off. */
   HOST_MCP_URL: z.string().default(""),
   HOST_MCP_TOKEN: z.string().default(""),
@@ -33,6 +51,14 @@ const Env = z.object({
   NIBBLET_APPROVAL_TIMEOUT_MINUTES: z.coerce.number().positive().default(30),
   /** The GitHub repository whose releases are Nibblets' updates. */
   NIBBLET_UPDATE_REPO: z.string().default("Infrawrench/nibblets"),
+  /**
+   * What Windows and macOS guests install the runner from: a git ref of that
+   * repository. Empty is this server's release; a commit tests unreleased code.
+   */
+  NIBBLET_GUEST_REF: z
+    .string()
+    .regex(/^[\w./-]*$/)
+    .default(""),
   /** Nibblets Connect, where this server can be linked to an account. */
   NIBBLET_CENTRAL_URL: z.url().default("https://app.nibblets.dev"),
   /** The machine's own name and OS; inside Docker the container can't see them. */

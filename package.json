@@ -15,7 +15,8 @@
     "test": "vitest run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "release": "node scripts/release.mjs"
+    "release": "node scripts/release.mjs",
+    "test:integration": "vitest run --project @nibblet/integration"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

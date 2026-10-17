@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_MACHINE, MachineChoice } from "./machines.ts";
 import { McpServerDef, McpServerList, ToolRules } from "./mcp.ts";
 import { Effort, HarnessId } from "./models.ts";
 import { SnapshotPolicy } from "./snapshots.ts";
@@ -213,6 +214,8 @@ export const Nibblet = z.object({
   heartbeats: z.array(Heartbeat),
   resources: Resources,
   snapshotPolicy: SnapshotPolicy,
+  /** Where it runs: a container, or a virtual machine. Sub-agents run in their host's. */
+  machine: MachineChoice,
   /** Whether the container gets a browser it and the user can drive. */
   browser: z.boolean(),
   /** Host MCP servers this nibblet may use, by name. None unless ticked. */
@@ -247,6 +250,8 @@ export const CreateNibblet = z.object({
   model: z.string(),
   effort: Effort,
   instructions: z.string().default(""),
+  /** A container unless asked for otherwise. */
+  machine: MachineChoice.default(DEFAULT_MACHINE),
   browser: z.boolean().default(true),
   hostTools: z.array(z.string()).default([]),
   cliCredentials: z.array(z.string()).default([]),

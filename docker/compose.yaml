@@ -47,6 +47,10 @@ services:
       KEYCHAIN_BRIDGE_TOKEN: ${KEYCHAIN_BRIDGE_TOKEN:-}
     extra_hosts:
       - host.docker.internal:host-gateway
+    # On the host's loopback for nibblets in virtual machines, whose guest
+    # agents' connections the host bridge makes here. Only ever loopback.
+    ports:
+      - 127.0.0.1:${NIBBLET_CREDPROXY_PORT:-8787}:8787
     # On the runners' network too, which the database isn't on.
     networks: [nibblet, runners]
 

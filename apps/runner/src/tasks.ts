@@ -1,6 +1,6 @@
 import type { McpServerSpec } from "@nibblet/harness";
 import type { BackgroundTask } from "@nibblet/protocol";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { appendFile, mkdir, open, rm } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
@@ -113,11 +113,12 @@ export class BackgroundTasks {
     this.tasks.set(id, running);
     try {
       // Its own process group, so stopping it stops whatever it started too.
-      const child = spawn("bash", ["-lc", input.command], {
+      const child = spawn(SHELL.file, [...SHELL.args, input.command], {
         cwd,
-        detached: true,
+        detached: process.platform !== "win32",
         stdio: ["ignore", fd, fd],
         env: process.env,
+        windowsHide: true,
       });
       running.child = child;
       child.on("error", (err) => {
@@ -266,7 +267,7 @@ export class BackgroundTasks {
           description:
             "Start a long-running command in the background (a dev server, a game server, a watcher, a long build) that keeps running after this call returns and after your turn ends. Use this rather than `&`, `nohup` or a shell tool's own background mode for anything that should stay up. Its output goes to a log you read with `task_output`; the user can watch it and stop it too. Tasks end if your container stops or restarts, so start them again when you wake up if they should still be running.",
           inputSchema: {
-            command: z.string().min(1).describe("The shell command to run, as in bash -lc"),
+            command: z.string().min(1).describe(`The shell command to run, as in ${SHELL.name}`),
             name: z.string().max(80).optional().describe("A short name for it, like 'minecraft'"),
             cwd: z
               .string()
@@ -343,18 +344,41 @@ export class BackgroundTasks {
   }
 }
 
+/**
+ * What a task runs in: a login bash, or on Windows PowerShell, which has no
+ * process groups, so a task there is over when its command is, and
+ * stopping one ends its tree with taskkill.
+ */
+const SHELL =
+  process.platform === "win32"
+    ? {
+        file: "powershell.exe",
+        args: ["-NoLogo", "-NoProfile", "-Command"],
+        name: "PowerShell -Command",
+      }
+    : { file: "bash", args: ["-lc"], name: "bash -lc" };
+
 /** Whether anything in a task's process group is still running. */
 function groupAlive(pid: number | undefined): boolean {
   if (!pid) return false;
   try {
-    process.kill(-pid, 0);
+    process.kill(process.platform === "win32" ? pid : -pid, 0);
     return true;
   } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "EPERM";
+    return err instanceof Error && "code" in err && err.code === "EPERM";
   }
 }
 
 function signalGroup(pid: number, signal: NodeJS.Signals): void {
+  if (process.platform === "win32") {
+    // No signals but the end: gently first, which a windowed app may answer.
+    execFile(
+      "taskkill",
+      ["/PID", String(pid), "/T", ...(signal === "SIGKILL" ? ["/F"] : [])],
+      () => {},
+    );
+    return;
+  }
   try {
     process.kill(-pid, signal);
   } catch {

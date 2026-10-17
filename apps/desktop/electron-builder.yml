@@ -39,6 +39,13 @@ mac:
   hardenedRuntime: true
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  # Apple's VM helper, for nibblets in virtual machines: signed like the
+  # app, with the virtualization entitlement it needs (entitlements.mac.plist).
+  extraResources:
+    - from: out/nibblet-vm
+      to: nibblet-vm
+  binaries:
+    - Contents/Resources/nibblet-vm
   extendInfo:
     LSUIElement: false
 win:

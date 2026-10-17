@@ -84,7 +84,7 @@ describe.skipIf(!url)("snapshots", () => {
     snapshots = new Snapshots({
       store,
       bus,
-      docker: home,
+      homes: home,
       conductor: {
         busy: () => busy,
         interrupt: () => {

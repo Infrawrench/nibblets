@@ -9,6 +9,7 @@
  * reach.
  */
 import { mkdir } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import type { McpServerSpec } from "@nibblet/harness";
 import {
   GATE_PORT,
@@ -110,7 +111,7 @@ export function gatedSpecs(
   return specs;
 }
 
-const onePasswordScript = new URL("./onepassword-mcp.ts", import.meta.url).pathname;
+const onePasswordScript = fileURLToPath(new URL("./onepassword-mcp.ts", import.meta.url));
 
 async function main(): Promise<void> {
   const env = GuardEnv.parse(process.env);

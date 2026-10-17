@@ -53,3 +53,20 @@ export const SnapshotTimeline = z.object({
   activity: SnapshotActivity,
 });
 export type SnapshotTimeline = z.infer<typeof SnapshotTimeline>;
+
+/**
+ * Caches inside a home folder that rebuild themselves, so aren't worth
+ * snapshotting: relative to the folder the home is in, which is called
+ * `nibblet` on every machine.
+ */
+export const HOME_ARCHIVE_EXCLUDES = [
+  "nibblet/.cache",
+  "nibblet/.npm/_cacache",
+  // The browser's profile, in the guard's home (and where it was before the guard).
+  ...["nibblet/.guard/.config/chromium", "nibblet/.config/chromium"].flatMap((profile) => [
+    `${profile}/*/Cache`,
+    `${profile}/*/Code Cache`,
+    `${profile}/*/GPUCache`,
+    `${profile}/*/Service Worker/CacheStorage`,
+  ]),
+];
