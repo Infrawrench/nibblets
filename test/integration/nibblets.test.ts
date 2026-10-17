@@ -128,7 +128,7 @@ describe.skipIf(!backend)(`nibblets in ${backend || "nothing"} machines`, () => 
       });
       expect(nibblet.machine).toEqual(machine);
       await replied(nibblet.id, 1, FIRST_START_MS);
-      expect(await stack.modelCalls()).toBeGreaterThan(0);
+      expect((await stack.modelCalls()).length).toBeGreaterThan(0);
     },
     FIRST_START_MS + 60_000,
   );
@@ -215,8 +215,15 @@ describe.skipIf(!backend)(`nibblets in ${backend || "nothing"} machines`, () => 
         if (sub?.item.type === "subagent" && sub.item.status === "error") {
           throw new Error(`The sub-agent failed: ${sub.item.result ?? ""}\n${await stack.logs()}`);
         }
-        if (Date.now() > until)
-          throw new Error(`No sub-agent reported back\n${await stack.logs()}`);
+        if (Date.now() > until) {
+          const calls = (await stack.modelCalls()).map(
+            (c) =>
+              `${c.answer} <- ${c.last.slice(0, 120)} (${c.tools.filter((t) => t.includes("nibblet")).join(", ")})`,
+          );
+          throw new Error(
+            `No sub-agent reported back.\nThe model's calls:\n${calls.join("\n")}\nThe thread:\n${JSON.stringify(thread.map((s) => s.item)).slice(-3000)}\n${await stack.logs()}`,
+          );
+        }
         await sleep(2000);
       }
     },

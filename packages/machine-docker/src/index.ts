@@ -173,7 +173,12 @@ export class DockerMachines implements MachinePlugin {
       name: runnerName(nibbletId),
       Image: this.opts.runnerImage,
       Env: envList(spec.env),
-      Labels: { [MANAGED]: "true", [STACK]: this.opts.stack ?? DEFAULT_STACK, [ROLE]: "runner", [NIBBLET]: nibbletId },
+      Labels: {
+        [MANAGED]: "true",
+        [STACK]: this.opts.stack ?? DEFAULT_STACK,
+        [ROLE]: "runner",
+        [NIBBLET]: nibbletId,
+      },
       HostConfig: {
         NetworkMode: this.opts.network,
         // Chromium wants more shared memory than Docker's 64 MB default.
@@ -362,7 +367,12 @@ export class DockerMachines implements MachinePlugin {
     if (await this.volumeExists(name)) return name;
     await this.docker.createVolume({
       Name: name,
-      Labels: { [MANAGED]: "true", [STACK]: this.opts.stack ?? DEFAULT_STACK, [ROLE]: role, [NIBBLET]: nibbletId },
+      Labels: {
+        [MANAGED]: "true",
+        [STACK]: this.opts.stack ?? DEFAULT_STACK,
+        [ROLE]: role,
+        [NIBBLET]: nibbletId,
+      },
     });
     return name;
   }
@@ -397,7 +407,12 @@ export class DockerMachines implements MachinePlugin {
     const helper = await this.docker.createContainer({
       Image: this.opts.runnerImage,
       Entrypoint: ["true"],
-      Labels: { [MANAGED]: "true", [STACK]: this.opts.stack ?? DEFAULT_STACK, [ROLE]: "home-copy", [NIBBLET]: nibbletId },
+      Labels: {
+        [MANAGED]: "true",
+        [STACK]: this.opts.stack ?? DEFAULT_STACK,
+        [ROLE]: "home-copy",
+        [NIBBLET]: nibbletId,
+      },
       HostConfig: { Mounts: [{ Type: "volume", Source: volume, Target: RUNNER_HOME }] },
     });
     try {
@@ -448,7 +463,11 @@ export class DockerMachines implements MachinePlugin {
       Image: this.opts.runnerImage,
       User: "0",
       Cmd: cmd,
-      Labels: { [MANAGED]: "true", [STACK]: this.opts.stack ?? DEFAULT_STACK, [ROLE]: "home-snapshot" },
+      Labels: {
+        [MANAGED]: "true",
+        [STACK]: this.opts.stack ?? DEFAULT_STACK,
+        [ROLE]: "home-snapshot",
+      },
       AttachStdin: io.stdin !== undefined,
       AttachStdout: true,
       AttachStderr: true,
@@ -516,7 +535,12 @@ export class DockerMachines implements MachinePlugin {
     const container = await this.docker.createContainer({
       Image: this.opts.runnerImage,
       Cmd: ["node", ENTRY, TAILSCALE_LEAVE_COMMAND],
-      Labels: { [MANAGED]: "true", [STACK]: this.opts.stack ?? DEFAULT_STACK, [ROLE]: "tailscale-leave", [NIBBLET]: nibbletId },
+      Labels: {
+        [MANAGED]: "true",
+        [STACK]: this.opts.stack ?? DEFAULT_STACK,
+        [ROLE]: "tailscale-leave",
+        [NIBBLET]: nibbletId,
+      },
       HostConfig: {
         NetworkMode: this.opts.network,
         ...RUNNER_HARDENING,

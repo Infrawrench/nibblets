@@ -224,7 +224,13 @@ export class VirtualMachines implements MachinePlugin {
 
   async machines(): Promise<Map<string, MachineState>> {
     const out = new Map<string, MachineState>();
-    for (const vm of await this.client.vms()) {
+    // No bridge, or none of this hypervisor on the host: there are none. A bridge that's down is an error.
+    if (!this.client.configured) return out;
+    const vms = await this.client.vms().catch((err: unknown) => {
+      if (err instanceof BridgeError && err.status === 404) return [];
+      throw err;
+    });
+    for (const vm of vms) {
       out.set(vm.id, { id: `vm:${vm.boot ?? ""}`, running: vm.running });
       // From before this server: what it's on, to hear of its end.
       if (vm.running && vm.boot && !this.boots.has(vm.id)) this.boots.set(vm.id, vm.boot);
