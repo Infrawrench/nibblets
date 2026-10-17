@@ -45,10 +45,23 @@ const INSTALL_HOURS = 3;
 
 const x86 = process.arch !== "arm64";
 
-/** QEMU's name for this machine's architecture, and the machine type it boots with KVM. */
-const ARCH = x86
-  ? { qemu: "qemu-system-x86_64", machine: "q35,accel=kvm" }
-  : { qemu: "qemu-system-aarch64", machine: "virt,accel=kvm,gic-version=host" };
+export type Accel = "kvm" | "tcg";
+
+/**
+ * QEMU's name for this machine's architecture, and the machine type it
+ * boots. With KVM, the host's own CPU; with TCG (QEMU's own, for testing
+ * where there's no KVM), the most QEMU can be.
+ */
+function arch(accel: Accel) {
+  const cpu = accel === "kvm" ? "host" : "max";
+  return x86
+    ? { qemu: "qemu-system-x86_64", machine: `q35,accel=${accel}`, cpu }
+    : {
+        qemu: "qemu-system-aarch64",
+        machine: `virt,accel=${accel}${accel === "kvm" ? ",gic-version=host" : ""}`,
+        cpu,
+      };
+}
 
 /**
  * UEFI firmware, as distributions package it: the code, read-only, and a
@@ -124,7 +137,9 @@ async function qmp(
  * The devices a guest has. Linux's are virtio, with the agent's port a
  * named virtio serial port; Windows has no drivers for virtio until
  * someone installs them, so it gets AHCI disks, an e1000e network card,
- * and COM2 for the agent's port. Both have the console on a virtio
+ * and COM2 for the agent's port. Neither network card has a boot ROM:
+ * nothing boots from the network, and the ROMs are packaged apart. Both
+ * have the console on a virtio
  * console (hvc0), to a file, and user-mode networking, where the host is
  * 10.0.2.2 and nothing on the host's own networks is in the way.
  */
@@ -162,7 +177,7 @@ export function deviceArgs(
       "-netdev",
       "user,id=net0",
       "-device",
-      `e1000e,netdev=net0,mac=${mac}`,
+      `e1000e,netdev=net0,mac=${mac},romfile=`,
       "-device",
       "isa-serial,chardev=agent,index=1",
     ];
@@ -176,14 +191,15 @@ export function deviceArgs(
     "-netdev",
     "user,id=net0",
     "-device",
-    `virtio-net-pci,netdev=net0,mac=${mac}`,
+    `virtio-net-pci,netdev=net0,mac=${mac},romfile=`,
     "-device",
     `virtserialport,chardev=agent,name=${GUEST_PORT_NAME}`,
   ];
 }
 
-/** What every VM here starts with: a name, KVM, the firmware, and nothing on screen. */
+/** What every VM here starts with: a name, its accelerator, the firmware, and nothing on screen. */
 function baseArgs(
+  accel: Accel,
   name: string,
   size: { cpus: number; memoryMb: number },
   fw: { code: string; vars: string },
@@ -193,9 +209,9 @@ function baseArgs(
     "-name",
     name,
     "-machine",
-    ARCH.machine,
+    arch(accel).machine,
     "-cpu",
-    "host",
+    arch(accel).cpu,
     "-smp",
     String(size.cpus),
     "-m",
@@ -218,8 +234,8 @@ function baseArgs(
   ];
 }
 
-async function qemu(args: string[]): Promise<void> {
-  await run(ARCH.qemu, args, { timeout: 60_000 }).catch((err: unknown) => {
+async function qemu(accel: Accel, args: string[]): Promise<void> {
+  await run(arch(accel).qemu, args, { timeout: 60_000 }).catch((err: unknown) => {
     throw new Error(`QEMU didn't start: ${err instanceof Error ? err.message : String(err)}`);
   });
 }
@@ -235,11 +251,19 @@ export class Kvm implements HypervisorPlugin {
   readonly id = meta.id;
   readonly name = meta.name;
   readonly diskFormat: "raw" = "raw";
+  private readonly accel: Accel;
+
+  /** `accel`: TCG only for testing, or a machine without KVM, which it's far slower on. */
+  constructor(opts: { accel?: Accel } = {}) {
+    this.accel = opts.accel ?? "kvm";
+  }
 
   async detect(_ctx: HostContext) {
     if (process.platform !== "linux")
       return { available: false, detail: "Only on Linux", guests: [] };
-    const kvm = await access("/dev/kvm", constants.R_OK | constants.W_OK).then(
+    const kvm = await (
+      this.accel === "tcg" ? Promise.resolve() : access("/dev/kvm", constants.R_OK | constants.W_OK)
+    ).then(
       () => null,
       () =>
         existsSync("/dev/kvm")
@@ -247,7 +271,7 @@ export class Kvm implements HypervisorPlugin {
           : "There's no /dev/kvm: this machine's CPU or its VM doesn't offer KVM",
     );
     if (kvm) return { available: false, detail: kvm, guests: [] };
-    const tools: string[] = [ARCH.qemu, "qemu-img"];
+    const tools: string[] = [arch(this.accel).qemu, "qemu-img"];
     for (const tool of tools) {
       const missing = await run(tool, ["--version"]).then(
         () => false,
@@ -296,8 +320,9 @@ export class Kvm implements HypervisorPlugin {
     await run("qemu-img", ["create", "-q", "-f", "qcow2", disk, `${WINDOWS_DISK_GB}G`]);
     await copyFile(fw.vars, vars);
     job.progress(null, "Starting Windows' installer");
-    await qemu([
+    await qemu(this.accel, [
       ...baseArgs(
+        this.accel,
         `nibblet-image-${Date.now().toString(36)}`,
         { cpus: 2, memoryMb: 4096 },
         { ...fw, vars },
@@ -320,7 +345,7 @@ export class Kvm implements HypervisorPlugin {
       "-netdev",
       "user,id=net0",
       "-device",
-      "e1000e,netdev=net0",
+      "e1000e,netdev=net0,romfile=",
     ]);
     const pid = await livePid(control.pid);
     // Windows' boot loader asks for a key before it boots from a DVD.
@@ -379,8 +404,8 @@ export class Kvm implements HypervisorPlugin {
     await rename(f.console, `${f.console}.old`).catch(() => undefined);
     for (const socket of [f.agent, f.qmp]) await rm(socket, { force: true });
     const mac = (await readFile(f.mac, "utf8")).trim();
-    await qemu([
-      ...baseArgs(`nibblet-${vm.id}`, vm, { ...fw, vars: f.vars }, f),
+    await qemu(this.accel, [
+      ...baseArgs(this.accel, `nibblet-${vm.id}`, vm, { ...fw, vars: f.vars }, f),
       ...deviceArgs(vm.guest, f, { agent: f.agent, console: f.console }, mac),
     ]);
   }
