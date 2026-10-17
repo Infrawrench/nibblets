@@ -181,7 +181,7 @@ async function main(): Promise<void> {
   await locations.resetStale();
   await scheduler.start();
   snapshots.start();
-  harnessUpdates.start();
+  if (config.NIBBLET_HARNESS_UPDATES) harnessUpdates.start();
   bank.start();
   // An update leaves the last release's images behind; reconcile has just
   // moved running nibblets off them. Again daily, for those that were stopped.
@@ -192,8 +192,8 @@ async function main(): Promise<void> {
       },
       (err: unknown) => console.error("couldn't remove old images", err),
     );
-  prune();
-  const pruning = setInterval(prune, 24 * 60 * 60_000);
+  const pruning = config.NIBBLET_PRUNE_IMAGES ? setInterval(prune, 24 * 60 * 60_000) : undefined;
+  if (config.NIBBLET_PRUNE_IMAGES) prune();
   // Budget waits end when the month turns, or when a setting changes here;
   // this catches the rest, such as the proxy going back to a subscription.
   const budgetSweep = setInterval(() => void conductor.recheckBudgetWaits(), 5 * 60_000);

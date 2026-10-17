@@ -29,6 +29,13 @@ import {
 const MANAGED = "nibblet.managed";
 const ROLE = "nibblet.role";
 const NIBBLET = "nibblet.id";
+/**
+ * Which server's it is, so two on one engine (a test stack beside a real
+ * one) each tidy up only their own. Made before there were stacks, it has
+ * none, and is the default's.
+ */
+const STACK = "nibblet.stack";
+export const DEFAULT_STACK = "nibblet";
 
 export const runnerName = (nibbletId: string): string => `nibblet-${nibbletId}`;
 export const homeVolume = (nibbletId: string): string => `nibblet-home-${nibbletId}`;
@@ -80,6 +87,8 @@ export interface DockerMachinesOptions {
   runnerImage: string;
   /** The host's SSH agent socket as the engine sees it; empty turns sharing it off. */
   hostSshAuthSock: string;
+  /** Which stack's containers are its own; `nibblet` unless there's more than one. */
+  stack?: string;
 }
 
 /**
@@ -164,7 +173,7 @@ export class DockerMachines implements MachinePlugin {
       name: runnerName(nibbletId),
       Image: this.opts.runnerImage,
       Env: envList(spec.env),
-      Labels: { [MANAGED]: "true", [ROLE]: "runner", [NIBBLET]: nibbletId },
+      Labels: { [MANAGED]: "true", [STACK]: this.opts.stack ?? DEFAULT_STACK, [ROLE]: "runner", [NIBBLET]: nibbletId },
       HostConfig: {
         NetworkMode: this.opts.network,
         // Chromium wants more shared memory than Docker's 64 MB default.
@@ -353,7 +362,7 @@ export class DockerMachines implements MachinePlugin {
     if (await this.volumeExists(name)) return name;
     await this.docker.createVolume({
       Name: name,
-      Labels: { [MANAGED]: "true", [ROLE]: role, [NIBBLET]: nibbletId },
+      Labels: { [MANAGED]: "true", [STACK]: this.opts.stack ?? DEFAULT_STACK, [ROLE]: role, [NIBBLET]: nibbletId },
     });
     return name;
   }
@@ -388,7 +397,7 @@ export class DockerMachines implements MachinePlugin {
     const helper = await this.docker.createContainer({
       Image: this.opts.runnerImage,
       Entrypoint: ["true"],
-      Labels: { [MANAGED]: "true", [ROLE]: "home-copy", [NIBBLET]: nibbletId },
+      Labels: { [MANAGED]: "true", [STACK]: this.opts.stack ?? DEFAULT_STACK, [ROLE]: "home-copy", [NIBBLET]: nibbletId },
       HostConfig: { Mounts: [{ Type: "volume", Source: volume, Target: RUNNER_HOME }] },
     });
     try {
@@ -439,7 +448,7 @@ export class DockerMachines implements MachinePlugin {
       Image: this.opts.runnerImage,
       User: "0",
       Cmd: cmd,
-      Labels: { [MANAGED]: "true", [ROLE]: "home-snapshot" },
+      Labels: { [MANAGED]: "true", [STACK]: this.opts.stack ?? DEFAULT_STACK, [ROLE]: "home-snapshot" },
       AttachStdin: io.stdin !== undefined,
       AttachStdout: true,
       AttachStderr: true,
@@ -507,7 +516,7 @@ export class DockerMachines implements MachinePlugin {
     const container = await this.docker.createContainer({
       Image: this.opts.runnerImage,
       Cmd: ["node", ENTRY, TAILSCALE_LEAVE_COMMAND],
-      Labels: { [MANAGED]: "true", [ROLE]: "tailscale-leave", [NIBBLET]: nibbletId },
+      Labels: { [MANAGED]: "true", [STACK]: this.opts.stack ?? DEFAULT_STACK, [ROLE]: "tailscale-leave", [NIBBLET]: nibbletId },
       HostConfig: {
         NetworkMode: this.opts.network,
         ...RUNNER_HARDENING,
@@ -534,6 +543,11 @@ export class DockerMachines implements MachinePlugin {
     return this.removeContainer(runnerName(nibbletId));
   }
 
+  /** Whether something with these labels is this stack's. */
+  private ours(labels: Record<string, string | undefined>): boolean {
+    return (labels[STACK] ?? DEFAULT_STACK) === (this.opts.stack ?? DEFAULT_STACK);
+  }
+
   /** Nibblet ids with a runner container, and whether it is running. */
   async machines(): Promise<Map<string, MachineState>> {
     const list = await this.docker.listContainers({
@@ -542,6 +556,7 @@ export class DockerMachines implements MachinePlugin {
     });
     const out = new Map<string, MachineState>();
     for (const c of list) {
+      if (!this.ours(c.Labels)) continue;
       const nibbletId = c.Labels[NIBBLET];
       if (nibbletId) out.set(nibbletId, { id: c.Id, running: c.State === "running" });
     }
@@ -576,7 +591,7 @@ export class DockerMachines implements MachinePlugin {
         const line = buffer.slice(0, nl);
         buffer = buffer.slice(nl + 1);
         const event = parseDockerEvent(line);
-        if (!event?.nibbletId) continue;
+        if (!event?.nibbletId || !this.ours({ [STACK]: event.stack })) continue;
         // Ours to remove: its death is expected, whatever the nibblet's status says by now.
         if (event.containerId && this.removing.has(event.containerId)) continue;
         onExit(event.nibbletId, event.exitCode);
@@ -667,6 +682,7 @@ export function parseDockerEvent(line: string): {
   nibbletId: string | undefined;
   containerId: string | undefined;
   exitCode: number | null;
+  stack: string | undefined;
 } | null {
   try {
     const parsed: { id?: string; Actor?: { ID?: string; Attributes?: Record<string, string> } } =
@@ -677,6 +693,7 @@ export function parseDockerEvent(line: string): {
       nibbletId: attrs[NIBBLET],
       containerId: parsed.Actor?.ID ?? parsed.id,
       exitCode: code,
+      stack: attrs[STACK],
     };
   } catch {
     return null;

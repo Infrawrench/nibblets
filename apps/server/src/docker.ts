@@ -32,6 +32,7 @@ export class Orchestrator {
       network: this.config.NIBBLET_NETWORK,
       runnerImage: this.config.NIBBLET_RUNNER_IMAGE,
       hostSshAuthSock: this.config.HOST_SSH_AUTH_SOCK,
+      stack: this.config.NIBBLET_STACK,
     });
   }
 
