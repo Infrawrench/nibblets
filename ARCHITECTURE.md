@@ -1,20 +1,20 @@
 # Architecture
 
-Nibblets are self-hosted, always-on agents, each drawn as a hamster you can dress up. A nibblet is a thread: it runs in its own Docker container on one of three harnesses (Claude Agent SDK, Codex, OpenCode), wakes on a heartbeat and on schedules, keeps its memory outside the container in Postgres with pgvector, and can spawn sub-agents, which are child nibblets that run in their parent's container.
+Nibblets are self-hosted, always-on agents, each drawn as a hamster you can dress up. A nibblet is a thread: it runs in a machine of its own (a Docker container, or a virtual machine on the host; see [Machines](#machines-containers-and-virtual-machines)) on one of its harnesses (Claude Agent SDK, Codex, OpenCode, Kimi Code), wakes on a heartbeat and on schedules, keeps its memory outside the container in Postgres with pgvector, and can spawn sub-agents, which are child nibblets that run in their parent's container.
 
 ## Processes
 
 Everything runs in Docker on two networks. `nibblet` has the database, the server and the credential proxy. `nibblet-runners` has the server, the credential proxy and the nibblets' containers, so a nibblet can't reach the database.
 
-| Service        | Image                          | Address on the network | What it does                                                                                                                |
-| -------------- | ------------------------------ | ---------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `server`       | `nibblet/server`               | `server:8420`          | API, web UI, live WebSocket, runner WebSocket, nibblet tools over MCP, scheduler, heartbeats, Docker orchestration, tunnels |
-| `db`           | `pgvector/pgvector:0.8.7-pg18` | `db:5432`              | All durable state: nibblets, thread items, schedules, memories (with embeddings), peers, sign-ins                           |
-| `credproxy`    | `nibblet/credproxy`            | `credproxy:8787`       | Holds the host's Claude and ChatGPT subscription credentials, refreshes them, and injects them into harness traffic         |
-| `tunnel`       | `cloudflare/cloudflared`       | none                   | Started by the server when a tunnel is configured                                                                           |
-| `nibblet-<id>` | `nibblet/runner`               | `nibblet-<id>`         | One per running nibblet: the runner, its harness, OpenComputerUse with Chromium, and the desktop for its other apps         |
+| Service        | Image                          | Address on the network | What it does                                                                                                                       |
+| -------------- | ------------------------------ | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `server`       | `nibblet/server`               | `server:8420`          | API, web UI, live WebSocket, runner WebSocket, nibblet tools over MCP, scheduler, heartbeats, Docker orchestration, tunnels        |
+| `db`           | `pgvector/pgvector:0.8.7-pg18` | `db:5432`              | All durable state: nibblets, thread items, schedules, memories (with embeddings), peers, sign-ins                                  |
+| `credproxy`    | `nibblet/credproxy`            | `credproxy:8787`       | Holds the host's Claude and ChatGPT subscription credentials, refreshes them, and injects them into harness traffic                |
+| `tunnel`       | `cloudflare/cloudflared`       | none                   | Started by the server when a tunnel is configured                                                                                  |
+| `nibblet-<id>` | `nibblet/runner`               | `nibblet-<id>`         | One per running nibblet in a container: the runner, its harness, OpenComputerUse with Chromium, and the desktop for its other apps |
 
-The server is the only service published on the host (`127.0.0.1:8420`). It mounts the Docker socket to manage the tunnel and runner containers.
+The server is published on the host at `127.0.0.1:8420`, and the credential proxy at `127.0.0.1:8787`, for the host bridge to reach on behalf of nibblets in virtual machines. The server mounts the Docker socket to manage the tunnel and runner containers. Docker is always needed: it runs the stack, whatever the nibblets run in.
 
 ## Credentials (`apps/credproxy`)
 
@@ -107,6 +107,36 @@ Kimi nibblets use the host's own Kimi Code CLI login, like OpenCode ones. The ho
 - **Without a bridge or a login:** the harness says so rather than guessing at credentials. Kimi Code has no credential proxy to fall back to.
 - **Effort:** OpenCode has no effort setting, so its models carry none and the effort menu is hidden.
 
+## Machines: containers and virtual machines
+
+Where a nibblet runs is a plugin. `@nibblet/machine` is the base: `MachinePlugin`, the contract the conductor uses for everything it does to a nibblet's machine (start, stop, reach a port in it, run its sub-agents, archive its home), and `MachineRegistry`, which loads the plugins and routes each nibblet to its own. A nibblet records its `machine` (`{ backend, guest }`) when it's made; it never changes, and sub-agents run in their host's.
+
+| Plugin                      | Runs on                     | Machines                                       | Guests                        |
+| --------------------------- | --------------------------- | ---------------------------------------------- | ----------------------------- |
+| `docker` (`machine-docker`) | the server, on Docker's API | containers from the runner image (recommended) | Linux                         |
+| `apple` (`machine-apple`)   | the host bridge, on a Mac   | Virtualization.framework, through `nibblet-vm` | Linux; macOS on Apple silicon |
+| `hyperv` (`machine-hyperv`) | the host bridge, on Windows | Hyper-V, through PowerShell                    | Linux, Windows                |
+| `kvm` (`machine-kvm`)       | the host bridge, on Linux   | KVM through QEMU                               | Linux; Windows on x86         |
+
+What each can do differs (`MachineCapabilities`): only containers share the host's SSH agent and change size while they run, and only Linux guests have the browser, the desktop and Tailscale. The conductor turns off what a machine can't have, and the UI says so.
+
+### Virtual machines
+
+The server is in a container, so it can't drive a hypervisor. VM plugins run in the host bridge (`HypervisorPlugin`, loaded by `hostMachines` for the bridge's OS), which serves them at `/machines` (`bridge-api.ts`); the server has one `VirtualMachines` plugin per hypervisor, which speaks to it. The bridge keeps each VM's folder (its disks, `vm.json` with its size and boot, its console) under its data directory, `machines/<hypervisor>/vms/<id>`, and VMs outlive it: Apple's are each a detached `nibblet-vm run`, KVM's a daemonised QEMU, and Hyper-V keeps its own.
+
+- **The guest agent** (`apps/runner/src/machine`): a daemon the guest starts at boot, as root (SYSTEM on Windows), on a virtual serial port of its own: a second virtio console (`/dev/hvc1`) on Apple, a named virtio serial port on KVM, COM2 on Hyper-V and for Windows on KVM, and vsock for macOS guests (relayed by the host's own `nibblet-vm guest-relay`, since Node can't open vsock; Windows' COM port by `nibblet-serial.exe`). The hypervisor plugin hands the host's end to the bridge, which relays it to the server over a WebSocket the server opens (`/machines/:hv/vms/:id/link`). Over it (protocol's `guest.ts`) the server does what `docker exec` does for a container: runs the entry's commands (`main`, `subagent`, `stop-subagent`, `archive-home` and the rest), signals them, and reads the end of their output, and opens connections to ports in the guest for the browser's view.
+- **No route to the host:** the agent listens on the guest's loopback for `server` and `credproxy` (its hosts file points them there), and each connection the runner makes goes out over the port, for the bridge to make on the host (`GuestRelay`). The port is only the guest's and the hypervisor's, so nothing in the guest holds a key, and the entry's firewall fences off the VM's network as it does a container's (the host's address is let through, as `host.docker.internal` is for a container). Hyper-V's COM port is slow next to a virtio one, so the browser's view and snapshots are too there.
+- **Disks:** each VM has a system disk, made from its guest's image (an APFS clone on a Mac, a qcow2 overlay on KVM, a differencing VHDX on Hyper-V) and replaced when the image changes, and a home disk, kept until the nibblet is deleted, which the agent formats the first time and mounts over the agent's home. Snapshots of a VM that's off boot it for the job, without starting the nibblet.
+- **Starting:** `VirtualMachines.start` makes sure the guest's image is made and current, boots the VM, waits for its agent, and runs the entry. CPUs and memory are fixed while it runs (whole CPUs, up to 4 when there's no cap).
+
+### Guests' images
+
+- **Linux** (`linux-image.ts`): the runner image itself, with a kernel, systemd, networkd and the agent's service added, built with the host's Docker CLI and laid out as an EFI disk (systemd-boot, and an ext4 root made with `mke2fs -d` straight into the disk at its offset) in a throwaway container, with no root or loop devices. Made by itself on first start, and again when the runner image changes. It checks there's room first: about 12 GB. On arm64 it boots with `arm64.nosme`, and there's no memory balloon, both for M-series Macs.
+- **Windows** (`windows-image.ts`, Hyper-V and KVM): from the user's own installer ISO, given in Settings. A setup disc made here (`iso.ts`, since Windows hosts have no tool for it) answers setup (`autounattend.xml`), which installs Windows without asking, and at `specialize` sets `bootstrap.ps1` to run at every startup as SYSTEM: it installs Node 24 and the release's runner from GitHub, builds `nibblet-runas.exe` and `nibblet-serial.exe` (`machine/windows/*.cs`) with `Add-Type`, and runs the agent. While the image is being made, it shuts down instead. In the guest, the guard runs as SYSTEM and the agent as a hidden local user; stopping is at once, since Windows has no SIGTERM for a console process.
+- **macOS** (`machine-apple`, Apple silicon): the newest macOS Apple offers this Mac, downloaded and installed by `nibblet-vm macos-install`. macOS has no answer file, so its Data volume is mounted on the host and given a LaunchDaemon (`bootstrap.sh`), the VM helper, and the mark that setup's done, which takes an administrator's password, once. Then one boot installs Node and the runner. Each VM gets a machine identifier of its own.
+
+Windows and macOS guests install the runner from the release the server runs (`v<version>` of `NIBBLET_UPDATE_REPO`), so they need a release with this in it.
+
 ## Tools (`/mcp` on the server)
 
 | Tool                                                    | What it does                                                                                                                                              |
@@ -146,6 +176,7 @@ See `apps/connect/README.md` for deploying it.
 The host bridge runs on the host, in the desktop app (127.0.0.1:8789) or as `node packages/host-mcp/src/cli.ts --port 8789 --token <t> [--host 172.17.0.1]` on servers without it. The server reaches it at `HOST_MCP_URL` with `HOST_MCP_TOKEN`; empty turns it off. Nothing reaches a nibblet unless ticked for it.
 
 - **Host MCP servers**: read in Claude's `mcpServers` format from `~/.nibblet/host-mcp.json`, then Claude Code's `~/.claude.json`, then Claude Desktop's config, with the first definition of a name winning. Each server is started on first use and served at `/mcp/<name>`; `GET /servers` lists them. A nibblet's `hostTools` names the ones it may use. Its runner registers each as `host_<name>` at the server's `/hostmcp/<name>`, which checks the nibblet's token and that list before forwarding.
+- **Virtual machines**: the host's hypervisor plugin, at `/machines` (see [Machines](#machines-containers-and-virtual-machines)). The CLI keeps them in `~/.local/share/nibblets/machines` (`--machines`), the desktop app in its data directory.
 - **CLI logins**: `CliPlugin`s (`gh` and `ssh` so far) detect whether a CLI is installed and signed in (`GET /clis`) and turn its login into environment variables (`GET /clis/:id/credential`). For each CLI in a nibblet's `cliCredentials`, the server fetches a fresh credential on every configure and sends it only over the runner socket. The runner puts it in the harness's environment and runs the CLI's setup (`gh auth setup-git`). It is never stored, logged, or returned by the API.
 - **SSH keys**: the `ssh` plugin shares the host's SSH agent, never a key. It's offered when `ssh-add -l` lists keys. For a nibblet that has it ticked, the server bind-mounts `HOST_SSH_AUTH_SOCK` (`/run/host-services/ssh-auth.sock` on Docker Desktop and OrbStack, the host's `$SSH_AUTH_SOCK` on Linux) at `/run/nibblet/ssh-agent.sock`. Because it's a mount, ticking or unticking it restarts the container. On Linux the socket is usually `0600`, owned by the host user, so the container's `nibblet` user (uid 1001) can't open it unless the uids match.
 - **A nibblet's own MCP servers** (`mcpServers`): remote URLs, or commands run inside its container by the guard. Header and env values are secrets: the API returns them as `••••`, an update that sends `••••` back keeps the stored value, and only the guard receives them.

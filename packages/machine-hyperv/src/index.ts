@@ -84,11 +84,13 @@ Start-VM -VM $vm
 @{ ok = $true } | ConvertTo-Json -Compress
 `;
 
-const STATE = `
-$vm = Get-VM -Name $p.name -ErrorAction SilentlyContinue
-@{ state = if ($vm) { [string]$vm.State } else { 'Missing' } } | ConvertTo-Json -Compress
+/** Every nibblet's VM and how it is, in one go: PowerShell is slow to start. */
+const STATES = `
+$states = @{}
+Get-VM -Name 'nibblet-*' -ErrorAction SilentlyContinue | ForEach-Object { $states[$_.Name] = [string]$_.State }
+$states | ConvertTo-Json -Compress
 `;
-const State = z.object({ state: z.string() });
+const States = z.record(z.string(), z.string());
 
 /** Shutting down through the guest's own integration service, or turning it off. */
 const STOP = `
@@ -152,6 +154,7 @@ export class HyperV implements HypervisorPlugin {
     if ((vm.fresh || !existsSync(f.system)) && !existsSync(base)) {
       throw new Error(`There's no image at ${base}`);
     }
+    this.states = null;
     await psJson(this.ps, Ok, START, {
       name: vmName(vm.id),
       dir: vm.dir,
@@ -170,12 +173,24 @@ export class HyperV implements HypervisorPlugin {
     });
   }
 
+  private states: { at: number; states: Promise<Record<string, string>> } | null = null;
+
+  /** Every nibblet VM's state, asked at most every couple of seconds. */
+  private vmStates(): Promise<Record<string, string>> {
+    if (!this.states || Date.now() - this.states.at > 2000) {
+      const states = psJson(this.ps, States, STATES, {}).catch(() => ({}));
+      this.states = { at: Date.now(), states };
+    }
+    return this.states.states;
+  }
+
   async running(_ctx: HostContext, vm: VmRef): Promise<boolean> {
-    const { state } = await psJson(this.ps, State, STATE, { name: vmName(vm.id) });
+    const state = (await this.vmStates())[vmName(vm.id)];
     return state === "Running" || state === "Starting";
   }
 
   async stop(_ctx: HostContext, vm: VmRef, force: boolean): Promise<void> {
+    this.states = null;
     await psJson(this.ps, Ok, STOP, { name: vmName(vm.id), force });
   }
 

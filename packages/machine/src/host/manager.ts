@@ -66,6 +66,8 @@ interface Job {
   running: boolean;
 }
 
+type Detected = Awaited<ReturnType<HypervisorPlugin["detect"]>>;
+
 /** One hypervisor, with what the bridge keeps for it. */
 class Hypervisor {
   readonly plugin: HypervisorPlugin;
@@ -79,6 +81,26 @@ class Hypervisor {
     this.plugin = plugin;
     this.ctx = ctx;
     this.targets = targets;
+  }
+
+  private detection: { at: number; found: Promise<Detected> } | null = null;
+
+  /**
+   * What it says it can do here, asked at most every half minute: some
+   * plugins ask a slow tool (Hyper-V's are PowerShell), and the server asks often.
+   */
+  detected(): Promise<Detected> {
+    if (!this.detection || Date.now() - this.detection.at > 30_000) {
+      this.detection = {
+        at: Date.now(),
+        found: this.plugin.detect(this.ctx).catch((err: unknown) => ({
+          available: false,
+          detail: err instanceof Error ? err.message : String(err),
+          guests: [],
+        })),
+      };
+    }
+    return this.detection.found;
   }
 
   exclusive<T>(id: string, job: () => Promise<T>): Promise<T> {
@@ -216,11 +238,7 @@ export class HostMachines {
   async describe(): Promise<HypervisorInfo[]> {
     return Promise.all(
       [...this.hypervisors.values()].map(async (hv) => {
-        const found = await hv.plugin.detect(hv.ctx).catch((err: unknown) => ({
-          available: false,
-          detail: err instanceof Error ? err.message : String(err),
-          guests: [],
-        }));
+        const found = await hv.detected();
         return {
           id: hv.plugin.id,
           name: hv.plugin.name,
