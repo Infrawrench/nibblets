@@ -11,7 +11,8 @@
  * the nibblet's own spawn_subagent tool, so sub-agents get tested too: the
  * harness calls it, and the tool's result comes back for the real reply.
  *
- * GET /requests says how many model calls it has had, for the tests.
+ * GET /requests says how many model calls it has had, and what each offered
+ * and was answered with, for the tests to say why something didn't happen.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
@@ -20,6 +21,8 @@ export const REPLY = "pong from the fake model";
 const SPAWN_TOOL = "mcp__nibblet__spawn_subagent";
 
 let requests = 0;
+/** Each call, briefly: the tools it offered, the end of its last message, and the answer. */
+const calls: { tools: string[]; last: string; answer: string }[] = [];
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" });
@@ -29,11 +32,21 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 interface Block {
   type?: string;
   text?: string;
+  content?: string | Block[];
 }
 interface Request {
   stream?: boolean;
   model?: string;
+  tools?: { name?: string }[];
   messages?: { role?: string; content?: string | Block[] }[];
+}
+
+/** A message's text, tools' results included. */
+function textOf(content: string | Block[] | undefined): string {
+  if (typeof content === "string") return content;
+  return (content ?? [])
+    .map((b) => `${b.type === "tool_result" ? "[result] " : ""}${b.text ?? textOf(b.content)}`)
+    .join("\n");
 }
 
 async function body(req: IncomingMessage): Promise<Request> {
@@ -47,14 +60,21 @@ async function body(req: IncomingMessage): Promise<Request> {
   }
 }
 
-/** A task to spawn a sub-agent for, if the last message asks for one and hasn't been answered with a tool's result. */
+/** The blocks of the user's messages since the model last spoke: Claude Code adds its own around the prompt, and its context after. */
+function userTurn(request: Request): Block[] {
+  const messages = request.messages ?? [];
+  const from = messages.findLastIndex((m) => m.role === "assistant") + 1;
+  return messages
+    .slice(from)
+    .filter((m) => m.role === "user")
+    .flatMap((m) =>
+      typeof m.content === "string" ? [{ type: "text", text: m.content }] : (m.content ?? []),
+    );
+}
+
+/** A task to spawn a sub-agent for, if the user's turn asks for one and isn't a tool's result. */
 function spawnTask(request: Request): string | null {
-  const last = request.messages?.at(-1);
-  if (!last || last.role !== "user") return null;
-  const blocks: Block[] =
-    typeof last.content === "string"
-      ? [{ type: "text", text: last.content }]
-      : (last.content ?? []);
+  const blocks = userTurn(request);
   if (blocks.some((b) => b.type === "tool_result")) return null;
   const text = blocks.map((b) => b.text ?? "").join("\n");
   return /SPAWN: (.+)/.exec(text)?.[1]?.trim() ?? null;
@@ -106,7 +126,7 @@ export function startFake(port: number) {
     void (async () => {
       const path = new URL(req.url ?? "/", "http://fake").pathname;
       if (req.method === "GET" && path === "/status") return json(res, 200, []);
-      if (req.method === "GET" && path === "/requests") return json(res, 200, { requests });
+      if (req.method === "GET" && path === "/requests") return json(res, 200, { requests, calls });
       if (req.method === "POST" && path.endsWith("/v1/messages/count_tokens")) {
         return json(res, 200, { input_tokens: 10 });
       }
@@ -114,7 +134,13 @@ export function startFake(port: number) {
         requests++;
         const request = await body(req);
         const model = request.model ?? "claude-fake";
-        if (request.stream) return stream(res, model, spawnTask(request));
+        const task = spawnTask(request);
+        calls.push({
+          tools: (request.tools ?? []).map((t) => t.name ?? ""),
+          last: textOf(userTurn(request)).slice(0, 300),
+          answer: request.stream && task ? `spawn: ${task}` : REPLY,
+        });
+        if (request.stream) return stream(res, model, task);
         return json(res, 200, {
           id: `msg_fake${requests}`,
           type: "message",

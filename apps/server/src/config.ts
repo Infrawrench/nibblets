@@ -24,7 +24,10 @@ const Env = z.object({
    * Which stack this server is, when an engine has more than one (a test
    * stack beside a real one): it only tidies up its own nibblets' containers.
    */
-  NIBBLET_STACK: z.string().regex(/^[\w.-]+$/).default("nibblet"),
+  NIBBLET_STACK: z
+    .string()
+    .regex(/^[\w.-]+$/)
+    .default("nibblet"),
   /** Whether to remove old releases' images: off for a stack that isn't the engine's only one. */
   NIBBLET_PRUNE_IMAGES: z
     .enum(["0", "1"])

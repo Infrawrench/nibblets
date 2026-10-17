@@ -227,10 +227,11 @@ export class TestStack {
     );
   }
 
-  /** How many calls the fake model has had. */
-  async modelCalls(): Promise<number> {
+  /** The calls the fake model has had: what each offered, and what it answered. */
+  async modelCalls(): Promise<{ tools: string[]; last: string; answer: string }[]> {
     const res = await fetch(`http://127.0.0.1:${this.fakePort}/requests`);
-    return z.object({ requests: z.number() }).parse(await res.json()).requests;
+    const call = z.object({ tools: z.array(z.string()), last: z.string(), answer: z.string() });
+    return z.object({ calls: z.array(call) }).parse(await res.json()).calls;
   }
 
   /** Its nibblets' containers, by the labels this stack's server gives them. */
