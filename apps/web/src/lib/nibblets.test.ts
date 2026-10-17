@@ -30,6 +30,7 @@ const nibblet = (id: string, parentId: string | null, active: string): Nibblet =
   statusEmoji: null,
   statusUpdatedAt: null,
   awaitingApproval: false,
+  machine: { backend: "docker", guest: "linux" },
   browser: false,
   hostTools: [],
   cliCredentials: [],

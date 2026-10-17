@@ -260,7 +260,7 @@ export function createApp(services: Services, bus: Bus) {
       upstream: async (id) => {
         const row = await store.nibbletRow(id);
         // A sub-agent's browser is beside its parent's, in its parent's container.
-        const address = conductor.browserAddress(id, row.parentId);
+        const address = await conductor.browserAddress(id, row.parentId);
         if (!address) return null;
         return { address, token: viewToken(config.NIBBLET_OWNER_TOKEN, id, row.tokenHash) };
       },

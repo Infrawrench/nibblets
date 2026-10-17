@@ -9,6 +9,7 @@ import { Bus } from "./bus.ts";
 import { Conductor } from "./conductor.ts";
 import { loadConfig } from "./config.ts";
 import { Orchestrator } from "./docker.ts";
+import { MachineRegistry } from "@nibblet/machine";
 import { createEmbedder } from "./embeddings.ts";
 import { serverName } from "./handlers.ts";
 import { HarnessModelLists } from "./opencode.ts";
@@ -48,7 +49,10 @@ async function main(): Promise<void> {
   if (!(await docker.ping())) throw new Error("Can't reach Docker. Is the socket mounted?");
   await docker.ensureNetwork();
 
-  const conductor = new Conductor(store, docker, config);
+  // Where nibblets run: containers on this engine, and virtual machines on
+  // whatever hypervisors the host bridge offers.
+  const machines = new MachineRegistry([docker.machines()]);
+  const conductor = new Conductor(store, machines, config);
   conductor.serverName = await serverName(store, config.NIBBLET_HOST_NAME);
   conductor.terminals.onTasks = (nibbletId, tasks) =>
     bus.publish({ type: "tasks", nibbletId, tasks });
@@ -57,7 +61,7 @@ async function main(): Promise<void> {
   const snapshots = new Snapshots({
     store,
     bus,
-    docker,
+    homes: conductor,
     conductor,
     scheduler,
     dataDir: config.NIBBLET_DATA_DIR,
@@ -100,6 +104,7 @@ async function main(): Promise<void> {
       snapshots,
       harnessUpdates,
       appUpdates,
+      machines,
     },
     bus,
   );

@@ -30,6 +30,10 @@ import {
   type TailnetOAuth,
   type AppUpdate,
   type HarnessUpdates,
+  type GuestImage,
+  type MachineBackend,
+  type MachineCapabilities,
+  DEFAULT_MACHINE,
 } from "@nibblet/protocol";
 import {
   createMockConnection,
@@ -158,6 +162,7 @@ export function createMockServer(): ServerConnection {
         lastRunAt: null,
       },
     ],
+    machine: DEFAULT_MACHINE,
     browser: true,
     hostTools: [],
     cliCredentials: [],
@@ -721,6 +726,44 @@ export function createMockServer(): ServerConnection {
   const onePasswordGrants: OnePasswordGrants = {
     pip: [{ vaultId: "v-nibblets", access: "read" }],
   };
+  const linuxVm: MachineCapabilities = {
+    browser: true,
+    tailscale: true,
+    sshAgent: false,
+    liveResources: false,
+  };
+  const desktopVm: MachineCapabilities = { ...linuxVm, browser: false, tailscale: false };
+  const ready: GuestImage = { state: "ready", detail: null, progress: null, source: "none" };
+  const mockMachines: MachineBackend[] = [
+    {
+      id: "docker",
+      name: "Docker",
+      kind: "container",
+      available: true,
+      detail: null,
+      recommended: true,
+      guests: [
+        {
+          os: "linux",
+          image: ready,
+          capabilities: { ...linuxVm, sshAgent: true, liveResources: true },
+        },
+      ],
+    },
+    {
+      id: "apple",
+      name: "Apple Virtualization",
+      kind: "vm",
+      available: true,
+      detail: null,
+      recommended: false,
+      guests: [
+        { os: "linux", image: { ...ready, state: "missing" }, capabilities: linuxVm },
+        { os: "macos", image: { ...ready, state: "missing" }, capabilities: desktopVm },
+      ],
+    },
+  ];
+
   const handlers: Handlers<Contract, null> = {
     system: {
       info: async () => ({
@@ -766,6 +809,7 @@ export function createMockServer(): ServerConnection {
             model: input.model,
             effort: input.effort,
             instructions: input.instructions,
+            machine: input.machine,
             browser: input.browser,
             hostTools: input.hostTools,
             cliCredentials: input.cliCredentials,
@@ -1031,6 +1075,17 @@ export function createMockServer(): ServerConnection {
       setKeys: async ({ oauth }) => {
         tailnetOAuth = oauth;
         return { oauth: oauth && { ...oauth, clientSecret: MASKED } };
+      },
+    },
+    machines: {
+      list: async () => mockMachines,
+      prepare: async ({ backend, guest }) => {
+        const image = mockMachines
+          .find((b) => b.id === backend)
+          ?.guests.find((g) => g.os === guest)?.image;
+        if (image)
+          Object.assign(image, { state: "preparing", progress: 0.1, detail: "Downloading" });
+        return { ok: true };
       },
     },
     harnesses: {

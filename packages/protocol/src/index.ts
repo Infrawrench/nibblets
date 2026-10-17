@@ -12,3 +12,5 @@ export * from "./snapshots.ts";
 export * from "./updates.ts";
 export * from "./urls.ts";
 export * from "./tailscale.ts";
+export * from "./machines.ts";
+export * from "./guest.ts";
