@@ -154,7 +154,7 @@ async function main(): Promise<void> {
   await conductor.reconcile();
   await scheduler.start();
   snapshots.start();
-  harnessUpdates.start();
+  if (config.NIBBLET_HARNESS_UPDATES) harnessUpdates.start();
   // An update leaves the last release's images behind; reconcile has just
   // moved running nibblets off them. Again daily, for those that were stopped.
   const prune = () =>
@@ -164,8 +164,8 @@ async function main(): Promise<void> {
       },
       (err: unknown) => console.error("couldn't remove old images", err),
     );
-  prune();
-  const pruning = setInterval(prune, 24 * 60 * 60_000);
+  const pruning = config.NIBBLET_PRUNE_IMAGES ? setInterval(prune, 24 * 60 * 60_000) : undefined;
+  if (config.NIBBLET_PRUNE_IMAGES) prune();
   // The tunnel follows the Connect link: on with it, off without.
   await central.restore();
 

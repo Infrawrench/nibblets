@@ -20,6 +20,21 @@ const Env = z.object({
   NIBBLET_DATA_DIR: z.string().default("/data"),
   NIBBLET_WEB_DIST: z.string().optional(),
   DOCKER_SOCKET: z.string().optional(),
+  /**
+   * Which stack this server is, when an engine has more than one (a test
+   * stack beside a real one): it only tidies up its own nibblets' containers.
+   */
+  NIBBLET_STACK: z.string().regex(/^[\w.-]+$/).default("nibblet"),
+  /** Whether to remove old releases' images: off for a stack that isn't the engine's only one. */
+  NIBBLET_PRUNE_IMAGES: z
+    .enum(["0", "1"])
+    .default("1")
+    .transform((v) => v === "1"),
+  /** Whether to install newer harness CLIs, into a volume every stack on the engine shares. */
+  NIBBLET_HARNESS_UPDATES: z
+    .enum(["0", "1"])
+    .default("1")
+    .transform((v) => v === "1"),
   /** The host MCP bridge (desktop app or `packages/host-mcp` CLI). Empty turns host tools off. */
   HOST_MCP_URL: z.string().default(""),
   HOST_MCP_TOKEN: z.string().default(""),

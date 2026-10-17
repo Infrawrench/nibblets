@@ -1,0 +1,14 @@
+{
+  "name": "@nibblet/integration",
+  "version": "0.3.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@nibblet/host-mcp": "workspace:*",
+    "@nibblet/protocol": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}

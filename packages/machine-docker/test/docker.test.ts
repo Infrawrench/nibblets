@@ -30,6 +30,7 @@ describe("parseDockerEvent", () => {
       nibbletId: "nib_1",
       containerId: "abc123",
       exitCode: 137,
+      stack: undefined,
     });
   });
 
