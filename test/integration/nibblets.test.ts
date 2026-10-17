@@ -49,8 +49,12 @@ const missing = !backend
     : null;
 /** A Linux VM's first start makes its image from the runner image: minutes. */
 const FIRST_START_MS = vm ? 30 * 60_000 : 5 * 60_000;
-/** Installing Windows from its ISO, or macOS from Apple's restore image, then Node and the runner. */
-const INSTALL_MS = 3 * 60 * 60_000;
+/**
+ * Installing Windows from its ISO, or macOS from Apple's restore image, then
+ * Node and the runner: half an hour or so with a hypervisor's acceleration,
+ * so longer means it's stuck (the hypervisor's own limit is longer).
+ */
+const INSTALL_MS = 90 * 60_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -77,6 +81,9 @@ describe.skipIf(missing !== null)(title, () => {
     runnerImage: process.env.NIBBLET_TEST_RUNNER_IMAGE ?? "nibblet/runner:dev",
     bridge: vm,
     dockerSocket: process.env.NIBBLET_TEST_DOCKER_SOCKET ?? "/var/run/docker.sock",
+    ...(process.env.NIBBLET_TEST_MACHINES_DIR
+      ? { machinesDir: process.env.NIBBLET_TEST_MACHINES_DIR }
+      : {}),
     log: process.env.NIBBLET_TEST_VERBOSE ? (line) => console.log(line) : undefined,
   });
   /** A runner of another stack's, which this one's server must leave alone. */

@@ -76,4 +76,14 @@ jobs:
           NIBBLET_TEST_WINDOWS_ISO: ${{ runner.temp }}/windows.iso
           # A PR's run is of its merge commit, which isn't on GitHub to download.
           NIBBLET_TEST_GUEST_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+          NIBBLET_TEST_MACHINES_DIR: ${{ runner.temp }}/machines
           NIBBLET_TEST_VERBOSE: "1"
+      - name: Keep the installer's screen and logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-kvm
+          path: |
+            ${{ runner.temp }}/machines/**/*.png
+            ${{ runner.temp }}/machines/**/*.log
+          if-no-files-found: ignore

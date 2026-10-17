@@ -30,6 +30,8 @@ export interface StackOptions {
   bridge: boolean;
   /** The engine's socket, as the engine sees it, for the server to mount. */
   dockerSocket: string;
+  /** Where the bridge keeps VMs and images, kept afterwards; a folder of the stack's own if not given. */
+  machinesDir?: string;
   log?: (line: string) => void;
 }
 
@@ -126,7 +128,7 @@ export class TestStack {
         configPaths: [],
         clis: [],
         machines: await hostMachines({
-          dir: join(this.dir, "machines"),
+          dir: this.opts.machinesDir ?? join(this.dir, "machines"),
           server: this.base,
           credproxy: `http://127.0.0.1:${this.fakePort}`,
           ...(process.env.NIBBLET_TEST_APPLE_HELPER
