@@ -53,6 +53,8 @@ export interface VmPluginOptions {
   runnerImage: () => Promise<{ name: string; id: string } | null>;
   /** The Nibblets release this server runs: what Windows and macOS guests install. */
   version: string;
+  /** Where its releases come from, as `owner/repo` on GitHub. */
+  repo?: string;
   log?: (message: string) => void;
 }
 
@@ -88,6 +90,7 @@ export class VirtualMachines implements MachinePlugin {
   private readonly client: HypervisorClient;
   private readonly runnerImage: VmPluginOptions["runnerImage"];
   private readonly version: string;
+  private readonly repo: string | undefined;
   private readonly log: (message: string) => void;
   private readonly links = new Map<string, GuestLink>();
   private readonly linking = new Map<string, Promise<GuestLink>>();
@@ -108,6 +111,7 @@ export class VirtualMachines implements MachinePlugin {
     this.client = opts.client;
     this.runnerImage = opts.runnerImage;
     this.version = opts.version;
+    this.repo = opts.repo;
     this.log = opts.log ?? ((m) => console.log(`${this.id}: ${m}`));
   }
 
@@ -158,8 +162,13 @@ export class VirtualMachines implements MachinePlugin {
     const runner = guest === "linux" ? await this.runnerImage() : null;
     await this.client.prepare(guest, {
       ...(source ? { source } : {}),
-      ...(runner ? { runnerImage: runner.name } : { version: this.version }),
+      ...(runner ? { runnerImage: runner.name } : this.release()),
     });
+  }
+
+  /** What a guest that installs the runner itself is to install. */
+  private release(): { version: string; repo?: string } {
+    return { version: this.version, ...(this.repo ? { repo: this.repo } : {}) };
   }
 
   private async image(guest: GuestOs): Promise<HostImage | null> {
@@ -201,10 +210,7 @@ export class VirtualMachines implements MachinePlugin {
       // Missing, failed before, or made from an older runner image.
       if (!asked) {
         progress(`Making its ${GUEST_NAMES[guest]} image`);
-        await this.client.prepare(
-          guest,
-          runner ? { runnerImage: runner.name } : { version: this.version },
-        );
+        await this.client.prepare(guest, runner ? { runnerImage: runner.name } : this.release());
         asked = true;
       }
       await sleep(2000);

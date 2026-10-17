@@ -10,8 +10,14 @@ import { z } from "zod";
 import { GuestDaemon } from "./daemon.ts";
 import type { GuestPlugin } from "./guest.ts";
 import { linux } from "./linux.ts";
+import { macos } from "./macos.ts";
+import { windows } from "./windows.ts";
 
-const guests: Partial<Record<NodeJS.Platform, GuestPlugin>> = { linux };
+const guests: Partial<Record<NodeJS.Platform, GuestPlugin>> = {
+  linux,
+  darwin: macos,
+  win32: windows,
+};
 
 const VERSION = z
   .object({ version: z.string() })

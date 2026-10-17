@@ -292,6 +292,7 @@ export class HostMachines {
             dir,
             source: body.source,
             version: body.version ?? "",
+            repo: body.repo ?? "Infrawrench/nibblets",
             progress,
           });
           builtFrom = body.version ?? "";

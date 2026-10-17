@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { once } from "node:events";
 import { promisify } from "node:util";
 import type { HostContext, ImageJob } from "@nibblet/machine/host";
+import { provisionMacos } from "./provision.ts";
 import { z } from "zod";
 
 const run = promisify(execFile);
@@ -95,4 +96,5 @@ export async function prepareMacos(ctx: HostContext, helper: string, job: ImageJ
       code === 0 ? resolve() : reject(new Error(err.trim() || `Installing exited ${code}`)),
     );
   });
+  await provisionMacos(ctx, helper, job);
 }

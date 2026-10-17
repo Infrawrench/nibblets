@@ -77,6 +77,7 @@ const files = (vm: VmRef) => ({
   home: join(vm.dir, "home.img"),
   efi: join(vm.dir, "efi-vars"),
   aux: join(vm.dir, "aux.img"),
+  identifier: join(vm.dir, "machine-identifier"),
   socket: socketPath("apple", vm.id, "agent"),
 });
 
@@ -166,8 +167,7 @@ export class AppleVirtualization implements HypervisorPlugin {
       return { available: false, detail: "This Mac can't run virtual machines", guests: [] };
     }
     const guests: GuestOs[] = ["linux"];
-    // macOS guests come once their image can be given the guest agent.
-    if (check.macos && arch() === "arm64" && process.env.NIBBLET_MACOS_GUESTS) guests.push("macos");
+    if (check.macos && arch() === "arm64") guests.push("macos");
     return { available: true, detail: null, guests };
   }
 
@@ -195,6 +195,8 @@ export class AppleVirtualization implements HypervisorPlugin {
       } else {
         await clone(join(vm.imageDir, "disk.img"), f.system);
         await clone(join(vm.imageDir, "aux.img"), f.aux);
+        // Its own identity: two VMs from one image are two Macs.
+        await run(helper, ["macos-identifier", f.identifier]);
       }
     }
     if (!existsSync(f.home)) {
@@ -218,7 +220,9 @@ export class AppleVirtualization implements HypervisorPlugin {
         vm.guest === "macos"
           ? {
               hardwareModel: join(vm.imageDir, "hardware-model"),
-              machineIdentifier: join(vm.imageDir, "machine-identifier"),
+              machineIdentifier: existsSync(f.identifier)
+                ? f.identifier
+                : join(vm.imageDir, "machine-identifier"),
               auxiliaryStorage: f.aux,
             }
           : null,
