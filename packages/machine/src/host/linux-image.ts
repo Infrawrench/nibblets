@@ -88,7 +88,7 @@ case "$(dpkg --print-architecture)" in
   arm64) efi=aa64; extra=" arm64.nosme" ;;
   *) echo "no EFI loader for $(dpkg --print-architecture)" >&2; exit 1 ;;
 esac
-efi_upper=$(echo "$efi" | tr a-z A-Z)
+efi_upper=$(echo "$efi" | tr '[:lower:]' '[:upper:]')
 R=/rootfs
 mkdir -p "$R"
 tar -xpf - -C "$R" --numeric-owner
