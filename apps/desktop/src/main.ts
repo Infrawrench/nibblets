@@ -19,7 +19,7 @@ import {
 import { ConnectStatus } from "@nibblet/protocol";
 import { z } from "zod";
 import { ipcMain } from "electron/main";
-import { startHostMcpBridge, type HostMcpBridge } from "@nibblet/host-mcp";
+import { hostMachines, startHostMcpBridge, type HostMcpBridge } from "@nibblet/host-mcp";
 import { startKeychainBridge } from "./bridge.ts";
 import { detectCredentials } from "./credentials.ts";
 import { checkDocker } from "./docker.ts";
@@ -109,6 +109,19 @@ function stackPaths() {
     sourceDir: repo,
     images: null,
   };
+}
+
+/**
+ * Apple's VM helper: shipped in the app's resources, signed with the
+ * virtualization entitlement, or in development the one build.mjs made.
+ * Null elsewhere, and where neither is there (the plugin builds its own).
+ */
+function appleHelper(): string | null {
+  if (process.platform !== "darwin") return null;
+  const path = app.isPackaged
+    ? join(process.resourcesPath, "nibblet-vm")
+    : join(app.getAppPath(), "out", "nibblet-vm");
+  return existsSync(path) ? path : null;
 }
 
 let tray: Tray | null = null;
@@ -505,6 +518,13 @@ async function bringUp(options: { getReady?: boolean } = {}): Promise<void> {
         log: (m) => console.log(m),
         // The web UI's update bar installs the app's updates through this (and the stack's with them).
         updater: updates.host,
+        // Nibblets in virtual machines, on this computer's hypervisor.
+        machines: await hostMachines({
+          dir: join(app.getPath("userData"), "machines"),
+          docker: docker.cli,
+          ...(appleHelper() ? { appleHelper: appleHelper() ?? "" } : {}),
+          log: (m) => console.log(m),
+        }),
       }).catch((err: unknown) => {
         log(`Host tools are off: ${err instanceof Error ? err.message : String(err)}`);
         return null;

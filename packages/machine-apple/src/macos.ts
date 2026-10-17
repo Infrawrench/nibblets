@@ -2,8 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import { once } from "node:events";
 import { promisify } from "node:util";
 import type { HostContext, ImageJob } from "@nibblet/machine/host";
 import { z } from "zod";
@@ -16,7 +15,7 @@ const MACOS_DISK_GB = 80;
 const Restore = z.object({ url: z.url(), build: z.string(), version: z.int() });
 const Progress = z.union([z.object({ progress: z.number() }), z.object({ done: z.literal(true) })]);
 
-/** Downloads `url` to `file`, saying how far it's got. Resumes nothing: a part file starts again. */
+/** Downloads `url` to `file`, saying how far it's got. A part file starts again. */
 async function download(
   url: string,
   file: string,
@@ -25,13 +24,21 @@ async function download(
   const res = await fetch(url);
   if (!res.ok || !res.body) throw new Error(`Downloading macOS failed: HTTP ${res.status}`);
   const total = Number(res.headers.get("content-length") ?? 0);
+  const out = createWriteStream(`${file}.part`);
+  const reader = res.body.getReader();
   let got = 0;
-  const body = Readable.fromWeb(res.body);
-  body.on("data", (chunk: Buffer) => {
-    got += chunk.byteLength;
-    progress(total > 0 ? got / total : null);
-  });
-  await pipeline(body, createWriteStream(`${file}.part`));
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      got += value.byteLength;
+      progress(total > 0 ? got / total : null);
+      if (!out.write(value)) await once(out, "drain");
+    }
+  } finally {
+    out.end();
+    await once(out, "close");
+  }
   await rename(`${file}.part`, file);
 }
 

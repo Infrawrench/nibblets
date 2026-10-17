@@ -13,9 +13,12 @@ const gb = (mb: number) => `${mb / 1024 >= 1 ? +(mb / 1024).toFixed(1) : mb / 10
 export function ResourcesSection({
   connection,
   nibblet,
+  live = true,
 }: {
   connection: ServerConnection;
   nibblet: Nibblet;
+  /** Changes apply while it runs (a container), or when it next starts (a VM). */
+  live?: boolean;
 }) {
   const info = useQuery({
     queryKey: keys.info(connection.id),
@@ -47,7 +50,14 @@ export function ResourcesSection({
   return (
     <>
       <SectionHeading>Resources</SectionHeading>
-      <FieldRow label="CPU" hint="Its share of the processors Docker has.">
+      <FieldRow
+        label="CPU"
+        hint={
+          live
+            ? "Its share of the processors Docker has."
+            : "Whole processors for its virtual machine; with no limit, up to 4."
+        }
+      >
         <Select
           className="w-48"
           value={cpus === null ? "none" : String(cpus)}
@@ -58,9 +68,11 @@ export function ResourcesSection({
       <FieldRow
         label="Memory"
         hint={
-          host
-            ? `Docker has ${gb(host.memoryMb)} to share out. Changes apply straight away.`
-            : "Changes apply straight away."
+          live
+            ? host
+              ? `Docker has ${gb(host.memoryMb)} to share out. Changes apply straight away.`
+              : "Changes apply straight away."
+            : "Its virtual machine keeps all of this. Changes apply when it next starts."
         }
       >
         <Select

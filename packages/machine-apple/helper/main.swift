@@ -8,9 +8,9 @@
 //   nibblet-vm macos-restore-url           the newest macOS this Mac can install
 //   nibblet-vm macos-install <bundle> <ipsw> <disk GB>
 //
-// `run` keeps its VM's agent port (a virtio console port named
-// dev.nibblets.agent, or for a macOS guest a vsock connection on port
-// 1024) on a unix socket, one client at a time, for the bridge to relay.
+// `run` keeps its VM's agent port (a second virtio serial console, hvc1 in
+// a Linux guest, or for a macOS guest a vsock connection on port 1024) on
+// a unix socket, one client at a time, for the bridge to relay.
 // SIGTERM asks the guest to shut down, and turns it off 30 seconds later
 // if it hasn't; SIGINT turns it off at once. It writes how things stand to
 // the spec's `state` file and exits when the VM stops.
@@ -43,8 +43,13 @@ struct VmSpec: Codable {
   let state: String
 }
 
-let agentPortName = "dev.nibblets.agent"
 let agentVsockPort: UInt32 = 1024
+
+let debugging = ProcessInfo.processInfo.environment["NIBBLET_VM_DEBUG"] != nil
+
+func debug(_ message: String) {
+  if debugging { FileHandle.standardError.write(Data("nibblet-vm: \(message)\n".utf8)) }
+}
 
 func fail(_ message: String) -> Never {
   FileHandle.standardError.write(Data("nibblet-vm: \(message)\n".utf8))
@@ -66,6 +71,8 @@ func readData(_ path: String) -> Data {
 // end, the console port's pipes or a vsock connection.
 
 final class AgentSocket: @unchecked Sendable {
+  /** The guest's end's pipes: kept here, since their handles close when they go. */
+  var pipes: [Pipe] = []
   private let lock = NSLock()
   private var client: Int32 = -1
   private var guestWrite: ((Data) -> Void)?
@@ -254,7 +261,8 @@ func configuration(_ spec: VmSpec, agent: AgentSocket?) throws -> VZVirtualMachi
   network.macAddress = mac
   c.networkDevices = [network]
   c.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
-  c.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
+  // No memory balloon: with one, Linux guests on recent Macs report free
+  // pages the host then takes back while they're still in use.
 
   // The console, to a file, for saying why it stopped.
   FileManager.default.createFile(atPath: spec.console, contents: nil)
@@ -265,22 +273,25 @@ func configuration(_ spec: VmSpec, agent: AgentSocket?) throws -> VZVirtualMachi
     fileHandleForReading: FileHandle(forReadingAtPath: "/dev/null"), fileHandleForWriting: log)
   c.serialPorts = [serial]
 
-  // The agent's own port.
+  // The agent's own port: a serial console of its own, as the console's
+  // is (a named port on a multiport console carries nothing here).
   if let agent {
     let toGuest = Pipe()
     let fromGuest = Pipe()
-    let console = VZVirtioConsoleDeviceConfiguration()
-    let port = VZVirtioConsolePortConfiguration()
-    port.name = agentPortName
+    agent.pipes = [toGuest, fromGuest]
+    let port = VZVirtioConsoleDeviceSerialPortConfiguration()
     port.attachment = VZFileHandleSerialPortAttachment(
       fileHandleForReading: toGuest.fileHandleForReading,
       fileHandleForWriting: fromGuest.fileHandleForWriting)
-    console.ports[0] = port
-    c.consoleDevices = [console]
+    c.serialPorts.append(port)
     let write = toGuest.fileHandleForWriting
-    agent.setGuest { data in write.write(data) }
+    agent.setGuest { data in
+      debug("to guest: \(data.count) bytes")
+      write.write(data)
+    }
     fromGuest.fileHandleForReading.readabilityHandler = { handle in
       let data = handle.availableData
+      debug("from guest: \(data.count) bytes")
       if !data.isEmpty { agent.fromGuest(data) }
     }
     // For guests whose kernel has vsock but no virtio console (macOS).

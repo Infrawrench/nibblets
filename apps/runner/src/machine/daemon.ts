@@ -95,7 +95,12 @@ export class GuestDaemon {
   attach(port: Duplex): void {
     this.port = port;
     this.reader = new SerialReader();
+    let heard = false;
     port.on("data", (chunk: Buffer) => {
+      if (!heard) {
+        heard = true;
+        this.log("the host's end of the port is talking");
+      }
       for (const frame of this.reader.push(chunk)) {
         if (frame.kind === "message") this.receive(frame.text);
         else this.data(frame.frame);
@@ -106,6 +111,7 @@ export class GuestDaemon {
       this.dropChannels(() => true);
     });
     this.hello();
+    port.on("error", (err) => this.log(`the port failed: ${err.message}`));
   }
 
   close(): void {

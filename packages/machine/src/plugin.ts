@@ -24,8 +24,11 @@ export interface MachinePlugin {
   readonly name: string;
   readonly kind: "container" | "vm";
 
-  /** Whether it works here, and how each guest's image stands. */
-  describe(): Promise<MachineBackend>;
+  /**
+   * Whether it works here, and how each guest's image stands; null when
+   * it isn't here at all (a hypervisor for another OS than the host's).
+   */
+  describe(): Promise<MachineBackend | null>;
   /** What a machine running `guest` can do. */
   capabilities(guest: GuestOs): MachineCapabilities;
   /** Makes the image a guest's machines start from; `source` when it needs one from the user. */

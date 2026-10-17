@@ -38,9 +38,12 @@ import { meta } from "./meta.ts";
 
 const run = promisify(execFile);
 
-/** What the helper's own source and entitlements are, for building it where there's no prebuilt one. */
-const SOURCE = fileURLToPath(new URL("../helper/main.swift", import.meta.url));
-const ENTITLEMENTS = fileURLToPath(new URL("../helper/vm.entitlements", import.meta.url));
+/**
+ * The helper's own source and entitlements, for building it where there's
+ * no prebuilt one: beside this file in a checkout. Asked for only then,
+ * since a bundle (the desktop app's) has no such place.
+ */
+const helperSource = (file: string) => fileURLToPath(new URL(`../helper/${file}`, import.meta.url));
 
 /** How big a VM's disks grow to: the system disk (from a much smaller image), and its home. */
 const SYSTEM_GB = 32;
@@ -107,7 +110,8 @@ export class AppleVirtualization implements HypervisorPlugin {
     if (!this.built) {
       this.built = (async () => {
         const bin = join(ctx.dir, "bin", "nibblet-vm");
-        const fresh = await Promise.all([stat(bin), stat(SOURCE)]).then(
+        const source = helperSource("main.swift");
+        const fresh = await Promise.all([stat(bin), stat(source)]).then(
           ([b, s]) => b.mtimeMs >= s.mtimeMs,
           () => false,
         );
@@ -122,7 +126,7 @@ export class AppleVirtualization implements HypervisorPlugin {
             "5",
             "-o",
             `${bin}.new`,
-            SOURCE,
+            source,
             "-framework",
             "Virtualization",
             "-framework",
@@ -134,7 +138,14 @@ export class AppleVirtualization implements HypervisorPlugin {
             `Couldn't build the VM helper (it needs Xcode's command line tools): ${err instanceof Error ? err.message : String(err)}`,
           );
         });
-        await run("codesign", ["-s", "-", "-f", "--entitlements", ENTITLEMENTS, `${bin}.new`]);
+        await run("codesign", [
+          "-s",
+          "-",
+          "-f",
+          "--entitlements",
+          helperSource("vm.entitlements"),
+          `${bin}.new`,
+        ]);
         await rename(`${bin}.new`, bin);
         return bin;
       })().catch((err: unknown) => {

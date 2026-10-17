@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, rm, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { GUEST_PORT_NAME } from "@nibblet/protocol";
 
 /** The root partition's id, which the boot entry names it by. */
@@ -45,14 +45,19 @@ Wants=systemd-networkd.service
 [Service]
 EnvironmentFile=/etc/nibblet/image.env
 ExecStart=/usr/local/bin/node /app/apps/runner/src/machine/agent.ts
+# To the console too, which the host keeps, for when it can't say why itself.
+StandardOutput=journal+console
+StandardError=journal+console
 Restart=always
 RestartSec=2
 
 [Install]
 WantedBy=multi-user.target
 EOF
+# Tailscale's package enables its own daemon; the entry runs Tailscale itself,
+# as its own user, only for a nibblet on a tailnet.
 RUN systemctl enable systemd-networkd nibblet-agent.service \
- && systemctl mask systemd-networkd-wait-online.service \
+ && systemctl mask systemd-networkd-wait-online.service tailscaled.service \
  && echo "PARTUUID=${ROOT_UUID} / ext4 defaults,discard 0 1" > /etc/fstab
 `;
 
@@ -76,9 +81,11 @@ RUN apt-get update \\
  */
 const DISK_SCRIPT = String.raw`set -eu
 format="$1"
+# On arm64, no SME: M4 Macs have it, and Linux guests that use it under
+# Apple's hypervisor corrupt their own memory.
 case "$(dpkg --print-architecture)" in
-  amd64) efi=x64 ;;
-  arm64) efi=aa64 ;;
+  amd64) efi=x64; extra="" ;;
+  arm64) efi=aa64; extra=" arm64.nosme" ;;
   *) echo "no EFI loader for $(dpkg --print-architecture)" >&2; exit 1 ;;
 esac
 efi_upper=$(echo "$efi" | tr a-z A-Z)
@@ -99,8 +106,8 @@ cp "/usr/lib/systemd/boot/efi/systemd-boot$efi.efi" "/esp/EFI/BOOT/BOOT$efi_uppe
 cp "$R/boot/vmlinuz-$kver" /esp/vmlinuz
 cp "$R/boot/initrd.img-$kver" /esp/initrd.img
 printf 'default nibblet.conf\ntimeout 0\n' > /esp/loader/loader.conf
-printf 'title Nibblet\nlinux /vmlinuz\ninitrd /initrd.img\noptions root=PARTUUID=%s rw console=tty0 console=ttyS0,115200 console=hvc0 loglevel=4\n' \
-  "${ROOT_UUID}" > /esp/loader/entries/nibblet.conf
+printf 'title Nibblet\nlinux /vmlinuz\ninitrd /initrd.img\noptions root=PARTUUID=%s rw console=tty0 console=ttyS0,115200 console=hvc0 loglevel=4 systemd.gpt_auto=0%s\n' \
+  "${ROOT_UUID}" "$extra" > /esp/loader/entries/nibblet.conf
 esp_mb=$(( $(du -sm /esp | cut -f1) + 64 ))
 truncate -s "${"${esp_mb}"}M" /esp.img
 mkfs.vfat -F 32 -n EFI /esp.img >/dev/null
@@ -160,6 +167,8 @@ function docker(
             new Error(`docker ${args[0]} failed: ${tail.trim().split("\n").slice(-6).join(" ")}`),
           ),
     );
+    // One that stops reading early says why when it exits; that's the error worth having.
+    child.stdin.on("error", () => {});
     if (typeof opts.stdin === "string" || opts.stdin === undefined)
       child.stdin.end(opts.stdin ?? "");
     else opts.stdin.pipe(child.stdin);
@@ -242,7 +251,7 @@ export async function buildLinuxImage(opts: {
         "--network",
         "none",
         "-v",
-        `${opts.dir}:/out`,
+        `${resolve(opts.dir)}:/out`,
         TOOLS_IMAGE,
         "sh",
         "-c",
