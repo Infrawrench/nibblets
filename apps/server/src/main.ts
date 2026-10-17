@@ -7,6 +7,7 @@ import { z } from "zod";
 import { createApp } from "./app.ts";
 import { Bus } from "./bus.ts";
 import { Conductor } from "./conductor.ts";
+import { Borrow } from "./borrow.ts";
 import { loadConfig } from "./config.ts";
 import { Orchestrator } from "./docker.ts";
 import { createEmbedder } from "./embeddings.ts";
@@ -47,12 +48,25 @@ async function main(): Promise<void> {
   const docker = new Orchestrator(config);
   if (!(await docker.ping())) throw new Error("Can't reach Docker. Is the socket mounted?");
   await docker.ensureNetwork();
+  // A borrow doesn't outlive the server that started it.
+  await docker
+    .removeBorrowProxies()
+    .catch((err: unknown) => console.warn("couldn't remove old borrow proxies", err));
 
   const conductor = new Conductor(store, docker, config);
   conductor.serverName = await serverName(store, config.NIBBLET_HOST_NAME);
   conductor.terminals.onTasks = (nibbletId, tasks) =>
     bus.publish({ type: "tasks", nibbletId, tasks });
   conductor.terminals.onApps = (nibbletId, apps) => bus.publish({ type: "apps", nibbletId, apps });
+  const borrow = new Borrow({
+    store,
+    docker,
+    config,
+    stop: (nibbletId) => conductor.stop(nibbletId),
+    start: (nibbletId) => conductor.start(nibbletId),
+    publish: (message) => bus.publish(message),
+  });
+  conductor.borrowed = (nibbletId) => borrow.borrowed(nibbletId);
   const scheduler = new Scheduler(store, conductor);
   const snapshots = new Snapshots({
     store,
@@ -100,6 +114,7 @@ async function main(): Promise<void> {
       snapshots,
       harnessUpdates,
       appUpdates,
+      borrow,
     },
     bus,
   );
@@ -135,6 +150,8 @@ async function main(): Promise<void> {
   await central.restore();
 
   const shutdown = () => {
+    // Closes any borrowed window on the host; nothing is handed back.
+    borrow.abortAll();
     scheduler.stop();
     snapshots.stop();
     harnessUpdates.stop();

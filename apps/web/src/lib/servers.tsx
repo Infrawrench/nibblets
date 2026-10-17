@@ -28,6 +28,8 @@ export const keys = {
   snapshots: (server: string, id: string) => ["snapshots", server, id] as const,
   tasks: (server: string, id: string) => ["tasks", server, id] as const,
   apps: (server: string, id: string) => ["apps", server, id] as const,
+  borrow: (server: string, id: string) => ["borrow", server, id] as const,
+  borrowError: (server: string, id: string) => ["borrowError", server, id] as const,
   memories: (server: string, id: string | null, query: string) =>
     ["memories", server, id, query] as const,
   hostTools: (server: string) => ["hostTools", server] as const,
@@ -303,6 +305,13 @@ export function applyLive(qc: QueryClient, server: string, m: LiveMessage): void
     case "snapshots_changed":
       void qc.invalidateQueries({ queryKey: keys.snapshots(server, m.nibbletId) });
       return;
+    case "browser_borrow":
+      qc.setQueryData(keys.borrow(server, m.borrow.nibbletId), m.borrow);
+      return;
+    case "browser_borrow_ended":
+      qc.setQueryData(keys.borrow(server, m.nibbletId), null);
+      qc.setQueryData(keys.borrowError(server, m.nibbletId), m.error);
+      return;
   }
 }
 
@@ -333,6 +342,25 @@ export function useNibblets(connection: ServerConnection) {
   return useQuery({
     queryKey: keys.nibblets(connection.id),
     queryFn: () => connection.client.nibblets.list({}),
+  });
+}
+
+/** The nibblet's local-sign-in state: fetched once, then kept current by live updates. */
+export function useBorrow(connection: ServerConnection, id: string) {
+  return useQuery({
+    queryKey: keys.borrow(connection.id, id),
+    queryFn: () => connection.client.nibblets.browserBorrow({ id }),
+    staleTime: Infinity,
+  });
+}
+
+/** Why the nibblet's last local sign-in failed, until it's dismissed; null if it didn't. */
+export function useBorrowError(connection: ServerConnection, id: string) {
+  return useQuery<string | null>({
+    queryKey: keys.borrowError(connection.id, id),
+    // Only live updates set it.
+    queryFn: () => null,
+    staleTime: Infinity,
   });
 }
 

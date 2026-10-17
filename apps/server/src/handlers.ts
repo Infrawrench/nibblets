@@ -15,6 +15,7 @@ import { cliStatuses } from "./clilogins.ts";
 import { readTailnetOAuth, setTailnetKeys, tailnetKeys } from "./tailnet-keys.ts";
 import { forgetGrants, onePasswordStatus, readGrants, setGrants } from "./onepassword.ts";
 import type { Conductor } from "./conductor.ts";
+import type { Borrow } from "./borrow.ts";
 import type { HarnessModelLists } from "./opencode.ts";
 import {
   dropOverlaps,
@@ -48,6 +49,7 @@ export interface Services {
   notifier: Notifier;
   harnessUpdates: HarnessUpdater;
   appUpdates: AppUpdater;
+  borrow: Borrow;
 }
 
 const ok = { ok: true } as const;
@@ -210,6 +212,9 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
           throw new RpcError("bad_request", "It isn't running");
         return ok;
       },
+      browserBorrowStart: ({ id }) => s.borrow.start(id),
+      browserBorrowEnd: ({ id }) => s.borrow.end(id),
+      browserBorrow: async ({ id }) => s.borrow.current(id),
       decide: async ({ id, approvalId, approve, reason }) => {
         await conductor.approvals.decide(id, approvalId, approve, reason);
         return ok;

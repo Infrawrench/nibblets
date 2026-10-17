@@ -5,3 +5,4 @@ export * from "./opencode.ts";
 export * from "./kimi.ts";
 export * from "./tailscale.ts";
 export * from "./update.ts";
+export * from "./browser.ts";

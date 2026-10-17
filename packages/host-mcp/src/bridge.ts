@@ -44,6 +44,8 @@ import {
 } from "./onepassword.ts";
 import { cliPlugins, runOnHost, type CliPlugin, type Run } from "./clis/index.ts";
 import type { AppUpdaterHost } from "./update.ts";
+import { Writable } from "node:stream";
+import { borrowProfile, hostBrowserStatus } from "./browser.ts";
 
 export interface ServerStatus {
   name: string;
@@ -356,6 +358,55 @@ export async function startHostMcpBridge(opts: BridgeOptions): Promise<HostMcpBr
       }
       if (req.method === "GET" && url.pathname === "/1password") {
         return json(res, 200, await onePasswordStatus(run));
+      }
+      // Whether this computer can open a borrowed profile, and whether 1Password is here to add.
+      if (req.method === "GET" && url.pathname === "/browser") {
+        return json(res, 200, await hostBrowserStatus());
+      }
+      // Opens a nibblet's profile (the gzipped tar in the body) in a Chrome
+      // window here; when it closes, streams the cleaned profile back. The
+      // request stays open for as long as the window is.
+      if (req.method === "POST" && url.pathname === "/browser/borrow") {
+        const controller = new AbortController();
+        res.on("close", () => {
+          // The server dropped the request (an early "end"): stop the window, no handback.
+          if (!res.writableEnded) controller.abort();
+        });
+        // The handed-back tar is the response body; its head waits until the
+        // window closes, so a failure before then can still be a JSON error.
+        let started = false;
+        const out = new Writable({
+          write(chunk: Buffer, _enc, done) {
+            if (!started) {
+              started = true;
+              res.writeHead(200, { "content-type": "application/gzip" });
+            }
+            res.write(chunk) ? done() : res.once("drain", done);
+          },
+          final(done) {
+            res.end(() => done());
+          },
+        });
+        try {
+          await borrowProfile({
+            profileTar: req,
+            out,
+            userAgent: url.searchParams.get("ua"),
+            proxy: url.searchParams.get("proxy"),
+            wantOnePassword: url.searchParams.get("onepassword") === "1",
+            signal: controller.signal,
+            log,
+          });
+          return;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (!res.headersSent && !started) return json(res, 409, { error: message });
+          // Part of the profile has gone out: break the connection, so the
+          // server sees a failed handback rather than a short, complete one.
+          log(`Handing the borrowed profile back failed: ${message}`);
+          res.destroy(err instanceof Error ? err : new Error(message));
+          return;
+        }
       }
       const op = /^\/1password\/(grants|token)\/([\w-]+)$/.exec(url.pathname);
       if (op?.[1] === "grants" && op[2] && req.method === "PUT") {
