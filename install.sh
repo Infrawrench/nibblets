@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Sets up Nibblets on a Linux server or VM: Docker or Podman, the agents your nibblets
 # run on (Claude Code, Codex, OpenCode, Kimi Code, DeepSeek), this repo, the stack,
-# and a link to Nibblets Connect so you can reach it from anywhere.
+# and a link to Nibblets Connect so you can reach it from anywhere. Where the machine
+# has KVM, it can also set up QEMU, for nibblets in virtual machines rather than containers.
 #
 #   curl -fsSL https://nibblets.dev/install.sh | bash
 #
@@ -91,6 +92,15 @@ ask() {
   printf '  %s %s %s ' "${PINK}?${R}" "$1" "${D}[Y/n]${R}"
   read -r reply </dev/tty || reply=""
   case "$reply" in [nN]*) return 1 ;; *) return 0 ;; esac
+}
+
+# Like ask, but no unless they say yes; for what most people don't need.
+ask_no() {
+  if [ "$INTERACTIVE" != 1 ]; then return 1; fi
+  local reply
+  printf '  %s %s %s ' "${PINK}?${R}" "$1" "${D}[y/N]${R}"
+  read -r reply </dev/tty || reply=""
+  case "$reply" in [yY]*) return 0 ;; *) return 1 ;; esac
 }
 
 key() {
@@ -399,6 +409,57 @@ check_memory_cgroup() {
     -e '1s/[[:space:]]*$/ cgroup_enable=memory cgroup_memory=1/' "$cmdline"
   REBOOT=1
   ok "Turned on the memory controller ${D}(from the next restart; the old line is in $cmdline.bak)${R}"
+}
+
+# Virtual machines, as well as containers: nibblets can run in a KVM VM of
+# their own instead, through QEMU, which the host bridge starts. Optional,
+# and off unless asked for: containers are lighter and what most want, and
+# Docker (or Podman) runs the stack either way.
+
+kvm_packages() {
+  local x86=1
+  [ "$ARCH" = arm64 ] && x86=0
+  case "$PM" in
+    apt-get) if [ $x86 = 1 ]; then echo "qemu-system-x86 qemu-utils ovmf"; else echo "qemu-system-arm qemu-utils qemu-efi-aarch64"; fi ;;
+    dnf | yum) if [ $x86 = 1 ]; then echo "qemu-kvm qemu-img edk2-ovmf"; else echo "qemu-kvm qemu-img edk2-aarch64"; fi ;;
+    pacman) if [ $x86 = 1 ]; then echo "qemu-base edk2-ovmf"; else echo "qemu-base edk2-aarch64"; fi ;;
+    zypper) if [ $x86 = 1 ]; then echo "qemu-x86 qemu-tools qemu-ovmf-x86_64"; else echo "qemu-arm qemu-tools qemu-uefi-aarch64"; fi ;;
+    *) return 1 ;;
+  esac
+}
+
+kvm_ready() {
+  local qemu="qemu-system-x86_64"
+  [ "$ARCH" = arm64 ] && qemu="qemu-system-aarch64"
+  command -v "$qemu" >/dev/null && command -v qemu-img >/dev/null
+}
+
+setup_vms() {
+  [ -e /dev/kvm ] || return 0
+  step "🖥️  Virtual machines (optional)"
+  if kvm_ready; then
+    ok "QEMU is here, so nibblets can run in a VM of their own if you choose one"
+  else
+    say "Each nibblet runs in a container, which is what most people want. This machine"
+    say "can also give one a whole virtual machine (KVM), a stronger wall around it."
+    if ! ask_no "Install QEMU so you can choose a VM for a nibblet?"; then
+      hint "Skipped. Containers it is; run this again any time to add VMs."
+      return 0
+    fi
+    local packages
+    packages=$(kvm_packages) || {
+      warn "I don't know QEMU's packages here. Install QEMU and its UEFI firmware, then run this again."
+      return 0
+    }
+    need_root
+    # shellcheck disable=SC2086 # One package per word.
+    spin "Installing QEMU" pkg_install $packages
+  fi
+  if [ "$(id -u)" != 0 ] && ! id -nG "$(id -un)" | tr ' ' '\n' | grep -qx kvm; then
+    need_root
+    $SUDO usermod -aG kvm "$(id -un)"
+    ok "Added you to the kvm group ${D}(the host bridge picks it up when it starts)${R}"
+  fi
 }
 
 # Node, for the host bridge (it shares this machine's logins and MCP servers
@@ -892,6 +953,7 @@ main() {
   setup_repo
   setup_engine
   check_memory_cgroup
+  setup_vms
   setup_agents
   start_stack
   setup_connect

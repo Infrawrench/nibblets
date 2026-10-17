@@ -15,6 +15,7 @@ import {
 import { z } from "zod";
 import { meta } from "./meta.ts";
 import { powershell, psJson, type PowerShell } from "./powershell.ts";
+import { installWindows } from "./windows.ts";
 
 /** How big a VM's disks may grow: the system disk (differencing, on its image), and its home. */
 const SYSTEM_GB = 32;
@@ -131,16 +132,17 @@ export class HyperV implements HypervisorPlugin {
       return { available: false, detail: "Only on Windows", guests: [] };
     const found = await psJson(this.ps, Detect, DETECT, {});
     if (!found.ok) return { available: false, detail: found.detail, guests: [] };
-    const guests: GuestOs[] = ["linux"];
+    const guests: GuestOs[] = ["linux", "windows"];
     return { available: true, detail: null, guests };
   }
 
-  imageSource(): GuestImage["source"] {
-    return "none";
+  imageSource(guest: GuestOs): GuestImage["source"] {
+    return guest === "windows" ? "windows-iso" : "none";
   }
 
-  async prepareImage(_ctx: HostContext, guest: GuestOs, _job: ImageJob): Promise<void> {
-    throw new Error(`Hyper-V doesn't make ${guest} images yet`);
+  async prepareImage(_ctx: HostContext, guest: GuestOs, job: ImageJob): Promise<void> {
+    if (guest !== "windows") throw new Error(`Hyper-V doesn't make ${guest} images itself`);
+    await installWindows(this.ps, job, SWITCH);
   }
 
   async start(_ctx: HostContext, vm: VmSpec): Promise<void> {

@@ -82,6 +82,7 @@ async function main(): Promise<void> {
           client: new HypervisorClient(bridge, meta.id),
           runnerImage,
           version: VERSION,
+          repo: config.NIBBLET_UPDATE_REPO,
         }),
     ),
   ]);

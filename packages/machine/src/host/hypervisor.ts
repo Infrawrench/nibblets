@@ -65,6 +65,8 @@ export interface ImageJob {
   source: string | undefined;
   /** The Nibblets release the server runs, for guests that install the runner themselves. */
   version: string;
+  /** Where its releases come from, as `owner/repo` on GitHub. */
+  repo: string;
   progress(fraction: number | null, detail: string | null): void;
 }
 

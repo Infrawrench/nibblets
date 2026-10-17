@@ -46,6 +46,11 @@ export const PrepareImage = z.object({
   runnerImage: z.string().optional(),
   /** For the rest: the Nibblets release the server runs, whose runner they install. */
   version: z.string().optional(),
+  /** And the GitHub repository its releases come from, as `owner/repo`. */
+  repo: z
+    .string()
+    .regex(/^[\w.-]+\/[\w.-]+$/)
+    .optional(),
 });
 export type PrepareImage = z.infer<typeof PrepareImage>;
 

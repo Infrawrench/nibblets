@@ -7,6 +7,8 @@
 //   nibblet-vm run <vm.json> [--gui]       runs it until it stops
 //   nibblet-vm macos-restore-url           the newest macOS this Mac can install
 //   nibblet-vm macos-install <bundle> <ipsw> <disk GB>
+//   nibblet-vm macos-identifier <path>     a new machine identifier, for a macOS VM of its own
+//   nibblet-vm guest-relay                 (in a macOS guest) its agent's port, on stdio
 //
 // `run` keeps its VM's agent port (a second virtio serial console, hvc1 in
 // a Linux guest, or for a macOS guest a vsock connection on port 1024) on
@@ -505,6 +507,49 @@ func install(bundle: String, ipsw: String, diskGb: UInt64) -> Never {
   #endif
 }
 
+// In a macOS guest: the agent's port, which is a vsock connection to the
+// host, relayed over stdio, since Node can't open one. The guest runs the
+// same binary as its host: same OS, same architecture.
+
+/** Darwin's sockaddr_vm, which Swift doesn't see in its headers. */
+struct SockaddrVm {
+  var len: UInt8 = UInt8(MemoryLayout<SockaddrVm>.size)
+  var family: UInt8 = 40  // AF_VSOCK
+  var reserved: UInt16 = 0
+  var port: UInt32
+  var cid: UInt32
+}
+
+/** Copies one way until either end closes, which ends the relay. */
+func pump(from: Int32, to: Int32) {
+  var buffer = [UInt8](repeating: 0, count: 65536)
+  while true {
+    let n = read(from, &buffer, buffer.count)
+    if n <= 0 { exit(0) }
+    var at = 0
+    while at < n {
+      let w = buffer.withUnsafeBytes { write(to, $0.baseAddress!.advanced(by: at), n - at) }
+      if w <= 0 { exit(0) }
+      at += w
+    }
+  }
+}
+
+func guestRelay() -> Never {
+  let fd = socket(40, SOCK_STREAM, 0)
+  if fd < 0 { fail("no vsock in this guest: \(errno)") }
+  // VMADDR_CID_HOST
+  var addr = SockaddrVm(port: agentVsockPort, cid: 2)
+  let size = socklen_t(MemoryLayout<SockaddrVm>.size)
+  let connected = withUnsafePointer(to: &addr) {
+    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, size) }
+  }
+  if connected != 0 { fail("couldn't reach the host over vsock: \(errno)") }
+  Thread.detachNewThread { pump(from: fd, to: STDOUT_FILENO) }
+  pump(from: STDIN_FILENO, to: fd)
+  exit(0)
+}
+
 let args = CommandLine.arguments
 switch args.count > 1 ? args[1] : "" {
 case "check":
@@ -519,6 +564,19 @@ case "run":
   run(args[2], gui: args.contains("--gui"))
 case "macos-restore-url":
   restoreURL()
+case "guest-relay":
+  guestRelay()
+case "macos-identifier":
+  #if arch(arm64)
+    guard args.count > 2 else { fail("usage: nibblet-vm macos-identifier <path>") }
+    do {
+      try VZMacMachineIdentifier().dataRepresentation.write(to: URL(fileURLWithPath: args[2]))
+    } catch {
+      fail(error.localizedDescription)
+    }
+  #else
+    fail("macOS guests need Apple silicon")
+  #endif
 case "macos-install":
   guard args.count > 4, let gb = UInt64(args[4]) else {
     fail("usage: nibblet-vm macos-install <bundle> <ipsw> <disk GB>")
