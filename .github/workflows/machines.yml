@@ -1,15 +1,22 @@
 name: Machines
 
 # The slow integration runs, whose guests are installed from scratch:
-# Windows on KVM here. Run by hand, weekly, or on a PR labelled
-# `test-machines`. Hyper-V and Apple Virtualization aren't on hosted
-# runners; test/integration/README.md says how to run those.
+# Windows on KVM here, for changes to machines, weekly, or by hand.
+# Hyper-V and Apple Virtualization aren't on hosted runners;
+# test/integration/README.md says how to run those.
 on:
   workflow_dispatch:
   schedule:
     - cron: "0 3 * * 1"
   pull_request:
-    types: [labeled]
+    paths:
+      - "packages/machine/**"
+      - "packages/machine-kvm/**"
+      - "packages/protocol/src/guest.ts"
+      - "apps/runner/src/entry/**"
+      - "apps/runner/src/machine/**"
+      - "test/integration/**"
+      - ".github/workflows/machines.yml"
 
 concurrency:
   group: machines-${{ github.ref }}
@@ -21,17 +28,15 @@ env:
 jobs:
   windows-kvm:
     name: Integration (Windows on KVM)
-    if: github.event_name != 'pull_request' || github.event.label.name == 'test-machines'
     runs-on: ubuntu-latest
     timeout-minutes: 300
     env:
-      # A Windows installer ISO to download, such as an evaluation one from
-      # Microsoft's Evaluation Center, set as a repository variable.
-      WINDOWS_ISO_URL: ${{ vars.WINDOWS_ISO_URL }}
+      # Where to download a Windows installer ISO (x64) from, as a secret.
+      WINDOWS_ISO_URL: ${{ secrets.WINDOWS_ISO_URL }}
     steps:
       - name: Say what's missing
         if: env.WINDOWS_ISO_URL == ''
-        run: echo "::warning::Set the WINDOWS_ISO_URL repository variable to test Windows guests."
+        run: echo "::warning::Set the WINDOWS_ISO_URL secret to test Windows guests."
       - uses: actions/checkout@v5
         if: env.WINDOWS_ISO_URL != ''
       - name: Make room

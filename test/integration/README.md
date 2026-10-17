@@ -48,6 +48,6 @@ For Podman, point `DOCKER_HOST` at its socket and set
 `NIBBLET_TEST_VERBOSE=1` prints the stack's and the bridge's output.
 
 CI runs Linux in Docker, Podman and KVM on every push, and Windows on KVM
-in the Machines workflow (by hand, weekly, or on a PR labelled
-`test-machines`, given a `WINDOWS_ISO_URL` repository variable). Hosted
-runners have neither Hyper-V nor Apple Virtualization, so those run here.
+in the Machines workflow (for changes to machines, weekly, or by hand,
+downloading the ISO the `WINDOWS_ISO_URL` secret names). Hosted runners
+have neither Hyper-V nor Apple Virtualization, so those run here.
