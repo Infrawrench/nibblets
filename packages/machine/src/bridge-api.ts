@@ -51,6 +51,12 @@ export const PrepareImage = z.object({
     .string()
     .regex(/^[\w.-]+\/[\w.-]+$/)
     .optional(),
+  /** The git ref (tag, branch or commit) of `repo` to install, if not the release's tag. */
+  ref: z
+    .string()
+    .regex(/^[\w./-]+$/)
+    .max(200)
+    .optional(),
 });
 export type PrepareImage = z.infer<typeof PrepareImage>;
 

@@ -83,6 +83,7 @@ async function main(): Promise<void> {
           runnerImage,
           version: VERSION,
           repo: config.NIBBLET_UPDATE_REPO,
+          ...(config.NIBBLET_GUEST_REF ? { ref: config.NIBBLET_GUEST_REF } : {}),
         }),
     ),
   ]);

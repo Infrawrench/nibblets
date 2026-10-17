@@ -149,10 +149,7 @@ export async function provisionMacos(
   const files = join(job.dir, "provision");
   await mkdir(files, { recursive: true });
   await writeFile(join(files, "bootstrap.sh"), BOOTSTRAP_SH);
-  await writeFile(
-    join(files, "install.json"),
-    JSON.stringify({ repo: job.repo, ref: job.version ? `v${job.version}` : "main" }),
-  );
+  await writeFile(join(files, "install.json"), JSON.stringify({ repo: job.repo, ref: job.ref }));
   await writeFile(join(files, "dev.nibblets.agent.plist"), LAUNCH_DAEMON);
   await copyFile(helper, join(files, "nibblet-vm"));
   const script = join(files, "provision.sh");

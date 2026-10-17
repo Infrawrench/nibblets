@@ -312,7 +312,7 @@ export class Kvm implements HypervisorPlugin {
         "NIBBLETSETUP",
         windowsSetupFiles({
           repo: job.repo,
-          ref: job.version ? `v${job.version}` : "main",
+          ref: job.ref,
           arch: "amd64",
         }),
       ),

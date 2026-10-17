@@ -63,10 +63,10 @@ export interface ImageJob {
   dir: string;
   /** A path on the host the user gave, for an image that needs one. */
   source: string | undefined;
-  /** The Nibblets release the server runs, for guests that install the runner themselves. */
-  version: string;
-  /** Where its releases come from, as `owner/repo` on GitHub. */
+  /** Where guests that install the runner themselves get it, as `owner/repo` on GitHub. */
   repo: string;
+  /** The git ref of `repo` they install: the server's release's tag, unless it was told another. */
+  ref: string;
   progress(fraction: number | null, detail: string | null): void;
 }
 

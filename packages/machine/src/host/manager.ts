@@ -309,14 +309,15 @@ export class HostMachines {
             progress,
           });
         } else {
+          const ref = body.ref ?? (body.version ? `v${body.version}` : "main");
           await hv.plugin.prepareImage(hv.ctx, guest, {
             dir,
             source: body.source,
-            version: body.version ?? "",
             repo: body.repo ?? "Infrawrench/nibblets",
+            ref,
             progress,
           });
-          builtFrom = body.version ?? "";
+          builtFrom = ref;
         }
         const file = join(hv.imagesDir(guest), "current.json");
         await writeFile(`${file}.new`, JSON.stringify({ dir, builtFrom }));

@@ -54,6 +54,14 @@ const Env = z.object({
   NIBBLET_APPROVAL_TIMEOUT_MINUTES: z.coerce.number().positive().default(30),
   /** The GitHub repository whose releases are Nibblets' updates. */
   NIBBLET_UPDATE_REPO: z.string().default("Infrawrench/nibblets"),
+  /**
+   * What Windows and macOS guests install the runner from: a git ref of that
+   * repository. Empty is this server's release; a commit tests unreleased code.
+   */
+  NIBBLET_GUEST_REF: z
+    .string()
+    .regex(/^[\w./-]*$/)
+    .default(""),
   /** Nibblets Connect, where this server can be linked to an account. */
   NIBBLET_CENTRAL_URL: z.url().default("https://app.nibblets.dev"),
   /** The machine's own name and OS; inside Docker the container can't see them. */

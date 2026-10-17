@@ -68,6 +68,7 @@ export class TestStack {
   fakePort = 0;
   private dir = "";
   private bridge: HostMcpBridge | null = null;
+  private bridgeAddress = { url: "", token: "" };
   private readonly opts: StackOptions;
   private readonly log: (line: string) => void;
 
@@ -104,7 +105,11 @@ export class TestStack {
     });
   }
 
-  async up(): Promise<void> {
+  /**
+   * Brings it up. Windows and macOS guests install the runner from GitHub:
+   * `guestRef` is the commit of `repo` they're to install.
+   */
+  async up(guests: { guestRef?: string; repo?: string } = {}): Promise<void> {
     this.dir = await mkdtemp(join(tmpdir(), `${this.project}-`));
     this.port = await freePort();
     this.fakePort = await freePort();
@@ -132,6 +137,7 @@ export class TestStack {
         log: (m) => this.log(`bridge: ${m}`),
       });
       hostMcp = { url: `http://host.docker.internal:${this.bridge.port}`, token };
+      this.bridgeAddress = { url: `http://${host}:${this.bridge.port}`, token };
     }
     const runners = `${this.project}-runners`;
     const definition = {
@@ -179,6 +185,8 @@ export class TestStack {
             NIBBLET_STACK: this.project,
             NIBBLET_PRUNE_IMAGES: "0",
             NIBBLET_HARNESS_UPDATES: "0",
+            NIBBLET_GUEST_REF: guests.guestRef ?? "",
+            ...(guests.repo ? { NIBBLET_UPDATE_REPO: guests.repo } : {}),
             HOST_MCP_URL: hostMcp.url,
             HOST_MCP_TOKEN: hostMcp.token,
             NIBBLET_HOST_PLATFORM:
@@ -232,6 +240,18 @@ export class TestStack {
     const res = await fetch(`http://127.0.0.1:${this.fakePort}/requests`);
     const call = z.object({ tools: z.array(z.string()), last: z.string(), answer: z.string() });
     return z.object({ calls: z.array(call) }).parse(await res.json()).calls;
+  }
+
+  /** The VMs a hypervisor has on the host, by nibblet, as the bridge says. */
+  async vms(hypervisor: string): Promise<string[]> {
+    const res = await fetch(`${this.bridgeAddress.url}/machines/${hypervisor}/vms`, {
+      headers: { authorization: `Bearer ${this.bridgeAddress.token}` },
+    });
+    if (!res.ok) throw new Error(`The bridge's VMs answered ${res.status}`);
+    return z
+      .array(z.object({ id: z.string() }))
+      .parse(await res.json())
+      .map((v) => v.id);
   }
 
   /** Its nibblets' containers, by the labels this stack's server gives them. */

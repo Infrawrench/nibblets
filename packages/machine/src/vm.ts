@@ -55,6 +55,8 @@ export interface VmPluginOptions {
   version: string;
   /** Where its releases come from, as `owner/repo` on GitHub. */
   repo?: string;
+  /** The git ref guests that install the runner themselves install, if not the release's tag. */
+  ref?: string;
   log?: (message: string) => void;
 }
 
@@ -91,6 +93,7 @@ export class VirtualMachines implements MachinePlugin {
   private readonly runnerImage: VmPluginOptions["runnerImage"];
   private readonly version: string;
   private readonly repo: string | undefined;
+  private readonly ref: string | undefined;
   private readonly log: (message: string) => void;
   private readonly links = new Map<string, GuestLink>();
   private readonly linking = new Map<string, Promise<GuestLink>>();
@@ -113,6 +116,7 @@ export class VirtualMachines implements MachinePlugin {
     this.runnerImage = opts.runnerImage;
     this.version = opts.version;
     this.repo = opts.repo;
+    this.ref = opts.ref;
     this.log = opts.log ?? ((m) => console.log(`${this.id}: ${m}`));
   }
 
@@ -168,8 +172,12 @@ export class VirtualMachines implements MachinePlugin {
   }
 
   /** What a guest that installs the runner itself is to install. */
-  private release(): { version: string; repo?: string } {
-    return { version: this.version, ...(this.repo ? { repo: this.repo } : {}) };
+  private release(): { version: string; repo?: string; ref?: string } {
+    return {
+      version: this.version,
+      ...(this.repo ? { repo: this.repo } : {}),
+      ...(this.ref ? { ref: this.ref } : {}),
+    };
   }
 
   private async image(guest: GuestOs): Promise<HostImage | null> {
