@@ -99,8 +99,12 @@ jobs:
         if: matrix.machine == 'podman'
         # Rootful, as the server needs to make containers; the images move over.
         run: |
-          sudo systemctl start podman.socket
-          sudo chmod 666 /run/podman/podman.sock
+          sudo mkdir -p /etc/systemd/system/podman.socket.d
+          printf '[Socket]\nSocketMode=0666\n' | sudo tee /etc/systemd/system/podman.socket.d/open.conf
+          sudo systemctl daemon-reload
+          sudo systemctl restart podman.socket
+          sudo chmod 755 /run/podman
+          DOCKER_HOST=unix:///run/podman/podman.sock docker version
           docker save nibblet/runner:dev nibblet/server:dev | sudo podman load
           echo "DOCKER_HOST=unix:///run/podman/podman.sock" >> "$GITHUB_ENV"
           echo "NIBBLET_TEST_DOCKER_SOCKET=/run/podman/podman.sock" >> "$GITHUB_ENV"
