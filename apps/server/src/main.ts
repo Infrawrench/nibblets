@@ -103,7 +103,10 @@ async function main(): Promise<void> {
     },
     bus,
   );
-  const wss = new WebSocketServer({ noServer: true });
+  // Offered to every socket, but a message is deflated only when it's sent
+  // with `compress: true`: the live feed and terminals are, while the browser
+  // view's frames (already-compressed images) and runners' messages aren't.
+  const wss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
   serve(
     {
       fetch: app.fetch,

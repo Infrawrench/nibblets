@@ -42,7 +42,11 @@ export class Connection {
 
   connect(): void {
     if (this.closed) return;
-    const ws = new WebSocket(this.url, { headers: { authorization: `Bearer ${this.token}` } });
+    // The server is on the same host; deflating every message would only cost CPU.
+    const ws = new WebSocket(this.url, {
+      headers: { authorization: `Bearer ${this.token}` },
+      perMessageDeflate: false,
+    });
     this.ws = ws;
     let alive = true;
     let ping: ReturnType<typeof setInterval> | null = null;

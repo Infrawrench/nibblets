@@ -12,6 +12,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { Hono, type Context, type Next } from "hono";
+import { compress } from "hono/compress";
 import { cors } from "hono/cors";
 import WebSocket from "ws";
 import { z } from "zod";
@@ -85,6 +86,10 @@ export function createApp(services: Services, bus: Bus) {
     "/api/*",
     cors({ origin: "*", allowHeaders: ["authorization", "content-type"], maxAge: 600 }),
   );
+  // Gzip what goes to people: transcripts and lists are large and repetitive
+  // JSON, and they often come over a tunnel or a phone's connection. Runner,
+  // guard and MCP traffic stays on the host and is left alone.
+  app.use("/api/*", compress());
   // Nibblets Connect's UI checks which route to a server answers before using it.
   app.use("/healthz", cors({ origin: "*", maxAge: 600 }));
 
@@ -132,7 +137,9 @@ export function createApp(services: Services, bus: Bus) {
       let keepalive: ReturnType<typeof setInterval> | null = null;
       return {
         onOpen(_event, ws) {
-          unsubscribe = bus.subscribe((message: LiveMessage) => ws.send(JSON.stringify(message)));
+          unsubscribe = bus.subscribe((message: LiveMessage) =>
+            ws.send(JSON.stringify(message), { compress: true }),
+          );
           // Tunnels and proxies close sockets that go quiet (Cloudflare's after
           // 100 seconds), and the browser uses this to spot a dead one.
           keepalive = setInterval(() => ws.send("ping"), LIVE_KEEPALIVE_MS);
@@ -200,7 +207,7 @@ export function createApp(services: Services, bus: Bus) {
       let terminalId: string | null = null;
       return {
         onOpen(_event, ws) {
-          const send = (event: TerminalEvent) => ws.send(JSON.stringify(event));
+          const send = (event: TerminalEvent) => ws.send(JSON.stringify(event), { compress: true });
           terminalId = conductor.terminals.openTerminal(
             nibbletId,
             { cols: size("cols", 80), rows: size("rows", 24) },
@@ -344,6 +351,8 @@ export function createApp(services: Services, bus: Bus) {
 
   const webDist = config.NIBBLET_WEB_DIST ?? new URL("../../web/dist", import.meta.url).pathname;
   if (existsSync(webDist)) {
+    // Only what fell through the routes above: the bundle and the app shell.
+    app.use("/*", compress());
     app.use(
       "/*",
       serveStatic({
