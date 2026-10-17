@@ -481,7 +481,10 @@ export class DockerMachines implements MachinePlugin {
       [
         "sh",
         "-c",
-        `cd ${PROFILE_PARENT} && mkdir -p chromium && tar --numeric-owner ${excludes} -czf - chromium`,
+        // The folders it makes are the guard's, as they'd be had its browser made them.
+        `mkdir -p ${PROFILE_PARENT}/chromium && ` +
+          `chown ${GUARD_OWNER} ${PROFILE_PARENT} ${PROFILE_PARENT}/chromium && ` +
+          `cd ${PROFILE_PARENT} && tar --numeric-owner ${excludes} -czf - chromium`,
       ],
       { readOnly: false, stdout: out },
     );
@@ -489,19 +492,35 @@ export class DockerMachines implements MachinePlugin {
 
   /**
    * Replaces the browser profile from a tar made by `archiveProfile` (rooted
-   * at `chromium/`), handing ownership back to the guard. The nibblet must be
-   * stopped; its guard clears any stale profile lock when it starts again.
+   * at `chromium/`), handing ownership back to the guard. The tar is
+   * unpacked beside the profile first and swapped in only once it's whole,
+   * so a broken or cut-off handback leaves the old profile as it was. The
+   * nibblet must be stopped; its guard clears any stale profile lock when it
+   * starts again.
    */
   async restoreProfile(nibbletId: string, archive: Readable): Promise<void> {
     const volume = await this.ensureHome(nibbletId);
+    const incoming = `${PROFILE_PARENT}/.chromium-incoming`;
+    const old = `${PROFILE_PARENT}/.chromium-old`;
     await this.inHome(
       volume,
       [
         "sh",
         "-c",
-        `mkdir -p ${PROFILE_PARENT} && rm -rf ${PROFILE_PARENT}/chromium && ` +
-          `tar -C ${PROFILE_PARENT} --no-same-owner -xzf - && ` +
-          `chown -R ${GUARD_OWNER} ${PROFILE_PARENT}/chromium`,
+        [
+          "set -e",
+          `mkdir -p ${PROFILE_PARENT}`,
+          `rm -rf ${incoming} ${old}`,
+          `mkdir ${incoming}`,
+          `if ! tar -C ${incoming} --no-same-owner -xzf - || [ ! -d ${incoming}/chromium ]; then`,
+          `  rm -rf ${incoming}; echo "the handed-back profile was incomplete" >&2; exit 1`,
+          "fi",
+          `chown -R ${GUARD_OWNER} ${incoming}/chromium`,
+          `chown ${GUARD_OWNER} ${PROFILE_PARENT}`,
+          `if [ -e ${PROFILE_PARENT}/chromium ]; then mv ${PROFILE_PARENT}/chromium ${old}; fi`,
+          `mv ${incoming}/chromium ${PROFILE_PARENT}/chromium`,
+          `rm -rf ${incoming} ${old}`,
+        ].join("\n"),
       ],
       { readOnly: false, stdin: archive },
     );
@@ -556,6 +575,9 @@ export class DockerMachines implements MachinePlugin {
         stream.once("close", () => resolve());
       });
       // Ending the stream closes the command's stdin, so tar sees the end.
+      // A source that fails part-way never ends it, so the connection is
+      // dropped instead, and the command fails, rather than waiting forever.
+      io.stdin?.once("error", () => stream.destroy());
       io.stdin?.pipe(stream);
       await ended;
       const code = await exitOf(exec);

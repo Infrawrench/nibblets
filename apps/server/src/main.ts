@@ -62,6 +62,10 @@ async function main(): Promise<void> {
   const docker = new Orchestrator(config);
   if (!(await docker.ping())) throw new Error("Can't reach Docker. Is the socket mounted?");
   await docker.ensureNetwork();
+  // A borrow doesn't outlive the server that started it.
+  await docker
+    .removeBorrowProxies()
+    .catch((err: unknown) => console.warn("couldn't remove old borrow proxies", err));
 
   // Where nibblets run: containers on this engine, and virtual machines on
   // whatever hypervisors the host bridge offers.
@@ -214,6 +218,8 @@ async function main(): Promise<void> {
   await central.restore();
 
   const shutdown = () => {
+    // Closes any borrowed window on the host; nothing is handed back.
+    borrow.abortAll();
     scheduler.stop();
     snapshots.stop();
     harnessUpdates.stop();

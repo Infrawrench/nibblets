@@ -8,7 +8,14 @@ import type { Store } from "./store.ts";
 import type { Config } from "./config.ts";
 
 /** A Borrow wired to fakes, with a handle on what it did. */
-function make(opts: { onWindow?: () => Promise<void> } = {}) {
+function make(
+  opts: {
+    onWindow?: () => Promise<void>;
+    status?: string;
+    handback?: () => Response;
+    localSignIn?: boolean;
+  } = {},
+) {
   const calls: string[] = [];
   const published: LiveMessage[] = [];
   let resolveWindow: () => void = () => {};
@@ -27,7 +34,7 @@ function make(opts: { onWindow?: () => Promise<void> } = {}) {
 
   const machine = {
     name: "Docker",
-    capabilities: () => ({ localSignIn: true }),
+    capabilities: () => ({ localSignIn: opts.localSignIn ?? true }),
     archiveProfile: async (_id: string, out: NodeJS.WritableStream) => {
       calls.push("archive");
       // Like the real inHome: write the profile but leave ending the stream to the caller.
@@ -45,6 +52,7 @@ function make(opts: { onWindow?: () => Promise<void> } = {}) {
       parentId: null,
       browser: true,
       machine: { backend: "docker", guest: "linux" },
+      status: opts.status ?? "idle",
     }),
   } as unknown as Store;
 
@@ -60,6 +68,7 @@ function make(opts: { onWindow?: () => Promise<void> } = {}) {
     }
     // The window stays open until the test closes it, then hands a profile back.
     await (opts.onWindow?.() ?? windowClosed);
+    if (opts.handback) return opts.handback();
     return new Response(Readable.toWeb(Readable.from(["handed-back"])) as ReadableStream, {
       status: 200,
     });
@@ -105,7 +114,36 @@ describe("Borrow", () => {
     expect(calls.indexOf("proxy-stop")).toBeLessThan(calls.indexOf("start"));
     expect(borrow.borrowed("n1")).toBe(false);
     expect(states(published)).toEqual(["preparing", "local", "handback"]);
-    expect(published.at(-1)).toEqual({ type: "browser_borrow_ended", nibbletId: "n1" });
+    expect(published.at(-1)).toEqual({
+      type: "browser_borrow_ended",
+      nibbletId: "n1",
+      error: null,
+    });
+  });
+
+  it("leaves a nibblet that was asleep asleep afterwards", async () => {
+    const { borrow, calls, closeWindow } = make({ status: "stopped" });
+    await borrow.start("n1");
+    closeWindow();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).toContain("restore");
+    expect(calls).not.toContain("start");
+  });
+
+  it("says why a handback failed, and restores nothing", async () => {
+    const { borrow, calls, published, closeWindow } = make({
+      handback: () => Response.json({ error: "Chrome upgraded Cookies" }, { status: 409 }),
+    });
+    await borrow.start("n1");
+    closeWindow();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).not.toContain("restore");
+    expect(calls).toContain("start");
+    expect(published.at(-1)).toEqual({
+      type: "browser_borrow_ended",
+      nibbletId: "n1",
+      error: "Chrome upgraded Cookies",
+    });
   });
 
   it("refuses a sub-agent", async () => {
@@ -122,6 +160,12 @@ describe("Borrow", () => {
     const { borrow, calls } = make();
     (borrow as unknown as { deps: BorrowDeps }).deps.config = { HOST_MCP_URL: "" } as Config;
     await expect(borrow.start("n1")).rejects.toThrow(/desktop app/i);
+    expect(calls).not.toContain("stop");
+  });
+
+  it("refuses a machine that can't lend its profile, and never stops the nibblet", async () => {
+    const { borrow, calls } = make({ localSignIn: false });
+    await expect(borrow.start("n1")).rejects.toThrow(/containers/i);
     expect(calls).not.toContain("stop");
   });
 });

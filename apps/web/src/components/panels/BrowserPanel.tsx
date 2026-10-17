@@ -2,7 +2,8 @@ import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Globe, Hand, KeyRound, Loader2, LogIn, MousePointerClick, Network } from "lucide-react";
 import type { BrowserBorrow, Nibblet } from "@nibblet/protocol";
-import { keys, useBorrow } from "../../lib/servers.tsx";
+import { keys, useBorrow, useBorrowError, useNibblets, useServers } from "../../lib/servers.tsx";
+import { localServerId } from "../../lib/central.ts";
 import { listSessions, openBrowser } from "../../lib/browserView.ts";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { useCapabilities } from "../../lib/machines.ts";
@@ -152,13 +153,23 @@ function MockBrowser() {
   );
 }
 
+/** Whether this page is open on the computer the server runs on, where a borrowed window opens. */
+function useOnServersComputer(connection: ServerConnection): boolean {
+  const servers = useServers();
+  if (servers.central) return servers.system(connection.id)?.local ?? false;
+  // Served by the server itself: the desktop app's own window, or a browser on loopback.
+  return localServerId() !== null || LOOPBACK.has(window.location.hostname);
+}
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
 /**
  * Borrows the nibblet's browser profile onto this computer: it stops, its
  * profile opens in a Chrome window here to sign in quickly (with the host's
  * 1Password if it's installed), and closing the window hands it back with
  * every extension purged. Not offered over Nibblets Connect from another
  * computer (the window opens where the server runs), nor for a machine that
- * can't lend its profile out (a VM, for now).
+ * can't lend its profile out (a VM, for now). Stopping a nibblet that's
+ * working, or whose sub-agents are, takes a second click.
  */
 function SignInLocally({
   connection,
@@ -171,26 +182,56 @@ function SignInLocally({
 }) {
   const qc = useQueryClient();
   const can = useCapabilities(connection, nibblet);
+  const here = useOnServersComputer(connection);
+  const nibblets = useNibblets(connection);
+  const lastError = useBorrowError(connection, nibblet.id);
+  const [confirming, setConfirming] = useState(false);
   const start = useMutation({
     mutationFn: () => connection.client.nibblets.browserBorrowStart({ id: nibblet.id }),
+    onMutate: () => qc.setQueryData(keys.borrowError(connection.id, nibblet.id), null),
     onSuccess: (borrow) => qc.setQueryData(keys.borrow(connection.id, nibblet.id), borrow),
   });
-  if (!can.localSignIn) return null;
+  if (!here || !can.localSignIn) return null;
+  const working = (n: Nibblet) => n.status === "working" || n.status === "waiting";
+  const busy =
+    working(nibblet) || (nibblets.data ?? []).some((n) => n.parentId === nibblet.id && working(n));
+  const error = start.error
+    ? start.error instanceof Error
+      ? start.error.message
+      : String(start.error)
+    : lastError.data
+      ? `The last local sign-in failed: ${lastError.data}`
+      : null;
   return (
     <div className="flex flex-col items-center gap-1">
       <Button
         size={compact ? "sm" : "md"}
         variant="secondary"
         disabled={start.isPending}
-        title="Open this profile in a Chrome window on this computer to sign in, then hand it back"
-        onClick={() => start.mutate()}
+        title={
+          busy
+            ? `${nibblet.name} is working; signing in locally stops them until it's handed back`
+            : "Open this profile in a Chrome window on this computer to sign in, then hand it back"
+        }
+        onClick={() => {
+          if (busy && !confirming) {
+            setConfirming(true);
+            return;
+          }
+          setConfirming(false);
+          start.mutate();
+        }}
+        onBlur={() => setConfirming(false)}
       >
         {start.isPending ? <Loader2 className="animate-spin" /> : <LogIn />}
-        Sign in locally
+        {confirming ? "Stop it and sign in?" : "Sign in locally"}
       </Button>
-      {start.error ? (
-        <span className="max-w-xs text-center text-2xs text-danger">
-          {start.error instanceof Error ? start.error.message : String(start.error)}
+      {error && !compact ? (
+        <span className="max-w-xs text-center text-2xs text-danger">{error}</span>
+      ) : null}
+      {error && compact ? (
+        <span className="text-2xs text-danger" title={error}>
+          Local sign-in failed
         </span>
       ) : null}
     </div>

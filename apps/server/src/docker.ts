@@ -14,42 +14,85 @@ const borrowProxyName = (nibbletId: string): string => `nibblet-borrow-proxy-${n
 const BORROW_PROXY_PORT = 8888;
 /**
  * A tiny forward proxy for a borrowed window: plain HTTP requests are
- * forwarded, HTTPS is tunnelled with CONNECT. It only ever listens on the
- * nibblet's network and is reached from the host's loopback through Docker's
- * published port, so it takes no authentication of its own.
+ * forwarded, HTTPS is tunnelled with CONNECT. It's reached from the host's
+ * loopback through a published port, so anything on that computer can use
+ * it; like a runner's firewall (firewallRules in the runner's entry), it
+ * refuses its own network (other nibblets, the server) and link-local
+ * addresses (cloud metadata), checking each address a name resolves to, so
+ * it reaches nothing a program on the host couldn't already.
  */
 const BORROW_PROXY_SCRIPT = `
 const http = require("http");
 const net = require("net");
+const dns = require("dns");
+const os = require("os");
 const { URL } = require("url");
 const port = Number(process.env.PORT || 8888);
+const deny = new net.BlockList();
+deny.addSubnet("0.0.0.0", 8);
+deny.addSubnet("127.0.0.0", 8);
+deny.addSubnet("169.254.0.0", 16);
+deny.addAddress("::", "ipv6");
+deny.addAddress("::1", "ipv6");
+deny.addSubnet("fe80::", 10, "ipv6");
+for (const i of Object.values(os.networkInterfaces()).flat()) {
+  if (!i || i.internal || !i.cidr) continue;
+  const [ip, bits] = i.cidr.split("/");
+  deny.addSubnet(ip, Number(bits), i.family === "IPv6" ? "ipv6" : "ipv4");
+}
+const bare = (host) => host.replace(/^\\[|\\]$/g, "");
+const blocked = (ip) => deny.check(ip, net.isIP(ip) === 6 ? "ipv6" : "ipv4");
+const refused = () => Object.assign(new Error("blocked"), { code: "EBLOCKED" });
+// Every address a name resolves to is checked, and only allowed ones are dialled.
+function lookup(hostname, options, cb) {
+  dns.lookup(hostname, { all: true, family: options.family || 0 }, (err, found) => {
+    if (err) return cb(err);
+    const ok = found.filter((a) => !blocked(a.address));
+    if (!ok.length) return cb(refused());
+    if (options.all) cb(null, ok);
+    else cb(null, ok[0].address, ok[0].family);
+  });
+}
 const server = http.createServer((req, res) => {
   let target;
   try { target = new URL(req.url); } catch { res.writeHead(400).end(); return; }
+  const host = bare(target.hostname);
+  if (net.isIP(host) && blocked(host)) { res.writeHead(403).end(); return; }
   const up = http.request(
     {
-      host: target.hostname,
+      host,
       port: target.port || 80,
       method: req.method,
       path: target.pathname + target.search,
       headers: req.headers,
+      lookup,
     },
     (r) => { res.writeHead(r.statusCode || 502, r.headers); r.pipe(res); },
   );
-  up.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+  up.on("error", (err) => {
+    if (!res.headersSent) res.writeHead(err.code === "EBLOCKED" ? 403 : 502);
+    res.end();
+  });
   req.pipe(up);
 });
 server.on("connect", (req, client, head) => {
   const i = req.url.lastIndexOf(":");
-  const host = req.url.slice(0, i);
+  const host = bare(req.url.slice(0, i));
   const p = Number(req.url.slice(i + 1)) || 443;
-  const up = net.connect(p, host, () => {
+  if (net.isIP(host) && blocked(host)) {
+    client.end("HTTP/1.1 403 Forbidden\\r\\n\\r\\n");
+    return;
+  }
+  const up = net.connect({ port: p, host, lookup }, () => {
     client.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
     if (head && head.length) up.write(head);
     up.pipe(client);
     client.pipe(up);
   });
-  up.on("error", () => client.destroy());
+  up.on("error", (err) => {
+    if (err.code === "EBLOCKED") client.end("HTTP/1.1 403 Forbidden\\r\\n\\r\\n");
+    else client.destroy();
+  });
   client.on("error", () => up.destroy());
 });
 server.listen(port, "0.0.0.0");
@@ -276,6 +319,20 @@ export class Orchestrator {
     } catch (err) {
       await stop().catch(() => undefined);
       throw err;
+    }
+  }
+
+  /** Removes borrow proxies a previous server left running (it stopped mid-borrow). */
+  async removeBorrowProxies(): Promise<void> {
+    const list = await this.docker.listContainers({
+      all: true,
+      filters: { label: [`${MANAGED}=true`, `${ROLE}=borrow-proxy`] },
+    });
+    for (const c of list) {
+      await this.docker
+        .getContainer(c.Id)
+        .remove({ force: true })
+        .catch(() => undefined);
     }
   }
 

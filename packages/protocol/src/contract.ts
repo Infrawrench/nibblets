@@ -294,8 +294,12 @@ export const LiveMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("bank_changed") }),
   /** A local sign-in's state changed (started, open on the host, handing back, or over). */
   z.object({ type: z.literal("browser_borrow"), borrow: BrowserBorrow }),
-  /** A local sign-in ended: it's no longer borrowed. */
-  z.object({ type: z.literal("browser_borrow_ended"), nibbletId: z.string() }),
+  /** A local sign-in ended: it's no longer borrowed. `error` says why it failed, if it did. */
+  z.object({
+    type: z.literal("browser_borrow_ended"),
+    nibbletId: z.string(),
+    error: z.string().nullable(),
+  }),
   z.object({
     type: z.literal("snapshots_changed"),
     nibbletId: z.string(),

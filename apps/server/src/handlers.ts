@@ -212,14 +212,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         await forgetGrants(s.config, store, id);
         return ok;
       },
-      start: ({ id }) => {
-        if (s.borrow.borrowed(id))
-          throw new RpcError(
-            "unavailable",
-            "It's signed in locally right now — hand it back first.",
-          );
-        return conductor.start(id);
-      },
+      start: ({ id }) => conductor.start(id),
       stop: ({ id }) => conductor.stop(id),
       logs: async ({ id, lines }) => ({ text: await conductor.logs(id, lines ?? 200) }),
       send: async ({ id, text, attachments }) => {
