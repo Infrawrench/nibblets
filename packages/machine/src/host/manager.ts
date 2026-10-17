@@ -154,7 +154,8 @@ class Hypervisor {
   }
 
   async info(id: string, record: VmRecord): Promise<VmInfo> {
-    const running = await this.plugin.running(this.ctx, this.ref(id)).catch(() => false);
+    // Not caught: a hypervisor that can't say doesn't mean the VM's off.
+    const running = await this.plugin.running(this.ctx, this.ref(id));
     if (running) this.relay(id);
     return {
       id,
@@ -182,8 +183,10 @@ class Hypervisor {
     let quiet = 0;
     for (;;) {
       if (this.relays.get(id) !== relay) return;
-      const running = await this.plugin.running(this.ctx, ref).catch(() => false);
-      if (!running) {
+      const running = await this.plugin.running(this.ctx, ref).catch(() => null);
+      // Couldn't tell this time: neither off nor on.
+      if (running === null) quiet = 0;
+      else if (!running) {
         // Give one that's just starting a moment before letting go of it.
         if (++quiet > 20) {
           relay.close();

@@ -31,6 +31,10 @@ const DOWNLOADS = path.join(HOME, "Downloads");
 const scripts = path.join(path.dirname(new URL(import.meta.url).pathname), "..");
 
 const log = (message: string) => console.log(`entry: ${message}`);
+/** Set by the guest agent: this is a VM, not a container. */
+const IN_VM = process.env.NIBBLET_IN_VM === "1";
+/** Where a VM's home disk is mounted (machine/linux.ts), which holds the home folder. */
+const VM_DATA = "/var/lib/nibblet-data";
 
 /** The network this container is on, as `10.89.1.0/24`, from its first non-loopback IPv4 address. */
 export function ownSubnet(
@@ -211,6 +215,10 @@ function as(
       `--regid=${gid}`,
       `--groups=${groups.join(",")}`,
       "--inh-caps=-all",
+      // Nothing it runs (a setuid binary) can gain a privilege back. A
+      // container has both of these from Docker already, and can't change
+      // its bounding set (no CAP_SETPCAP); a VM has neither until now.
+      ...(IN_VM ? ["--no-new-privs", "--bounding-set=-all"] : []),
       "--",
       process.execPath,
       path.join(scripts, script),
@@ -353,15 +361,28 @@ export const linux: EntryPlatform = {
     if (alive(pid)) process.kill(pid, "SIGKILL");
   },
 
-  archiveHome: () =>
-    inherit("tar", [
-      "-C",
-      path.dirname(HOME),
-      "-czf",
-      "-",
-      ...HOME_ARCHIVE_EXCLUDES.map((e) => `--exclude=${e}`),
-      path.basename(HOME),
-    ]),
+  async archiveHome() {
+    // Held still while it's copied, as a paused container is: in a VM, its
+    // home disk is frozen, so writes wait and nothing's caught half-written.
+    const frozen =
+      IN_VM &&
+      (await run("fsfreeze", ["-f", VM_DATA]).then(
+        () => true,
+        () => false,
+      ));
+    try {
+      await inherit("tar", [
+        "-C",
+        path.dirname(HOME),
+        "-czf",
+        "-",
+        ...HOME_ARCHIVE_EXCLUDES.map((e) => `--exclude=${e}`),
+        path.basename(HOME),
+      ]);
+    } finally {
+      if (frozen) await run("fsfreeze", ["-u", VM_DATA]).catch(() => undefined);
+    }
+  },
 
   restoreHome: () =>
     inherit("sh", [

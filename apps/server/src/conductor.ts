@@ -959,7 +959,7 @@ export class Conductor {
    */
   async tailscaleLogin(nibbletId: string): Promise<TailscaleLogin | null> {
     const row = await this.store.nibbletRow(nibbletId);
-    if (!row.tailscale || row.parentId) return null;
+    if (!row.tailscale || row.parentId || !this.capabilities(row).tailscale) return null;
     return {
       // Its machine name is in its prompt, so it doesn't default to a name it isn't to know.
       hostname: row.tailscale.hostname || tailnetHostname(nameInPrompt(row) ?? ""),
@@ -975,7 +975,9 @@ export class Conductor {
    */
   async tailscaleAuthKey(nibbletId: string): Promise<string> {
     const row = await this.store.nibbletRow(nibbletId);
-    if (!row.tailscale || row.parentId) throw new RpcError("not_found", "It isn't to join");
+    if (!row.tailscale || row.parentId || !this.capabilities(row).tailscale) {
+      throw new RpcError("not_found", "It isn't to join");
+    }
     if (row.tailscale.authKey) return row.tailscale.authKey;
     const oauth = await readTailnetOAuth(this.store);
     if (!oauth) {

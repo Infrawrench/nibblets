@@ -84,14 +84,23 @@ export class GuestRelay {
     this.server = socket;
     previous?.close();
     socket.onMessage((data) => {
+      let room = true;
       if (typeof data === "string") {
-        this.writePort(encodeSerial({ kind: "message", text: data }));
-        return;
+        room = this.writePort(encodeSerial({ kind: "message", text: data }));
+      } else {
+        const frame = decodeFrame(data);
+        if (!frame) return;
+        for (const piece of chunks(frame.data)) {
+          room = this.writePort(
+            encodeSerial({ kind: "data", frame: encodeFrame(frame.channel, piece) }),
+          );
+        }
       }
-      const frame = decodeFrame(data);
-      if (!frame) return;
-      for (const piece of chunks(frame.data)) {
-        this.writePort(encodeSerial({ kind: "data", frame: encodeFrame(frame.channel, piece) }));
+      // The guest's port is slower than the server (Hyper-V's COM port, most
+      // of all): hold the server back rather than keep what it sends here.
+      if (!room && this.port && socket.pause) {
+        socket.pause();
+        this.port.once("drain", () => socket.resume?.());
       }
     });
     socket.onClose(() => {
@@ -130,7 +139,8 @@ export class GuestRelay {
       return;
     }
     if (parsed.success && parsed.data.type === "closed" && parsed.data.channel >= GUEST_CHANNELS) {
-      this.sockets.get(parsed.data.channel)?.destroy();
+      // What's still on its way out is sent first.
+      this.sockets.get(parsed.data.channel)?.destroySoon();
       this.sockets.delete(parsed.data.channel);
       return;
     }

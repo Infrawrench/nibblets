@@ -114,7 +114,11 @@ mkfs.vfat -F 32 -n EFI /esp.img >/dev/null
 mcopy -s -i /esp.img /esp/* ::/
 
 used_mb=$(du -sxm "$R" | cut -f1)
+# As big as each VM's system disk will be, so nothing grows it while it's
+# mounted (online resizes left bad bitmaps on the new block groups). The disk
+# is sparse, so the room costs nothing until something's written there.
 root_mb=$(( used_mb + used_mb / 5 + 512 ))
+[ "$root_mb" -ge 32000 ] || root_mb=32000
 total_mb=$(( 1 + esp_mb + root_mb + 1 ))
 disk=/out/disk.img
 truncate -s "${"${total_mb}"}M" "$disk"
