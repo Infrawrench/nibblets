@@ -15,8 +15,11 @@ const TAILSCALE_STATE = "/var/lib/nibblet-tailscale";
 const HOME_LABEL = "nibblet-home";
 const ENTRY = new URL("../entry.ts", import.meta.url).pathname;
 
-/** Where its port shows up: a named virtio console port (Apple, KVM), or COM2 (Hyper-V). */
-const PORTS = [`/dev/virtio-ports/${GUEST_PORT_NAME}`, "/dev/ttyS1"];
+/**
+ * Where its port shows up: a named virtio serial port (KVM), the second
+ * virtio console (Apple's, after the console's hvc0), or COM2 (Hyper-V).
+ */
+const PORTS = [`/dev/virtio-ports/${GUEST_PORT_NAME}`, "/dev/hvc1", "/dev/ttyS1"];
 
 async function sh(cmd: string, args: string[]): Promise<string> {
   return (await run(cmd, args, { timeout: 120_000 })).stdout;
@@ -41,14 +44,17 @@ async function rootDisk(): Promise<{ disk: string; partition: string; device: st
 /** Grows the root partition and its filesystem to fill a disk that's been made bigger. */
 async function growRoot(log: (m: string) => void): Promise<void> {
   const { disk, partition, device } = await rootDisk();
-  try {
-    await sh("growpart", [disk, partition]);
-    await sh("resize2fs", [device]);
-    log(`grew ${device} to fill ${disk}`);
-  } catch (err) {
-    // growpart exits 1 for "nothing to do".
-    if (!String(err).includes("NOCHANGE")) log(`couldn't grow the root: ${String(err)}`);
-  }
+  // growpart says NOCHANGE, and exits 1, when there's nothing to grow.
+  const grown = await run("growpart", [disk, partition], { timeout: 120_000 }).then(
+    () => true,
+    (err: NodeJS.ErrnoException & { stdout?: string }) => {
+      if (!err.stdout?.includes("NOCHANGE")) log(`couldn't grow the root: ${err.message}`);
+      return false;
+    },
+  );
+  if (!grown) return;
+  await sh("resize2fs", [device]);
+  log(`grew ${device} to fill ${disk}`);
 }
 
 /** The home disk: the one labelled for it, or the first blank one, made into it. */
@@ -191,11 +197,14 @@ export const linux: GuestPlugin = {
     for (let attempt = 0; attempt < 60; attempt++) {
       for (const path of PORTS) {
         if (!(await exists(path))) continue;
-        // A UART turns bytes into lines and echoes them back; this one carries frames.
-        if (path.startsWith("/dev/tty"))
-          await sh("stty", ["-F", path, "raw", "-echo", "-echoe", "-echok"]);
+        const handle = await open(path, "r+");
+        // A tty turns bytes into lines and echoes them back; this one carries
+        // frames. Set while it's open here, since a tty no one has open forgets.
+        if (!path.startsWith("/dev/virtio-ports/")) {
+          await sh("stty", ["-F", path, "raw", "-echo", "-echoe", "-echok", "-echoctl"]);
+        }
         log(`talking to the host on ${path}`);
-        return new DeviceStream(await open(path, "r+"));
+        return new DeviceStream(handle);
       }
       await sleep(500);
     }

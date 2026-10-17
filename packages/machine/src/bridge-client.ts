@@ -43,6 +43,11 @@ export class HypervisorClient {
     this.hypervisor = hypervisor;
   }
 
+  /** Whether there's a bridge to ask at all. */
+  get configured(): boolean {
+    return this.bridge.url !== "";
+  }
+
   private path(rest: string): string {
     return `/machines/${encodeURIComponent(this.hypervisor)}${rest}`;
   }

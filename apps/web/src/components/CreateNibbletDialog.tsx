@@ -3,9 +3,11 @@ import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, ChevronRight, Laptop, Loader2 } from "lucide-react";
 import {
+  DEFAULT_MACHINE,
   harnesses,
   randomHamsterLook,
   type Effort,
+  type MachineChoice,
   type HamsterLook,
   type Nibblet,
   type VaultGrant,
@@ -24,6 +26,8 @@ import { NewNibbletVaults } from "./onepassword/OnePasswordSection.tsx";
 import { keys, useServers, type System } from "../lib/servers.tsx";
 import { nextHamsterName } from "../lib/hamsterNames.ts";
 import { useModels } from "../lib/models.ts";
+import { machineKey, useMachines } from "../lib/machines.ts";
+import { MachinePicker } from "./MachinePicker.tsx";
 import { cn } from "../lib/cn.ts";
 
 export function CreateNibbletDialog({
@@ -50,6 +54,7 @@ export function CreateNibbletDialog({
   const [browser, setBrowser] = useState(true);
   const [promptName, setPromptName] = useState<string | null>(null);
   const [plain, setPlain] = useState(false);
+  const [machine, setMachine] = useState<MachineChoice>(DEFAULT_MACHINE);
   const [vaults, setVaults] = useState<VaultGrant[]>([]);
   const [tools, setTools] = useState<ToolsValue>({
     hostTools: [],
@@ -76,11 +81,16 @@ export function CreateNibbletDialog({
     setPromptName(null);
     setPlain(false);
     setTools({ hostTools: [], cliCredentials: [], mcpServers: [], toolApprovals: [] });
+    setMachine(DEFAULT_MACHINE);
     setError(null);
   }, [open]);
 
   const target = servers.byId(server);
   const catalogue = useModels(target);
+  const machines = useMachines(target);
+  const chosenMachine = machines.options.find((o) => o.key === machineKey(machine));
+  // A guest without a browser can't have one, whatever the switch said.
+  const canBrowse = chosenMachine?.guest.capabilities.browser ?? true;
   // Starts on Claude, but not on a server that has no Claude subscription.
   const fallback = catalogue.offered.includes(choice.harness) ? null : catalogue.defaultChoice();
   useEffect(() => {
@@ -104,7 +114,8 @@ export function CreateNibbletDialog({
         effort,
         promptName: promptName?.trim() ?? null,
         plain,
-        browser,
+        machine,
+        browser: browser && canBrowse,
         ...tools,
         ...(message.trim() ? { message: message.trim() } : {}),
       });
@@ -154,8 +165,9 @@ export function CreateNibbletDialog({
           <div className="mb-1 flex items-center gap-3">
             <Hamster look={look} size={48} status="idle" />
             <div className="text-sm text-dim">
-              <span className="font-medium text-text">{name}</span> lives in its own container,
-              wakes on a heartbeat, and keeps its memory on the server.
+              <span className="font-medium text-text">{name}</span> lives in its own{" "}
+              {machine.backend === DEFAULT_MACHINE.backend ? "container" : "virtual machine"}, wakes
+              on a heartbeat, and keeps its memory on the server.
             </div>
           </div>
           {choosing ? (
@@ -189,11 +201,17 @@ export function CreateNibbletDialog({
               />
             </div>
           </FieldRow>
+          <MachinePicker options={machines.options} value={machine} onChange={setMachine} />
           <FieldRow
             label="Browser"
             hint="A Chromium, and a desktop for other apps, that it and you can both drive."
           >
-            <Switch checked={browser} onChange={setBrowser} label="Browser" />
+            <Switch
+              checked={browser && canBrowse}
+              onChange={setBrowser}
+              label="Browser"
+              disabled={!canBrowse}
+            />
           </FieldRow>
           <PromptNameField value={promptName} onChange={setPromptName} />
           <FieldRow
@@ -208,7 +226,7 @@ export function CreateNibbletDialog({
                 connection={target}
                 value={tools}
                 onChange={setTools}
-                browser={browser}
+                browser={browser && canBrowse}
               />
               <NewNibbletVaults connection={target} value={vaults} onChange={setVaults} />
             </>
@@ -238,7 +256,11 @@ export function CreateNibbletDialog({
             <ArrowRight />
           </Button>
         ) : (
-          <Button variant="primary" disabled={busy || !name.trim()} onClick={() => void create()}>
+          <Button
+            variant="primary"
+            disabled={busy || !name.trim() || chosenMachine?.ready === false}
+            onClick={() => void create()}
+          >
             {busy ? <Loader2 className="animate-spin" /> : null}
             Create {name.trim() || "nibblet"}
           </Button>

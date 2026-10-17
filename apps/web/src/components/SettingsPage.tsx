@@ -15,6 +15,7 @@ import { Segmented } from "./ui/Segmented.tsx";
 import { MobileBack } from "./MobileBack.tsx";
 import { NotificationsSection } from "./NotificationsSection.tsx";
 import { UpdatesSection } from "./UpdatesSection.tsx";
+import { MachinesSection } from "./MachinesSection.tsx";
 import { hostToolSummary } from "./tools/NibbletTools.tsx";
 
 export function SettingsPage() {
@@ -53,6 +54,7 @@ export function SettingsPage() {
             <UpdatesSection connection={connection} />
             <CredentialsSection connection={connection} />
             <HostToolsSection connection={connection} />
+            <MachinesSection connection={connection} />
             <OnePasswordSettings connection={connection} />
             <BankSection connection={connection} />
             <RemoteAccessSection connection={connection} />

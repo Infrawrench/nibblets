@@ -1,10 +1,11 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Moon, Pencil, Power, Trash2 } from "lucide-react";
-import type { Heartbeat, Nibblet } from "@nibblet/protocol";
+import { DEFAULT_MACHINE, type Heartbeat, type Nibblet } from "@nibblet/protocol";
 import { HeartPulse } from "lucide-react";
 import { modelLabel, useModels } from "../../lib/models.ts";
 import type { ServerConnection } from "../../lib/connection.ts";
+import { machineLabel, useMachines } from "../../lib/machines.ts";
 import { Hamster } from "../hamster/Hamster.tsx";
 import { HamsterDialog } from "../hamster/HamsterDialog.tsx";
 import { ModelPicker } from "../ModelPicker.tsx";
@@ -30,6 +31,16 @@ export function NibbletSettings({
 }) {
   const navigate = useNavigate();
   const catalogue = useModels(connection);
+  const machines = useMachines(connection);
+  // What its machine can do; a container can do everything, and is assumed while this loads.
+  const can = machines.backends
+    .find((b) => b.id === nibblet.machine.backend)
+    ?.guests.find((g) => g.os === nibblet.machine.guest)?.capabilities ?? {
+    browser: true,
+    tailscale: true,
+    sshAgent: true,
+    liveResources: true,
+  };
   const [name, setName] = useState(nibblet.name);
   const [instructions, setInstructions] = useState(nibblet.instructions);
   const [promptName, setPromptName] = useState(nibblet.promptName);
@@ -195,14 +206,27 @@ export function NibbletSettings({
           />
         </div>
       </FieldRow>
+      {nibblet.machine.backend !== DEFAULT_MACHINE.backend ? (
+        <FieldRow
+          label="Runs in"
+          hint={nibblet.parentId ? "Its parent's machine, beside it." : "Fixed when it was made."}
+        >
+          <span className="text-sm">{machineLabel(nibblet.machine, machines.backends)}</span>
+        </FieldRow>
+      ) : null}
       <FieldRow
         label="Browser"
-        hint="A Chromium, and a desktop for other apps, that it and you can both drive."
+        hint={
+          can.browser
+            ? "A Chromium, and a desktop for other apps, that it and you can both drive."
+            : "Its machine has no browser or desktop yet."
+        }
       >
         <Switch
-          checked={nibblet.browser}
+          checked={nibblet.browser && can.browser}
           onChange={(browser) => void update({ id: nibblet.id, browser })}
           label="Browser"
+          disabled={!can.browser}
         />
       </FieldRow>
 
@@ -214,7 +238,7 @@ export function NibbletSettings({
           mcpServers: nibblet.mcpServers,
           toolApprovals: nibblet.toolApprovals,
         }}
-        browser={nibblet.browser}
+        browser={nibblet.browser && can.browser}
         onChange={(tools) => void update({ id: nibblet.id, ...tools })}
       />
 
@@ -222,9 +246,9 @@ export function NibbletSettings({
 
       <NibbletSpending connection={connection} nibblet={nibblet} />
 
-      <TailscaleSection connection={connection} nibblet={nibblet} />
+      {can.tailscale ? <TailscaleSection connection={connection} nibblet={nibblet} /> : null}
 
-      <ResourcesSection connection={connection} nibblet={nibblet} />
+      <ResourcesSection connection={connection} nibblet={nibblet} live={can.liveResources} />
 
       <BudgetSection connection={connection} nibblet={nibblet} />
 

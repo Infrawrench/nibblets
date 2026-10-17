@@ -122,22 +122,17 @@ export class VirtualMachines implements MachinePlugin {
     return run;
   }
 
-  async describe(): Promise<MachineBackend> {
+  async describe(): Promise<MachineBackend | null> {
     const base: Pick<MachineBackend, "id" | "name" | "kind" | "recommended"> = {
       id: this.id,
       name: this.name,
       kind: this.kind,
       recommended: false,
     };
+    // No bridge, or one on a host without this hypervisor: not here at all.
+    if (!this.client.configured) return null;
     const hv = (await this.client.host()).hypervisors.find((h) => h.id === this.id);
-    if (!hv) {
-      return {
-        ...base,
-        available: false,
-        detail: `The host bridge doesn't offer ${this.name}`,
-        guests: [],
-      };
-    }
+    if (!hv) return null;
     return {
       ...base,
       available: hv.available,

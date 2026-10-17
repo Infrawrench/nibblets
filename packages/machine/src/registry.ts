@@ -30,11 +30,11 @@ export class MachineRegistry {
     return plugin;
   }
 
-  /** Every plugin, as the UI shows them; one that can't answer says why. */
+  /** Every plugin that's here, as the UI shows them; one that can't answer says why. */
   async describe(): Promise<MachineBackend[]> {
-    return Promise.all(
+    const found = await Promise.all(
       this.all().map((plugin) =>
-        plugin.describe().catch((err: unknown): MachineBackend => ({
+        plugin.describe().catch((err: unknown): MachineBackend | null => ({
           id: plugin.id,
           name: plugin.name,
           kind: plugin.kind,
@@ -45,6 +45,7 @@ export class MachineRegistry {
         })),
       ),
     );
+    return found.filter((b) => b !== null);
   }
 
   /**
@@ -53,7 +54,9 @@ export class MachineRegistry {
    * on first start.
    */
   async check(choice: MachineChoice): Promise<void> {
-    const backend = await this.get(choice).describe();
+    const plugin = this.get(choice);
+    const backend = await plugin.describe();
+    if (!backend) throw new MachineUnavailable(`${plugin.name} isn't on this server's host`);
     if (!backend.available) {
       throw new MachineUnavailable(backend.detail ?? `${backend.name} isn't available here`);
     }

@@ -621,6 +621,15 @@ importers:
       '@nibblet/machine':
         specifier: workspace:*
         version: link:../machine
+      '@nibblet/machine-apple':
+        specifier: workspace:*
+        version: link:../machine-apple
+      '@nibblet/machine-hyperv':
+        specifier: workspace:*
+        version: link:../machine-hyperv
+      '@nibblet/machine-kvm':
+        specifier: workspace:*
+        version: link:../machine-kvm
       '@nibblet/protocol':
         specifier: workspace:*
         version: link:../protocol
