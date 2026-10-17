@@ -44,6 +44,7 @@ import {
 } from "./onepassword.ts";
 import { cliPlugins, runOnHost, type CliPlugin, type Run } from "./clis/index.ts";
 import type { AppUpdaterHost } from "./update.ts";
+import type { HostMachines } from "@nibblet/machine/host";
 
 export interface ServerStatus {
   name: string;
@@ -229,6 +230,8 @@ export interface BridgeOptions {
   onePassword?: OnePasswordGrantsManager;
   /** How this host installs a new Nibblets; without one, it can't. */
   updater?: AppUpdaterHost;
+  /** The host's hypervisors, for nibblets in virtual machines; without them, there are none. */
+  machines?: HostMachines;
 }
 
 export interface HostMcpBridge {
@@ -308,6 +311,10 @@ export async function startHostMcpBridge(opts: BridgeOptions): Promise<HostMcpBr
     void (async () => {
       if (!authorised(req)) return json(res, 401, { error: "unauthorized" });
       const url = new URL(req.url ?? "/", "http://bridge");
+      if (url.pathname === "/machines" || url.pathname.startsWith("/machines/")) {
+        if (!opts.machines) return json(res, 200, { hypervisors: [] });
+        return opts.machines.handle(req, res, url.pathname);
+      }
       if (req.method === "GET" && url.pathname === "/servers")
         return json(res, 200, await describeAll());
       if (req.method === "GET" && url.pathname === "/clis") {
@@ -414,6 +421,14 @@ export async function startHostMcpBridge(opts: BridgeOptions): Promise<HostMcpBr
     });
   });
 
+  // A VM's agent port, as a WebSocket for the server.
+  http.on("upgrade", (req, socket, head) => {
+    const path = new URL(req.url ?? "/", "http://bridge").pathname;
+    if (!authorised(req) || !opts.machines?.upgrade(req, socket, head, path)) {
+      socket.end("HTTP/1.1 401 Unauthorized\r\nconnection: close\r\n\r\n");
+    }
+  });
+
   await new Promise<void>((resolve, reject) => {
     http.once("error", reject);
     http.listen(opts.port, opts.host ?? "127.0.0.1", () => resolve());
@@ -428,6 +443,7 @@ export async function startHostMcpBridge(opts: BridgeOptions): Promise<HostMcpBr
       for (const w of watchers) w.close();
       if (pending) clearTimeout(pending);
       await Promise.all([...upstreams.values()].map((u) => u.close()));
+      opts.machines?.close();
       await new Promise<void>((r) => http.close(() => r()));
     },
   };

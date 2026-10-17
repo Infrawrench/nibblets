@@ -288,6 +288,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@nibblet/machine':
+        specifier: workspace:*
+        version: link:../../packages/machine
       '@types/ws':
         specifier: ^8.18.2
         version: 8.18.2
@@ -312,9 +315,18 @@ importers:
       '@nibblet/machine':
         specifier: workspace:*
         version: link:../../packages/machine
+      '@nibblet/machine-apple':
+        specifier: workspace:*
+        version: link:../../packages/machine-apple
       '@nibblet/machine-docker':
         specifier: workspace:*
         version: link:../../packages/machine-docker
+      '@nibblet/machine-hyperv':
+        specifier: workspace:*
+        version: link:../../packages/machine-hyperv
+      '@nibblet/machine-kvm':
+        specifier: workspace:*
+        version: link:../../packages/machine-kvm
       '@nibblet/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -498,6 +510,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.1
         version: 1.32.1(supports-color@7.2.0)(zod@4.6.7)
+      '@nibblet/machine':
+        specifier: workspace:*
+        version: link:../machine
       '@nibblet/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -507,6 +522,25 @@ importers:
 
   packages/machine:
     dependencies:
+      '@nibblet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      ws:
+        specifier: ^8.22.0
+        version: 8.22.0
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@types/ws':
+        specifier: ^8.18.2
+        version: 8.18.2
+
+  packages/machine-apple:
+    dependencies:
+      '@nibblet/machine':
+        specifier: workspace:*
+        version: link:../machine
       '@nibblet/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -529,6 +563,27 @@ importers:
       '@types/dockerode':
         specifier: ^4.0.2
         version: 4.0.2
+
+  packages/machine-hyperv:
+    dependencies:
+      '@nibblet/machine':
+        specifier: workspace:*
+        version: link:../machine
+      '@nibblet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  packages/machine-kvm:
+    dependencies:
+      '@nibblet/machine':
+        specifier: workspace:*
+        version: link:../machine
+      '@nibblet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
 
   packages/protocol:
     dependencies:

@@ -13,7 +13,7 @@ describe.skipIf(!process.env.NIBBLET_TEST_DOCKER)("home archives", () => {
   const docker = new DockerMachines({
     docker: new Docker(),
     network: "nibblet",
-    runnerImage: "nibblet/runner:dev",
+    runnerImage: process.env.NIBBLET_TEST_RUNNER_IMAGE ?? "nibblet/runner:dev",
     hostSshAuthSock: "",
   });
   let dir: string;
