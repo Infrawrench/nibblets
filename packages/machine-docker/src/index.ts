@@ -453,7 +453,12 @@ export class DockerMachines implements MachinePlugin {
     });
   }
 
-  /** Runs a command as root in a throwaway container with the home volume mounted, offline. */
+  /**
+   * Runs a command as root in a throwaway container with the home volume
+   * mounted, offline. It's an exec in an idle container rather than the
+   * container's own command: attaching to that sends Podman the request's
+   * body as the start of stdin, where an exec's stdin is only what's piped.
+   */
   async inHome(
     volume: string,
     cmd: string[],
@@ -462,31 +467,27 @@ export class DockerMachines implements MachinePlugin {
     const container = await this.docker.createContainer({
       Image: this.opts.runnerImage,
       User: "0",
-      Cmd: cmd,
+      Cmd: ["sleep", "infinity"],
       Labels: {
         [MANAGED]: "true",
         [STACK]: this.opts.stack ?? DEFAULT_STACK,
         [ROLE]: "home-snapshot",
       },
-      AttachStdin: io.stdin !== undefined,
-      AttachStdout: true,
-      AttachStderr: true,
-      OpenStdin: io.stdin !== undefined,
-      StdinOnce: io.stdin !== undefined,
-      Tty: false,
       HostConfig: {
         NetworkMode: "none",
         Mounts: [{ Type: "volume", Source: volume, Target: RUNNER_HOME, ReadOnly: io.readOnly }],
       },
     });
     try {
-      const stream = await container.attach({
-        stream: true,
-        stdin: io.stdin !== undefined,
-        stdout: true,
-        stderr: true,
-        hijack: true,
+      await container.start();
+      const exec = await container.exec({
+        Cmd: cmd,
+        User: "0",
+        AttachStdin: io.stdin !== undefined,
+        AttachStdout: true,
+        AttachStderr: true,
       });
+      const stream = await exec.start({ hijack: true, stdin: io.stdin !== undefined });
       const stderr: Buffer[] = [];
       const sink = (into: Buffer[] | null) =>
         new Writable({
@@ -495,17 +496,18 @@ export class DockerMachines implements MachinePlugin {
             done();
           },
         });
-      const out = io.stdout ?? sink(null);
-      this.docker.modem.demuxStream(stream, out, sink(stderr));
-      const ended = new Promise<void>((resolve) => stream.once("end", () => resolve()));
-      await container.start();
-      // Ending the attach stream closes the container's stdin, so tar sees the end.
+      this.docker.modem.demuxStream(stream, io.stdout ?? sink(null), sink(stderr));
+      const ended = new Promise<void>((resolve) => {
+        stream.once("end", () => resolve());
+        stream.once("close", () => resolve());
+      });
+      // Ending the stream closes the command's stdin, so tar sees the end.
       io.stdin?.pipe(stream);
-      const result: { StatusCode: number } = await container.wait();
-      await Promise.race([ended, new Promise((r) => setTimeout(r, 2000))]);
-      if (result.StatusCode !== 0) {
+      await ended;
+      const code = await exitOf(exec);
+      if (code !== 0) {
         throw new Error(
-          `${cmd[0]} exited ${result.StatusCode}: ${Buffer.concat(stderr).toString("utf8").trim().slice(0, 500)}`,
+          `${cmd[0]} exited ${code ?? "without a code"}: ${Buffer.concat(stderr).toString("utf8").trim().slice(0, 500)}`,
         );
       }
     } finally {
@@ -666,6 +668,16 @@ kill -KILL "$pid" 2>/dev/null; true`;
 export function subagentStatePaths(home: string, nibbletId: string): string[] {
   const id = safeId(nibbletId);
   return [`${home}/.subagents/${id}`, `${home}/.guard/subagents/${id}`];
+}
+
+/** An exec's exit code, once the engine has it: its output can end a moment before it's said. */
+async function exitOf(exec: Docker.Exec): Promise<number | null> {
+  for (let i = 0; i < 50; i++) {
+    const info = await exec.inspect();
+    if (!info.Running) return info.ExitCode ?? null;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return null;
 }
 
 /** `tar` of the `nibblet` folder in `parent`, gzipped to stdout, without the caches. */
