@@ -253,7 +253,8 @@ export class GuestDaemon {
     let child: ChildProcess;
     try {
       child = spawn(file, argv, {
-        env: { ...(this.opts.env ?? process.env), ...msg.env },
+        // NIBBLET_IN_VM: the entry fences a VM's processes in itself, as Docker does a container's.
+        env: { ...(this.opts.env ?? process.env), ...msg.env, NIBBLET_IN_VM: "1" },
         stdio: ["pipe", "pipe", "pipe"],
       });
     } catch (err) {
@@ -303,7 +304,9 @@ export class GuestDaemon {
       flush("stderr");
       if (msg.stdin !== null) this.channels.delete(msg.stdin);
       this.runs.delete(msg.run);
-      this.finish(msg.run, exit, run.tail);
+      void (this.opts.guest.afterRun?.(msg.command) ?? Promise.resolve())
+        .catch(() => undefined)
+        .then(() => this.finish(msg.run, exit, run.tail));
     };
     child.once("spawn", () => this.send({ type: "started", run: msg.run, pid: child.pid ?? 0 }));
     child.once("error", (err) => end({ code: null, signal: null, error: err.message }));
@@ -367,7 +370,8 @@ export class GuestDaemon {
       },
       drop: () => {
         closed = true;
-        socket.destroy();
+        // What's still on its way out is sent first.
+        socket.destroySoon();
       },
     });
     socket.on("data", (chunk: Buffer) => this.sendData(channel, chunk, socket));

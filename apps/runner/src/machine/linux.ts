@@ -216,6 +216,12 @@ export const linux: GuestPlugin = {
   },
 
   async poweroff() {
-    await sh("systemctl", ["poweroff"]);
+    // Queued, not waited for: stopping this service ends whatever it's waiting on.
+    await sh("systemctl", ["--no-block", "poweroff"]);
+  },
+
+  // An archive that was killed before it could thaw its home disk mustn't leave it frozen.
+  async afterRun(command) {
+    if (command === "archive-home") await sh("fsfreeze", ["-u", DATA]).catch(() => "");
   },
 };

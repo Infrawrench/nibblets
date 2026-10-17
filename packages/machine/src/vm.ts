@@ -102,7 +102,8 @@ export class VirtualMachines implements MachinePlugin {
   private readonly settled = new Set<string>();
   /** Sub-agents running in each VM, to hear of their end on whichever link. */
   private readonly subagents = new Map<string, { host: string; onExit: SubagentExit }>();
-  private readonly tunnels = new Map<string, { server: Server; port: number }>();
+  /** Listeners for ports inside VMs, by `id:port`; a promise, so two asking at once share one. */
+  private readonly tunnels = new Map<string, Promise<{ server: Server; port: number }>>();
   private listener: ExitListener | null = null;
 
   constructor(opts: VmPluginOptions) {
@@ -260,10 +261,24 @@ export class VirtualMachines implements MachinePlugin {
     if (this.settled.has(boot)) return;
     this.settled.add(boot);
     this.listener?.(id, code);
+    // Its entry's gone, as a container's would be with it: so is the guest,
+    // and whatever else it had running (sub-agents), rather than idling on.
+    void this.exclusive(id, async () => {
+      const vm = await this.vm(id);
+      if (vm?.running && vm.boot === boot) await this.shutdown(id, vm);
+    }).catch((err: unknown) =>
+      this.log(`couldn't stop ${id} after its entry ended: ${String(err)}`),
+    );
   }
 
   /** Hears the nibblet's entry end, on this link or, if it drops, the next. */
   private watch(id: string, link: GuestLink, boot: string): void {
+    // A link that's new to this boot may come after the entry's gone with
+    // nobody to say how (its agent restarted, and its processes with it).
+    if (!link.isRunning(MAIN_RUN) && !link.hasExit(MAIN_RUN)) {
+      this.ended(id, boot, null);
+      return;
+    }
     void Promise.race([link.exited(MAIN_RUN), link.gone.then(() => null)]).then(
       (exit: RunExit | null) => {
         if (exit) return this.ended(id, boot, exit.code);
@@ -373,7 +388,9 @@ export class VirtualMachines implements MachinePlugin {
     });
   }
 
+  /** Up for the nibblet: a VM booted for a job alone (a snapshot) doesn't count. */
   async running(id: string): Promise<boolean> {
+    if (!this.boots.has(id)) return false;
     return (await this.vm(id))?.running ?? false;
   }
 
@@ -405,12 +422,18 @@ export class VirtualMachines implements MachinePlugin {
     } else {
       await this.client.stop(id, false).catch(() => undefined);
     }
-    for (let i = 0; i < SHUTDOWN_SECONDS; i++) {
-      const now = await this.vm(id).catch(() => null);
-      if (!now?.running) break;
-      await sleep(1000);
+    const down = async (seconds: number) => {
+      for (let i = 0; i < seconds; i++) {
+        if (!(await this.vm(id).catch(() => null))?.running) return true;
+        await sleep(1000);
+      }
+      return false;
+    };
+    // Its agent's asked; then the power button; then the plug.
+    if (!(await down(SHUTDOWN_SECONDS / 3))) {
+      await this.client.stop(id, false).catch(() => undefined);
+      if (!(await down(SHUTDOWN_SECONDS))) await this.client.stop(id, true);
     }
-    if ((await this.vm(id).catch(() => null))?.running) await this.client.stop(id, true);
     this.dropLink(id);
     this.closeTunnels(id);
   }
@@ -455,8 +478,18 @@ export class VirtualMachines implements MachinePlugin {
   async address(id: string, port: number): Promise<string | null> {
     if (!this.boots.has(id)) return null;
     const key = `${id}:${port}`;
-    const open = this.tunnels.get(key);
-    if (open) return `127.0.0.1:${open.port}`;
+    let tunnel = this.tunnels.get(key);
+    if (!tunnel) {
+      tunnel = this.listen(id, port);
+      this.tunnels.set(key, tunnel);
+      tunnel.catch(() => {
+        if (this.tunnels.get(key) === tunnel) this.tunnels.delete(key);
+      });
+    }
+    return `127.0.0.1:${(await tunnel).port}`;
+  }
+
+  private async listen(id: string, port: number): Promise<{ server: Server; port: number }> {
     const server = createServer((socket) => {
       socket.pause();
       this.link(id)
@@ -482,15 +515,17 @@ export class VirtualMachines implements MachinePlugin {
         resolve(typeof a === "object" && a ? a.port : 0);
       });
     });
-    this.tunnels.set(key, { server, port: local });
-    return `127.0.0.1:${local}`;
+    return { server, port: local };
   }
 
   private closeTunnels(id: string): void {
-    for (const [key, { server }] of this.tunnels) {
+    for (const [key, tunnel] of this.tunnels) {
       if (!key.startsWith(`${id}:`)) continue;
-      server.close();
       this.tunnels.delete(key);
+      void tunnel.then(
+        ({ server }) => server.close(),
+        () => undefined,
+      );
     }
   }
 
@@ -567,7 +602,12 @@ export class VirtualMachines implements MachinePlugin {
     // The caller ends `out`; the link ends what it's given.
     const pass = new PassThrough();
     pass.pipe(out, { end: false });
-    const drained = new Promise<void>((resolve) => pass.once("end", resolve));
+    // Cut off, its channel's destroyed with an error: that's a failed snapshot, not a short one.
+    const drained = new Promise<void>((resolve, reject) => {
+      pass.once("end", resolve);
+      pass.once("error", reject);
+    });
+    drained.catch(() => undefined);
     await this.withGuest(id, (link) =>
       link.runToEnd({ command: "archive-home", stdout: pass }, 60 * 60_000),
     );

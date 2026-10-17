@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { chmodSync, mkdirSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -34,7 +35,22 @@ export async function livePid(file: string): Promise<number | null> {
  * Linux (108), and a VM's folder can be deep, so they go in the temporary folder.
  */
 export function socketPath(hypervisor: string, id: string, what: string): string {
-  return join(tmpdir(), `nibblet-${hypervisor}-${id}-${what}.sock`);
+  return join(socketDir(), `${hypervisor}-${id}-${what}.sock`);
+}
+
+/**
+ * The bridge user's own folder for VMs' sockets, which nobody else may open
+ * (they're a way into a VM, as root): made if it isn't there, refused if
+ * it's someone else's.
+ */
+function socketDir(): string {
+  const uid = process.getuid?.() ?? 0;
+  const dir = join(tmpdir(), `nibblet-vms-${uid}`);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const found = statSync(dir);
+  if (found.uid !== uid) throw new Error(`${dir} isn't this user's`);
+  chmodSync(dir, 0o700);
+  return dir;
 }
 
 /** A connection to a local socket or named pipe, once it's open. */

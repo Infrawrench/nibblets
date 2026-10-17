@@ -189,7 +189,9 @@ export class AppleVirtualization implements HypervisorPlugin {
       if (vm.guest === "linux") {
         await clone(join(vm.imageDir, linuxDiskFile("raw")), f.system);
         // The image is only as big as what's on it; the guest grows its root to fill this.
-        await truncate(f.system, SYSTEM_GB * 1024 ** 3);
+        // Never smaller than the image: its root fills it already.
+        if ((await stat(f.system)).size < SYSTEM_GB * 1024 ** 3)
+          await truncate(f.system, SYSTEM_GB * 1024 ** 3);
         // A new disk's boot entries are its own.
         await rm(f.efi, { force: true });
       } else {
@@ -275,7 +277,9 @@ export class AppleVirtualization implements HypervisorPlugin {
     return pid !== null && state !== null && state.pid === pid && state.state !== "stopped";
   }
 
-  async stop(_ctx: HostContext, vm: VmRef, force: boolean): Promise<void> {
+  async stop(ctx: HostContext, vm: VmRef, force: boolean): Promise<void> {
+    // Only its helper: a pid the system's since given to something else isn't for signalling.
+    if (!(await this.running(ctx, vm))) return;
     const pid = await this.pid(vm);
     if (!pid) return;
     // The helper asks the guest to shut down on SIGTERM, and pulls the plug on SIGINT.

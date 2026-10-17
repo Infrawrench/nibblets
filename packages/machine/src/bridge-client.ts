@@ -136,6 +136,8 @@ export class HypervisorClient {
       const ws = new WebSocket(url, {
         headers: { authorization: `Bearer ${this.bridge.token}` },
         perMessageDeflate: false,
+        // Its upgrade asks the hypervisor first, which can hang; this mustn't, with others waiting.
+        handshakeTimeout: 30_000,
       });
       ws.once("open", () => resolve(wsSocket(ws)));
       ws.once("unexpected-response", (_req, res) => {
@@ -165,5 +167,7 @@ export function wsSocket(ws: WebSocket): GuestSocket {
         handler(isBinary ? bytes : bytes.toString("utf8"));
       }),
     onClose: (handler) => ws.on("close", handler),
+    pause: () => ws.pause(),
+    resume: () => ws.resume(),
   };
 }

@@ -23,6 +23,8 @@ export interface GuestPlugin {
   entry(command: EntryCommand, args: readonly string[]): { file: string; argv: string[] };
   /** Shuts the machine down. */
   poweroff(): Promise<void>;
+  /** Tidies up after one of the entry's commands, however it ended. */
+  afterRun?(command: EntryCommand): Promise<void>;
 }
 
 /** The entry's own name for a command: the nibblet itself is the default. */

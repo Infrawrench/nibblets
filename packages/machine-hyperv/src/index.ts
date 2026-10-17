@@ -61,7 +61,8 @@ if ($p.fresh -or -not (Test-Path $p.system)) {
   if ($vm) { Get-VMHardDiskDrive -VM $vm | Remove-VMHardDiskDrive }
   Remove-Item -LiteralPath $p.system -ErrorAction SilentlyContinue
   New-VHD -Path $p.system -ParentPath $p.base -Differencing | Out-Null
-  Resize-VHD -Path $p.system -SizeBytes ([uint64]$p.systemGb * 1GB)
+  $size = [uint64]$p.systemGb * 1GB
+  if ((Get-VHD -Path $p.system).Size -lt $size) { Resize-VHD -Path $p.system -SizeBytes $size }
 }
 if (-not (Test-Path $p.home)) { New-VHD -Path $p.home -SizeBytes ([uint64]$p.homeGb * 1GB) -Dynamic | Out-Null }
 if (-not $vm) {
@@ -178,8 +179,12 @@ export class HyperV implements HypervisorPlugin {
   /** Every nibblet VM's state, asked at most every couple of seconds. */
   private vmStates(): Promise<Record<string, string>> {
     if (!this.states || Date.now() - this.states.at > 2000) {
-      const states = psJson(this.ps, States, STATES, {}).catch(() => ({}));
+      const states = psJson(this.ps, States, STATES, {});
       this.states = { at: Date.now(), states };
+      // Asked again next time, rather than kept as an answer.
+      states.catch(() => {
+        if (this.states?.states === states) this.states = null;
+      });
     }
     return this.states.states;
   }

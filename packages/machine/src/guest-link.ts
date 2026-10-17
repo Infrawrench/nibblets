@@ -16,6 +16,9 @@ export interface GuestSocket {
   readonly bufferedAmount: number;
   onMessage(handler: (data: string | Uint8Array) => void): void;
   onClose(handler: () => void): void;
+  /** Stops and starts taking messages, for one that can be held back. */
+  pause?(): void;
+  resume?(): void;
 }
 
 export interface RunExit {
@@ -104,7 +107,16 @@ export class GuestLink {
   private readonly hello = deferred<void>();
   private nextChannel = 1;
   private nextRequest = 1;
+  /** Jobs' names, unique to this link, so an old job's exit is never a new one's. */
+  private readonly jobPrefix = `job:${Math.random().toString(36).slice(2, 10)}`;
+  private helloed = false;
   private isGone = false;
+  /** Runs whose output was cut off, so they can't be said to have ended well. */
+  private readonly cutOff = new Set<string>();
+  /** Runs this link has heard the end of. */
+  private readonly ended = new Set<string>();
+  /** Which run each output channel is, to know whose was cut off. */
+  private readonly channelRuns = new Map<number, string>();
   /** Where each channel's incoming bytes go. */
   private readonly sinks = new Map<number, (data: Uint8Array) => void>();
   private readonly started = new Map<string, Deferred<number>>();
@@ -168,7 +180,11 @@ export class GuestLink {
     switch (msg.type) {
       case "hello": {
         const running = new Set(msg.runs.map((r) => r.run));
-        for (const exit of msg.exited) this.settle(exit.run, exit);
+        // Another on the same link: the port started afresh, and what was on its channels is lost.
+        if (this.helloed) this.loseChannels();
+        this.helloed = true;
+        // How the last few runs ended, but not of a name that's running again now.
+        for (const exit of msg.exited) if (!running.has(exit.run)) this.settle(exit.run, exit);
         // An agent that's started again (its processes went with it) says
         // nothing of what it had: those runs are over.
         for (const run of [...this.runs]) {
@@ -216,6 +232,7 @@ export class GuestLink {
 
   private settle(run: string, exit: RunExit): void {
     this.runs.delete(run);
+    this.ended.add(run);
     this.exitOf(run).resolve({ code: exit.code, signal: exit.signal, error: exit.error });
     // One that never started settles its start too.
     this.started.get(run)?.reject(new Error(exit.error ?? "It exited before it started"));
@@ -270,10 +287,14 @@ export class GuestLink {
       stdout: opts.stdout ? this.nextChannel++ : null,
       stderr: opts.stderr ? this.nextChannel++ : null,
     };
-    if (channels.stdout !== null && opts.stdout) this.pipeOut(channels.stdout, opts.stdout);
-    if (channels.stderr !== null && opts.stderr) this.pipeOut(channels.stderr, opts.stderr);
+    if (channels.stdout !== null && opts.stdout)
+      this.pipeOut(channels.stdout, opts.stdout, opts.run);
+    if (channels.stderr !== null && opts.stderr)
+      this.pipeOut(channels.stderr, opts.stderr, opts.run);
     // A run of the same name from before is over: its exit isn't this one's.
     this.exits.delete(opts.run);
+    this.ended.delete(opts.run);
+    this.cutOff.delete(opts.run);
     const started = deferred<number>();
     this.started.set(opts.run, started);
     this.send({
@@ -297,6 +318,11 @@ export class GuestLink {
     return this.runs.has(run);
   }
 
+  /** Whether this link has heard how a run ended. */
+  hasExit(run: string): boolean {
+    return this.ended.has(run);
+  }
+
   /** How a run ended. Never settles if the link goes first; ask the next link. */
   exited(run: string): Promise<RunExit> {
     return this.exitOf(run).promise;
@@ -307,7 +333,7 @@ export class GuestLink {
    * For the short ones: stopping a sub-agent, archiving a home folder.
    */
   async runToEnd(opts: Omit<RunOptions, "run">, timeoutMs = 10 * 60_000): Promise<void> {
-    const run = `job:${this.nextRequest++}`;
+    const run = `${this.jobPrefix}:${this.nextRequest++}`;
     const stderr: Uint8Array[] = [];
     const collect = new Writable({
       write(chunk: Uint8Array, _enc, done) {
@@ -317,16 +343,20 @@ export class GuestLink {
     });
     await this.run({ ...opts, run, stderr: opts.stderr ?? collect });
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // Whichever loses the race still settles later; nobody's waiting by then.
+    const lost = this.gone.then((): never => {
+      throw new GuestGone();
+    });
+    lost.catch(() => {});
     const exit = await Promise.race([
       this.exited(run),
-      this.gone.then((): never => {
-        throw new GuestGone();
-      }),
+      lost,
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(`${opts.command} took too long`)), timeoutMs);
       }),
     ]).finally(() => clearTimeout(timer));
     this.exits.delete(run);
+    if (this.cutOff.delete(run)) throw new Error(`${opts.command}'s output was cut off`);
     if (exit.code !== 0) {
       const said = Buffer.concat(stderr).toString("utf8").trim().slice(-500);
       throw new Error(
@@ -369,15 +399,30 @@ export class GuestLink {
   }
 
   /** Bytes on `channel` go to `out`; the empty frame ends it. */
-  private pipeOut(channel: number, out: Writable): void {
+  private pipeOut(channel: number, out: Writable, run: string): void {
+    this.channelRuns.set(channel, run);
     this.sinks.set(channel, (data) => {
       if (data.byteLength === 0) {
         this.sinks.delete(channel);
         this.closers.delete(channel);
+        this.channelRuns.delete(channel);
         out.end();
       } else out.write(data);
     });
-    this.closers.set(channel, () => out.end());
+    // Only the empty frame ends it well; anything else is it cut off.
+    this.closers.set(channel, () => {
+      this.cutOff.add(run);
+      // Its reader hears it was cut off if it's listening; it mustn't crash anyone who isn't.
+      if (out.listenerCount("error") === 0) out.on("error", () => {});
+      out.destroy(new GuestGone());
+    });
+  }
+
+  /** The port started afresh: every channel's gone, and whoever was reading one is told. */
+  private loseChannels(): void {
+    for (const channel of [...this.closers.keys()]) this.closeChannel(channel);
+    for (const d of this.opens.values()) d.reject(new GuestGone());
+    this.opens.clear();
   }
 
   /** `source` goes out on `channel`, waiting while the socket is backed up; then the empty frame. */
@@ -432,9 +477,10 @@ export class GuestLink {
       if (data.byteLength === 0) stream.push(null);
       else stream.push(data);
     });
+    // Closed from the other side: what came is read, then it ends, rather than being dropped.
     this.closers.set(channel, () => {
       stream.push(null);
-      stream.destroy();
+      stream.end();
     });
     return stream;
   }
