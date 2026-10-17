@@ -183,14 +183,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         await forgetGrants(s.config, store, id);
         return ok;
       },
-      start: ({ id }) => {
-        if (s.borrow.borrowed(id))
-          throw new RpcError(
-            "unavailable",
-            "It's signed in locally right now — hand it back first.",
-          );
-        return conductor.start(id);
-      },
+      start: ({ id }) => conductor.start(id),
       stop: ({ id }) => conductor.stop(id),
       send: async ({ id, text, attachments }) => {
         const files = await s.files.attachments(id, attachments);

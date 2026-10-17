@@ -45,7 +45,7 @@ import {
 import { cliPlugins, runOnHost, type CliPlugin, type Run } from "./clis/index.ts";
 import type { AppUpdaterHost } from "./update.ts";
 import { Writable } from "node:stream";
-import { borrowProfile, detectHostChrome, onePasswordExtensionDir } from "./browser.ts";
+import { borrowProfile, hostBrowserStatus } from "./browser.ts";
 
 export interface ServerStatus {
   name: string;
@@ -361,11 +361,7 @@ export async function startHostMcpBridge(opts: BridgeOptions): Promise<HostMcpBr
       }
       // Whether this computer can open a borrowed profile, and whether 1Password is here to add.
       if (req.method === "GET" && url.pathname === "/browser") {
-        const chrome = await detectHostChrome();
-        return json(res, 200, {
-          chrome: chrome !== null,
-          onePassword: (await onePasswordExtensionDir()) !== null,
-        });
+        return json(res, 200, await hostBrowserStatus());
       }
       // Opens a nibblet's profile (the gzipped tar in the body) in a Chrome
       // window here; when it closes, streams the cleaned profile back. The
@@ -405,7 +401,10 @@ export async function startHostMcpBridge(opts: BridgeOptions): Promise<HostMcpBr
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           if (!res.headersSent && !started) return json(res, 409, { error: message });
-          if (!res.writableEnded) res.end();
+          // Part of the profile has gone out: break the connection, so the
+          // server sees a failed handback rather than a short, complete one.
+          log(`Handing the borrowed profile back failed: ${message}`);
+          res.destroy(err instanceof Error ? err : new Error(message));
           return;
         }
       }

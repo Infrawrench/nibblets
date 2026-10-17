@@ -1,4 +1,5 @@
 import { PassThrough, Readable } from "node:stream";
+import { Agent } from "undici";
 import {
   RpcError,
   type BrowserBorrow,
@@ -9,6 +10,12 @@ import type { Config } from "./config.ts";
 import type { Orchestrator } from "./docker.ts";
 import type { Store } from "./store.ts";
 
+/**
+ * The handback request is answered only once the window closes, which can
+ * be any time; fetch's usual five minutes for an answer would cut it off.
+ */
+const NO_TIMEOUT = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
+
 /** One borrow in flight: its state and how to stop the window and the proxy. */
 interface Active {
   state: BrowserBorrowState;
@@ -18,6 +25,8 @@ interface Active {
   onePassword: boolean;
   detail: string | null;
   startedAt: number;
+  /** It was awake and the borrow stopped it, so it's started again afterwards. */
+  restart: boolean;
 }
 
 export interface BorrowDeps {
@@ -92,12 +101,15 @@ export class Borrow {
       onePassword: host.onePassword,
       detail: null,
       startedAt: Date.now(),
+      restart: false,
     };
     this.active.set(nibbletId, rec);
     this.emit(nibbletId, rec);
 
     try {
       const userAgent = await docker.browserUserAgent();
+      // One that was asleep stays asleep after.
+      rec.restart = nibblet.status !== "stopped" && nibblet.status !== "error";
       await this.deps.stop(nibbletId);
       const proxy = await docker.startBorrowProxy(nibbletId);
       rec.proxyPort = proxy.port;
@@ -131,6 +143,8 @@ export class Borrow {
 
   private async run(nibbletId: string, rec: Active, userAgent: string | null): Promise<void> {
     const { config, docker } = this.deps;
+    // Copying the profile out failing shows up as a broken upload; this says why.
+    let archiveError: unknown = null;
     try {
       const params = new URLSearchParams({ onepassword: rec.onePassword ? "1" : "0" });
       if (userAgent) params.set("ua", userAgent);
@@ -140,7 +154,10 @@ export class Borrow {
       // finishes; a copy failure tears it down instead.
       void docker.archiveProfile(nibbletId, body).then(
         () => body.end(),
-        (err: unknown) => body.destroy(err as Error),
+        (err: unknown) => {
+          archiveError = err;
+          body.destroy(err as Error);
+        },
       );
       const res = await this.fetch(`${config.HOST_MCP_URL}/browser/borrow?${params}`, {
         method: "POST",
@@ -151,10 +168,11 @@ export class Borrow {
         body: Readable.toWeb(body) as ReadableStream<Uint8Array>,
         duplex: "half",
         signal: rec.controller.signal,
+        dispatcher: NO_TIMEOUT,
       } as RequestInit & { duplex: "half" });
       if (!res.ok || !res.body) {
-        const detail = await res.text().catch(() => "");
-        throw new Error(detail || `the host bridge answered ${res.status}`);
+        const text = await res.text().catch(() => "");
+        throw new Error(bridgeError(text) || `the host bridge answered ${res.status}`);
       }
       rec.state = "handback";
       this.emit(nibbletId, rec);
@@ -165,25 +183,32 @@ export class Borrow {
     } catch (err) {
       // An abort is the person ending it early; anything else is worth showing.
       if (!rec.controller.signal.aborted) {
-        rec.detail = err instanceof Error ? err.message : String(err);
-        console.warn(`borrow of ${nibbletId} failed`, err);
+        const cause = archiveError ?? err;
+        rec.detail = cause instanceof Error ? cause.message : String(cause);
+        console.warn(`borrow of ${nibbletId} failed`, cause);
       }
     } finally {
       await this.finish(nibbletId, rec);
     }
   }
 
-  /** Stops the proxy, starts the nibblet again, and clears the borrow. */
+  /**
+   * Stops the proxy, clears the borrow, and starts the nibblet again if the
+   * borrow stopped it. The UI is told why it failed, if it did.
+   */
   private async finish(nibbletId: string, rec: Active): Promise<void> {
     await rec
       .stopProxy?.()
       .catch((err: unknown) => console.warn(`couldn't stop ${nibbletId}'s borrow proxy`, err));
     rec.stopProxy = null;
-    await this.deps
-      .start(nibbletId)
-      .catch((err: unknown) => console.warn(`couldn't start ${nibbletId} after a borrow`, err));
+    // Cleared first: while it's borrowed, the conductor won't start it.
     this.active.delete(nibbletId);
-    this.deps.publish({ type: "browser_borrow_ended", nibbletId });
+    if (rec.restart) {
+      await this.deps
+        .start(nibbletId)
+        .catch((err: unknown) => console.warn(`couldn't start ${nibbletId} after a borrow`, err));
+    }
+    this.deps.publish({ type: "browser_borrow_ended", nibbletId, error: rec.detail });
   }
 
   /** Asks the host bridge whether it can open a profile, and whether 1Password is there. */
@@ -215,4 +240,15 @@ export class Borrow {
   private emit(nibbletId: string, rec: Active): void {
     this.deps.publish({ type: "browser_borrow", borrow: this.snapshot(nibbletId, rec) });
   }
+}
+
+/** The message in the host bridge's `{ "error": … }` answer, or the answer itself. */
+function bridgeError(text: string): string {
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown };
+    if (typeof parsed.error === "string") return parsed.error;
+  } catch {
+    // Not JSON: show it as it came.
+  }
+  return text;
 }

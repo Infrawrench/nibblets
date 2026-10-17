@@ -81,6 +81,9 @@ const RECONNECT_WAIT_MS = 60_000;
 const SUBAGENT_RESUME_INPUT =
   "The container you share with your parent restarted while you were working, so your last turn was cut short, and background tasks you started have stopped. Carry on where you left off.";
 
+/** Why a nibblet that's signed in locally can't be started or messaged. */
+const BORROWED = "It's signed in locally right now — hand it back first.";
+
 /**
  * Runs nibblets: starts and stops their containers, queues turns from every
  * source (the user, heartbeats, schedules, sub-agents), hands them to the
@@ -369,6 +372,7 @@ export class Conductor {
   async start(nibbletId: string): Promise<Nibblet> {
     const nibblet = await this.store.getNibblet(nibbletId);
     if (nibblet.parentId) return this.startSubagent(nibblet);
+    if (this.borrowed(nibbletId)) throw new RpcError("unavailable", BORROWED);
     // Its container is about to go, and its sub-agents with it; the ones
     // that were working carry on once it's back.
     const working = await this.subagentsGone(nibbletId, "Its parent's container restarted", {
@@ -460,6 +464,7 @@ export class Conductor {
   private async startSubagent(nibblet: Nibblet): Promise<Nibblet> {
     const nibbletId = nibblet.id;
     const host = await this.hostOf(nibblet);
+    if (this.borrowed(host)) throw new RpcError("unavailable", BORROWED);
     try {
       const starting = this.hostStarts.get(host);
       if (starting) await starting;
@@ -639,11 +644,12 @@ export class Conductor {
     attachments: FileRef[] = [],
     opts: { first?: boolean } = {},
   ): Promise<string> {
-    // Signed in locally: the container is stopped on purpose, so don't start it.
-    // A person's message says so; a heartbeat or schedule just waits for the handback.
-    if (this.borrowed(nibbletId)) {
-      if (source === "user")
-        throw new RpcError("unavailable", "It's signed in locally right now — hand it back first.");
+    const nibblet = await this.store.getNibblet(nibbletId);
+    // Signed in locally: its container (a sub-agent's is its host's) is
+    // stopped on purpose, so don't start it. A person's message says so; a
+    // heartbeat, schedule or sub-agent's report just waits for the handback.
+    if (this.borrowed(await this.hostOf(nibblet))) {
+      if (source === "user") throw new RpcError("unavailable", BORROWED);
       return "";
     }
     // While waiting out a usage limit, heartbeats and schedules don't pile up.
@@ -651,7 +657,6 @@ export class Conductor {
       const pending = this.queues.get(nibbletId)?.find((t) => t.source === source);
       if (pending) return pending.turnId;
     }
-    const nibblet = await this.store.getNibblet(nibbletId);
     const turnId = newId("turn");
     await this.store.putItem(nibbletId, {
       type: "user_message",

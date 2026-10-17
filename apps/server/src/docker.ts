@@ -76,42 +76,85 @@ const borrowProxyName = (nibbletId: string): string => `nibblet-borrow-proxy-${n
 const BORROW_PROXY_PORT = 8888;
 /**
  * A tiny forward proxy for a borrowed window: plain HTTP requests are
- * forwarded, HTTPS is tunnelled with CONNECT. It only ever listens on the
- * nibblet's network and is reached from the host's loopback through Docker's
- * published port, so it takes no authentication of its own.
+ * forwarded, HTTPS is tunnelled with CONNECT. It's reached from the host's
+ * loopback through a published port, so anything on that computer can use
+ * it; like a runner's firewall (firewallRules in the runner's entry), it
+ * refuses its own network (other nibblets, the server) and link-local
+ * addresses (cloud metadata), checking each address a name resolves to, so
+ * it reaches nothing a program on the host couldn't already.
  */
 const BORROW_PROXY_SCRIPT = `
 const http = require("http");
 const net = require("net");
+const dns = require("dns");
+const os = require("os");
 const { URL } = require("url");
 const port = Number(process.env.PORT || 8888);
+const deny = new net.BlockList();
+deny.addSubnet("0.0.0.0", 8);
+deny.addSubnet("127.0.0.0", 8);
+deny.addSubnet("169.254.0.0", 16);
+deny.addAddress("::", "ipv6");
+deny.addAddress("::1", "ipv6");
+deny.addSubnet("fe80::", 10, "ipv6");
+for (const i of Object.values(os.networkInterfaces()).flat()) {
+  if (!i || i.internal || !i.cidr) continue;
+  const [ip, bits] = i.cidr.split("/");
+  deny.addSubnet(ip, Number(bits), i.family === "IPv6" ? "ipv6" : "ipv4");
+}
+const bare = (host) => host.replace(/^\\[|\\]$/g, "");
+const blocked = (ip) => deny.check(ip, net.isIP(ip) === 6 ? "ipv6" : "ipv4");
+const refused = () => Object.assign(new Error("blocked"), { code: "EBLOCKED" });
+// Every address a name resolves to is checked, and only allowed ones are dialled.
+function lookup(hostname, options, cb) {
+  dns.lookup(hostname, { all: true, family: options.family || 0 }, (err, found) => {
+    if (err) return cb(err);
+    const ok = found.filter((a) => !blocked(a.address));
+    if (!ok.length) return cb(refused());
+    if (options.all) cb(null, ok);
+    else cb(null, ok[0].address, ok[0].family);
+  });
+}
 const server = http.createServer((req, res) => {
   let target;
   try { target = new URL(req.url); } catch { res.writeHead(400).end(); return; }
+  const host = bare(target.hostname);
+  if (net.isIP(host) && blocked(host)) { res.writeHead(403).end(); return; }
   const up = http.request(
     {
-      host: target.hostname,
+      host,
       port: target.port || 80,
       method: req.method,
       path: target.pathname + target.search,
       headers: req.headers,
+      lookup,
     },
     (r) => { res.writeHead(r.statusCode || 502, r.headers); r.pipe(res); },
   );
-  up.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+  up.on("error", (err) => {
+    if (!res.headersSent) res.writeHead(err.code === "EBLOCKED" ? 403 : 502);
+    res.end();
+  });
   req.pipe(up);
 });
 server.on("connect", (req, client, head) => {
   const i = req.url.lastIndexOf(":");
-  const host = req.url.slice(0, i);
+  const host = bare(req.url.slice(0, i));
   const p = Number(req.url.slice(i + 1)) || 443;
-  const up = net.connect(p, host, () => {
+  if (net.isIP(host) && blocked(host)) {
+    client.end("HTTP/1.1 403 Forbidden\\r\\n\\r\\n");
+    return;
+  }
+  const up = net.connect({ port: p, host, lookup }, () => {
     client.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
     if (head && head.length) up.write(head);
     up.pipe(client);
     client.pipe(up);
   });
-  up.on("error", () => client.destroy());
+  up.on("error", (err) => {
+    if (err.code === "EBLOCKED") client.end("HTTP/1.1 403 Forbidden\\r\\n\\r\\n");
+    else client.destroy();
+  });
   client.on("error", () => up.destroy());
 });
 server.listen(port, "0.0.0.0");
@@ -599,7 +642,10 @@ kill -KILL "$pid" 2>/dev/null; true`,
       [
         "sh",
         "-c",
-        `cd ${PROFILE_PARENT} && mkdir -p chromium && tar --numeric-owner ${excludes} -czf - chromium`,
+        // The folders it makes are the guard's, as they'd be had its browser made them.
+        `mkdir -p ${PROFILE_PARENT}/chromium && ` +
+          `chown ${GUARD_OWNER} ${PROFILE_PARENT} ${PROFILE_PARENT}/chromium && ` +
+          `cd ${PROFILE_PARENT} && tar --numeric-owner ${excludes} -czf - chromium`,
       ],
       { readOnly: false, stdout: out },
     );
@@ -607,19 +653,35 @@ kill -KILL "$pid" 2>/dev/null; true`,
 
   /**
    * Replaces the browser profile from a tar made by `archiveProfile` (rooted
-   * at `chromium/`), handing ownership back to the guard. The nibblet must be
-   * stopped; its guard clears any stale profile lock when it starts again.
+   * at `chromium/`), handing ownership back to the guard. The tar is
+   * unpacked beside the profile first and swapped in only once it's whole,
+   * so a broken or cut-off handback leaves the old profile as it was. The
+   * nibblet must be stopped; its guard clears any stale profile lock when it
+   * starts again.
    */
   async restoreProfile(nibbletId: string, archive: Readable): Promise<void> {
     const volume = await this.ensureHome(nibbletId);
+    const incoming = `${PROFILE_PARENT}/.chromium-incoming`;
+    const old = `${PROFILE_PARENT}/.chromium-old`;
     await this.inHome(
       volume,
       [
         "sh",
         "-c",
-        `mkdir -p ${PROFILE_PARENT} && rm -rf ${PROFILE_PARENT}/chromium && ` +
-          `tar -C ${PROFILE_PARENT} --no-same-owner -xzf - && ` +
-          `chown -R ${GUARD_OWNER} ${PROFILE_PARENT}/chromium`,
+        [
+          "set -e",
+          `mkdir -p ${PROFILE_PARENT}`,
+          `rm -rf ${incoming} ${old}`,
+          `mkdir ${incoming}`,
+          `if ! tar -C ${incoming} --no-same-owner -xzf - || [ ! -d ${incoming}/chromium ]; then`,
+          `  rm -rf ${incoming}; echo "the handed-back profile was incomplete" >&2; exit 1`,
+          "fi",
+          `chown -R ${GUARD_OWNER} ${incoming}/chromium`,
+          `chown ${GUARD_OWNER} ${PROFILE_PARENT}`,
+          `if [ -e ${PROFILE_PARENT}/chromium ]; then mv ${PROFILE_PARENT}/chromium ${old}; fi`,
+          `mv ${incoming}/chromium ${PROFILE_PARENT}/chromium`,
+          `rm -rf ${incoming} ${old}`,
+        ].join("\n"),
       ],
       { readOnly: false, stdin: archive },
     );
@@ -631,19 +693,11 @@ kill -KILL "$pid" 2>/dev/null; true`,
    * look like the nibblet. Null if the version can't be read.
    */
   async browserUserAgent(): Promise<string | null> {
-    const stdout: Buffer[] = [];
-    const sink = new Writable({
-      write(chunk: Buffer, _enc, done) {
-        stdout.push(chunk);
-        done();
-      },
-    });
-    try {
-      await this.runImageCapture(["/usr/bin/chromium", "--version"], sink);
-    } catch {
-      return null;
-    }
-    const major = /\b(\d+)\.\d+\.\d+/.exec(Buffer.concat(stdout).toString("utf8"))?.[1];
+    const result = await this.runOnce(["/usr/bin/chromium", "--version"], "", 30_000).catch(
+      () => null,
+    );
+    if (result?.code !== 0) return null;
+    const major = /\b(\d+)\.\d+\.\d+/.exec(result.stdout)?.[1];
     if (!major) return null;
     return (
       `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) ` +
@@ -692,31 +746,17 @@ kill -KILL "$pid" 2>/dev/null; true`,
     }
   }
 
-  /** Runs a command in a throwaway runner container, offline, capturing stdout. */
-  private async runImageCapture(cmd: string[], stdout: Writable): Promise<void> {
-    const container = await this.docker.createContainer({
-      Image: this.config.NIBBLET_RUNNER_IMAGE,
-      User: "0",
-      Cmd: cmd,
-      Labels: { [MANAGED]: "true", [ROLE]: "probe" },
-      HostConfig: { NetworkMode: "none", ...RUNNER_HARDENING },
+  /** Removes borrow proxies a previous server left running (it stopped mid-borrow). */
+  async removeBorrowProxies(): Promise<void> {
+    const list = await this.docker.listContainers({
+      all: true,
+      filters: { label: [`${MANAGED}=true`, `${ROLE}=borrow-proxy`] },
     });
-    try {
-      const stream = await container.attach({ stream: true, stdout: true, stderr: true });
-      this.docker.modem.demuxStream(
-        stream,
-        stdout,
-        new Writable({
-          write(_c, _e, done) {
-            done();
-          },
-        }),
-      );
-      await container.start();
-      const result: { StatusCode: number } = await container.wait();
-      if (result.StatusCode !== 0) throw new Error(`${cmd[0]} exited ${result.StatusCode}`);
-    } finally {
-      await container.remove({ force: true }).catch(() => undefined);
+    for (const c of list) {
+      await this.docker
+        .getContainer(c.Id)
+        .remove({ force: true })
+        .catch(() => undefined);
     }
   }
 
@@ -763,6 +803,9 @@ kill -KILL "$pid" 2>/dev/null; true`,
       const ended = new Promise<void>((resolve) => stream.once("end", () => resolve()));
       await container.start();
       // Ending the attach stream closes the container's stdin, so tar sees the end.
+      // A source that fails part-way never ends it, so the command is stopped
+      // instead, and fails, rather than waiting on the rest forever.
+      io.stdin?.once("error", () => void container.kill().catch(() => undefined));
       io.stdin?.pipe(stream);
       const result: { StatusCode: number } = await container.wait();
       await Promise.race([ended, new Promise((r) => setTimeout(r, 2000))]);
