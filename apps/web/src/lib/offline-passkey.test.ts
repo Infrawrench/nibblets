@@ -205,7 +205,10 @@ describe("passkey encryption wrapper", () => {
   });
 
   it("round trips ciphertext larger than the JavaScript argument limit", () => {
-    const bytes = new Uint8Array(1024 * 1024).fill(42);
-    expect(decode(encode(bytes))).toEqual(bytes);
+    const bytes = new Uint8Array(1024 * 1024);
+    for (let index = 0; index < bytes.length; index++) bytes[index] = index % 256;
+    const decoded = decode(encode(bytes));
+    expect(decoded.length).toBe(bytes.length);
+    expect(decoded.every((byte, index) => byte === bytes[index])).toBe(true);
   });
 });
