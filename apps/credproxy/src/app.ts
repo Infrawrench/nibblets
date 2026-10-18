@@ -2,6 +2,7 @@ import { placeholderCodexAuth, placeholderCodexRefresh, placeholderJwt } from "@
 import { timingSafeEqual } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { jwtClaims } from "./providers/provider.ts";
+import type { DeepseekProvider } from "./providers/deepseek.ts";
 import { anthropicLimit, openaiLimit } from "./limits.ts";
 import { NoCredentialError, type TokenManager } from "./tokens.ts";
 
@@ -12,6 +13,7 @@ export interface AppOptions {
   adminKey: string;
   anthropic: TokenManager;
   openai: TokenManager;
+  deepseek: DeepseekProvider;
   /** Called with a pushed document; returns false when the provider has no keychain source. */
   push(provider: "anthropic" | "openai", text: string): boolean;
   fetch?: typeof globalThis.fetch;
@@ -65,7 +67,10 @@ export function createApp(opts: AppOptions) {
 
   app.get("/status", async (c) => {
     if (!admin(c)) return c.json({ error: "unauthorized" }, 401);
-    return c.json(await Promise.all([opts.anthropic.status(), opts.openai.status()]));
+    return c.json([
+      ...(await Promise.all([opts.anthropic.status(), opts.openai.status()])),
+      opts.deepseek.status(),
+    ]);
   });
 
   app.put("/admin/credentials/:provider", async (c) => {
@@ -175,6 +180,40 @@ export function createApp(opts: AppOptions) {
 
   app.all("/anthropic/*", forward("/anthropic", opts.anthropic));
   app.all("/openai/*", forward("/openai", opts.openai));
+
+  // An API key, so no refresh to retry with and no subscription limit to
+  // note; the response streams straight through.
+  app.all("/deepseek/*", async (c) => {
+    const req = c.req.raw;
+    if (!presentsKey(req.headers, opts.key)) {
+      return c.json(
+        { type: "error", error: { type: "authentication_error", message: "Bad nibblet key" } },
+        401,
+      );
+    }
+    const { key } = opts.deepseek;
+    if (!key) {
+      return c.json(
+        { type: "error", error: { type: "credential_error", message: "No DeepSeek API key" } },
+        503,
+      );
+    }
+    const url = new URL(req.url);
+    const target = opts.deepseek.upstream(
+      url.pathname.slice("/deepseek".length) || "/",
+      url.search,
+    );
+    const headers = new Headers(req.headers);
+    for (const h of HOP_BY_HOP) headers.delete(h);
+    headers.delete("x-api-key");
+    headers.set("accept-encoding", "identity");
+    opts.deepseek.authorise(headers, key);
+    const body = req.method === "GET" || req.method === "HEAD" ? null : await req.arrayBuffer();
+    const res = await doFetch(target, { method: req.method, headers, body, redirect: "manual" });
+    const out = new Headers(res.headers);
+    for (const h of [...HOP_BY_HOP, "content-encoding"]) out.delete(h);
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers: out });
+  });
 
   return app;
 }

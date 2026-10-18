@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { HARNESS_CLI_DIR, HarnessId, harnesses } from "@nibblet/protocol";
+import { cliHarnesses, HARNESS_CLI_DIR, HarnessId, harnesses } from "@nibblet/protocol";
 
 const run = promisify(execFile);
 
@@ -89,13 +89,15 @@ async function main(): Promise<void> {
     // Imported here: loading every harness is only needed for this command.
     const { plugins } = await import("./plugins.ts");
     const out: Record<string, { bundled: string; installed: string | null }> = {};
-    for (const id of HarnessId.options) {
+    for (const id of cliHarnesses) {
       out[id] = { bundled: plugins[id].bundledCli(), installed: await currentVersion(root, id) };
     }
     console.log(JSON.stringify(out));
     return;
   }
   const id = HarnessId.parse(rawId);
+  if (!cliHarnesses.includes(id))
+    throw new Error(`${id} runs ${harnesses[id].cli.name}, kept under its own harness`);
   if (command === "install" && version) {
     console.log(JSON.stringify({ installed: await install(root, id, version) }));
   } else if (command === "bundled") {

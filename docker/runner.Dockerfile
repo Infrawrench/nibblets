@@ -113,6 +113,7 @@ COPY packages/protocol ./packages/protocol
 COPY packages/harness ./packages/harness
 COPY packages/harness-claude ./packages/harness-claude
 COPY packages/harness-codex ./packages/harness-codex
+COPY packages/harness-deepseek ./packages/harness-deepseek
 COPY packages/harness-kimi ./packages/harness-kimi
 COPY packages/harness-opencode ./packages/harness-opencode
 COPY apps/runner ./apps/runner

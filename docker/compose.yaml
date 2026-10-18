@@ -45,6 +45,9 @@ services:
       CODEX_AUTH_SOURCE: ${CODEX_AUTH_SOURCE:-auto}
       KEYCHAIN_BRIDGE_URL: ${KEYCHAIN_BRIDGE_URL:-}
       KEYCHAIN_BRIDGE_TOKEN: ${KEYCHAIN_BRIDGE_TOKEN:-}
+      # For DeepSeek nibblets, which run Claude Code on DeepSeek's API. Only
+      # the proxy holds it.
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
     extra_hosts:
       - host.docker.internal:host-gateway
     # On the runners' network too, which the database isn't on.

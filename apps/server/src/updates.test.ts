@@ -99,6 +99,16 @@ describe("HarnessUpdater", () => {
     expect(status.harnesses.find((h) => h.id === "claude")?.installed).toBeNull();
   });
 
+  it("keeps DeepSeek's Claude Code under Claude", async () => {
+    const { updater, calls } = setup();
+    expect((await updater.status()).harnesses.map((h) => h.id)).not.toContain("deepseek");
+    await updater.update("deepseek");
+    await settle();
+    expect(calls).toContainEqual(["install", "claude", "2.1.299"]);
+    await updater.useBundled("deepseek");
+    expect(calls).toContainEqual(["bundled", "claude"]);
+  });
+
   it("remembers when automatic updates are off", async () => {
     const { updater } = setup();
     expect((await updater.setAuto(false)).auto).toBe(false);

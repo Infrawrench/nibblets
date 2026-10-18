@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sets up Nibblets on a Linux server or VM: Docker or Podman, the agents your nibblets
-# run on (Claude Code, Codex, OpenCode, Kimi Code), this repo, the stack, and a link to
-# Nibblets Connect so you can reach it from anywhere.
+# run on (Claude Code, Codex, OpenCode, Kimi Code, DeepSeek), this repo, the stack,
+# and a link to Nibblets Connect so you can reach it from anywhere.
 #
 #   curl -fsSL https://nibblets.dev/install.sh | bash
 #
@@ -426,7 +426,7 @@ setup_node() {
 # The agents, as plugins: a name, how to tell it's installed and signed in,
 # and how to install it and sign in.
 
-AGENTS=(claude codex opencode kimi)
+AGENTS=(claude codex opencode kimi deepseek)
 
 agent_name() {
   case "$1" in
@@ -434,6 +434,7 @@ agent_name() {
     codex) echo "Codex" ;;
     opencode) echo "OpenCode" ;;
     kimi) echo "Kimi Code" ;;
+    deepseek) echo "DeepSeek" ;;
   esac
 }
 agent_blurb() {
@@ -442,6 +443,7 @@ agent_blurb() {
     codex) echo "your ChatGPT subscription" ;;
     opencode) echo "API keys, Copilot, and more" ;;
     kimi) echo "your Kimi subscription" ;;
+    deepseek) echo "your DeepSeek API key" ;;
   esac
 }
 agent_emoji() {
@@ -450,15 +452,18 @@ agent_emoji() {
     codex) echo "💚" ;;
     opencode) echo "💙" ;;
     kimi) echo "🌙" ;;
+    deepseek) echo "🐋" ;;
   esac
 }
-agent_installed() { command -v "$1" >/dev/null; }
+# DeepSeek runs Claude Code from the runner image, so there's nothing to install here.
+agent_installed() { [ "$1" = deepseek ] || command -v "$1" >/dev/null; }
 agent_signed_in() {
   case "$1" in
     claude) [ -s "$HOME/.claude/.credentials.json" ] ;;
     codex) [ -s "$HOME/.codex/auth.json" ] ;;
     opencode) [ -s "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json" ] ;;
     kimi) [ -s "${KIMI_CODE_HOME:-$HOME/.kimi-code}/credentials/kimi-code.json" ] ;;
+    deepseek) [ -n "$(env_get DEEPSEEK_API_KEY)" ] ;;
   esac
 }
 agent_install() {
@@ -482,7 +487,20 @@ agent_login() {
     opencode) opencode auth login ;;
     # Device codes too, so it can be approved on any device.
     kimi) kimi login ;;
+    # An API key, which only the credential proxy is given.
+    deepseek) deepseek_key ;;
   esac
+}
+
+deepseek_key() {
+  hint "Make one at https://platform.deepseek.com/api_keys, then paste it here (it won't show)."
+  local k
+  IFS= read -rs -p "  DeepSeek API key: " k </dev/tty || k=""
+  printf '\n'
+  case "$k" in
+    "" | *[!A-Za-z0-9_-]*) warn "That doesn't look like an API key."; return 1 ;;
+  esac
+  env_set DEEPSEEK_API_KEY "$k"
 }
 
 any_signed_in() {

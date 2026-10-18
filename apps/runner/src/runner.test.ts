@@ -54,7 +54,7 @@ function setup(stopGraceMs?: number) {
   const opened: string[] = [];
   const plugin = fakeHarness(opened);
   const runner = new Runner({
-    plugins: { claude: plugin, codex: plugin, kimi: plugin, opencode: plugin },
+    plugins: { claude: plugin, codex: plugin, deepseek: plugin, kimi: plugin, opencode: plugin },
     send: (msg) => sent.push(msg),
     workdir: "/tmp",
     mcpServers: {},

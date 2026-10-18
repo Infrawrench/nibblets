@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createApp, placeholderCodexAuth, placeholderJwt, presentsKey } from "../src/app.ts";
 import { anthropicProvider, mergeBetas } from "../src/providers/anthropic.ts";
+import { deepseekProvider } from "../src/providers/deepseek.ts";
 import { openaiProvider } from "../src/providers/openai.ts";
 import { fileSource } from "../src/sources/file.ts";
 import type { CredentialSource } from "../src/sources/source.ts";
@@ -186,7 +187,10 @@ describe("fileSource", () => {
 });
 
 describe("proxy", () => {
-  function setup(upstream: (url: string, init: RequestInit) => Response | Promise<Response>) {
+  function setup(
+    upstream: (url: string, init: RequestInit) => Response | Promise<Response>,
+    deepseekKey: string | null = "sk-deepseek",
+  ) {
     const fetch = mockFetch(upstream);
     const anthropic = new TokenManager({
       provider: anthropicProvider("https://anthropic.test"),
@@ -211,6 +215,7 @@ describe("proxy", () => {
       adminKey: ADMIN,
       anthropic,
       openai,
+      deepseek: deepseekProvider(deepseekKey, "https://deepseek.test/anthropic"),
       push: () => false,
       fetch,
     });
@@ -237,6 +242,41 @@ describe("proxy", () => {
       "fine-grained-tool-streaming-2025-05-14,oauth-2025-04-20",
     );
     expect(header(sent, "anthropic-version")).toBe("2023-06-01");
+  });
+
+  it("swaps the runner key for the DeepSeek API key", async () => {
+    const { app, fetch } = setup(
+      () => new Response("data: hi\n\n", { headers: { "content-type": "text/event-stream" } }),
+    );
+    const res = await app.request("/deepseek/v1/messages?beta=true", {
+      method: "POST",
+      headers: { "x-api-key": KEY, authorization: "Bearer stray" },
+      body: JSON.stringify({ model: "deepseek-v4-pro" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("data: hi\n\n");
+    const [url, init] = fetch.mock.calls[0] ?? [];
+    expect(String(url)).toBe("https://deepseek.test/anthropic/v1/messages?beta=true");
+    expect(header(init ?? {}, "x-api-key")).toBe("sk-deepseek");
+    expect(header(init ?? {}, "authorization")).toBeNull();
+    expect(header(init ?? {}, "anthropic-version")).toBe("2023-06-01");
+  });
+
+  it("says so when there's no DeepSeek API key, and keeps the runner key out", async () => {
+    const { app, fetch } = setup(() => new Response("{}"), null);
+    const res = await app.request("/deepseek/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": KEY },
+      body: "{}",
+    });
+    expect(res.status).toBe(503);
+    const bad = await setup(() => new Response("{}")).app.request("/deepseek/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": "wrong" },
+      body: "{}",
+    });
+    expect(bad.status).toBe(401);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("maps OpenAI paths onto the ChatGPT backend with the account id", async () => {
@@ -286,7 +326,10 @@ describe("proxy", () => {
     const res = await app.request("/status", { headers: { authorization: `Bearer ${ADMIN}` } });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toHaveLength(2);
+    expect(body).toHaveLength(3);
+    expect(body).toContainEqual(
+      expect.objectContaining({ provider: "deepseek", source: "env", ok: true }),
+    );
     const push = await app.request("/admin/credentials/anthropic", {
       method: "PUT",
       headers: { authorization: `Bearer ${ADMIN}` },

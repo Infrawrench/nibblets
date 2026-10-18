@@ -3,6 +3,7 @@ import { serve } from "@hono/node-server";
 import { z } from "zod";
 import { createApp } from "./app.ts";
 import { anthropicProvider } from "./providers/anthropic.ts";
+import { deepseekProvider } from "./providers/deepseek.ts";
 import { openaiProvider } from "./providers/openai.ts";
 import { fileSource } from "./sources/file.ts";
 import { keychainSource } from "./sources/keychain.ts";
@@ -21,6 +22,8 @@ const Env = z.object({
   CODEX_AUTH_SOURCE: SourceMode,
   KEYCHAIN_BRIDGE_URL: z.string().optional(),
   KEYCHAIN_BRIDGE_TOKEN: z.string().optional(),
+  // Compose passes it through empty when it isn't set.
+  DEEPSEEK_API_KEY: z.string().optional(),
 });
 
 const env = Env.parse(process.env);
@@ -70,11 +73,14 @@ const openai = new TokenManager({
   source: pickSource("openai", env.CODEX_AUTH_SOURCE, env.CODEX_AUTH_FILE),
 });
 
+const deepseek = deepseekProvider(env.DEEPSEEK_API_KEY?.trim() || null);
+
 const app = createApp({
   key: env.CREDPROXY_KEY,
   adminKey: env.CREDPROXY_ADMIN_KEY,
   anthropic,
   openai,
+  deepseek,
   push(provider, text) {
     const keychain = keychains.get(provider);
     if (!keychain) return false;
@@ -90,4 +96,5 @@ serve({ fetch: app.fetch, port: env.PORT, hostname: "0.0.0.0" }, (info) => {
       .status()
       .then((s) => console.log(`${s.provider}: ${s.ok ? "ok" : "not ready"}, ${s.detail}`));
   }
+  if (deepseek.key) console.log("deepseek: ok, API key set");
 });

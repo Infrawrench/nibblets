@@ -103,7 +103,11 @@ function ServerSection({ connection }: { connection: ServerConnection }) {
 const providerNames: Record<CredentialStatus["provider"], string> = {
   anthropic: "Claude",
   openai: "ChatGPT",
+  deepseek: "DeepSeek API",
 };
+
+/** DeepSeek is an optional extra, so it's only listed once its key is set. */
+const listed = (c: CredentialStatus) => c.provider !== "deepseek" || c.source !== "none";
 
 function CredentialsSection({ connection }: { connection: ServerConnection }) {
   // Kept live, so signing in again on the host shows up without a reload.
@@ -120,7 +124,7 @@ function CredentialsSection({ connection }: { connection: ServerConnection }) {
         Your nibblets run on the Claude and ChatGPT subscriptions you're signed in to on this
         computer.
       </p>
-      {info.data?.credentials.map((c) => (
+      {info.data?.credentials.filter(listed).map((c) => (
         <div
           key={c.provider}
           className="flex items-start gap-2.5 rounded-md border border-line bg-surface px-2.5 py-2"
@@ -148,7 +152,11 @@ function CredentialsSection({ connection }: { connection: ServerConnection }) {
               <summary className="cursor-pointer select-none hover:text-dim">Details</summary>
               <div className="mt-1 break-all">
                 {c.detail}
-                {c.source !== "none" ? ` · from the ${c.source}` : ""}
+                {c.source === "env"
+                  ? " · from the server's settings"
+                  : c.source !== "none"
+                    ? ` · from the ${c.source}`
+                    : ""}
                 {c.expiresAt ? ` · token renews ${relativeTime(c.expiresAt)}` : ""}
               </div>
             </details>
@@ -163,6 +171,7 @@ function CredentialsSection({ connection }: { connection: ServerConnection }) {
 const signInHelp: Record<CredentialStatus["provider"], string> = {
   anthropic: "Not connected. Sign in to Claude Code on this computer, then reopen Nibblets.",
   openai: "Not connected. Sign in to Codex with your ChatGPT account, then reopen Nibblets.",
+  deepseek: "No API key. Set DEEPSEEK_API_KEY in the server's .env, then restart Nibblets.",
 };
 
 function planLabel(plan: string): string {
