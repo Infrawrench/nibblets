@@ -81,10 +81,10 @@ describe("useModels", () => {
     expect(models.defaultChoice()).toEqual({ harness: "kimi", model: "kimi-code/k3" });
   });
 
-  it("keeps pending Kimi offered and eligible for the existing default", () => {
+  it("keeps pending Kimi offered without choosing it as the default", () => {
     const models = catalogue([], null);
-    expect(models.offered).toEqual(["kimi"]);
+    expect(models.offered).toEqual(["claude", "codex", "deepseek", "kimi", "opencode"]);
     expect(models.forHarness("kimi")).toEqual({ models: [], loading: true, unavailable: null });
-    expect(models.defaultChoice()).toEqual({ harness: "kimi", model: "kimi-code/k3" });
+    expect(models.defaultChoice()).toEqual({ harness: "claude", model: "claude-opus-5-5" });
   });
 });

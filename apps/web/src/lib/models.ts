@@ -76,7 +76,7 @@ export function useModels(connection: ServerConnection | null | undefined): Mode
     const provider = subscription[harness];
     if (!provider) {
       const state = forHarness(harness);
-      return hosted(harness)?.isPending || (state.unavailable === null && state.models.length > 0);
+      return !state.loading && state.unavailable === null && state.models.length > 0;
     }
     const credential = info.data?.credentials.find((c) => c.provider === provider);
     return !info.data || (credential !== undefined && credential.source !== "none");
