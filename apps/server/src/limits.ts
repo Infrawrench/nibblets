@@ -115,6 +115,7 @@ export class ProviderLimits {
 type LimitWaitItem = ThreadItemOf<"limit_wait">;
 
 export interface LimitWaitHooks {
+  resumeWait?(nibbletId: string): Promise<void>;
   /** Puts restored turns back on a nibblet's queue without recording them again. */
   restoreQueue(nibbletId: string, turns: WaitingTurn[]): void;
   /** The wait is over: run whatever is queued. */
@@ -211,8 +212,8 @@ export class LimitWaits {
       nibbletId,
       setTimeout(() => {
         if (until.getTime() > this.now().getTime()) return this.arm(nibbletId, until);
-        void this.end(nibbletId, "resumed").catch((err: unknown) =>
-          console.error(`couldn't resume ${nibbletId}`, err),
+        void (this.hooks.resumeWait?.(nibbletId) ?? this.end(nibbletId, "resumed")).catch(
+          (err: unknown) => console.error(`couldn't resume ${nibbletId}`, err),
         );
       }, delay),
     );

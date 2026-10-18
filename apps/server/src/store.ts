@@ -1,5 +1,6 @@
 import {
   authTokens,
+  clientSubmissions,
   items,
   memories,
   nibblets,
@@ -24,6 +25,9 @@ import {
   type Schedule,
   type StoredItem,
   type ThreadItem,
+  type SendReceipt,
+  type SubmissionState,
+  type FileRef,
 } from "@nibblet/protocol";
 import { and, asc, cosineDistance, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { createHash, createHmac, randomBytes } from "node:crypto";
@@ -261,6 +265,136 @@ export class Store {
   }
 
   // Thread items
+
+  async submission(nibbletId: string, clientMessageId: string) {
+    const [row] = await this.db
+      .select()
+      .from(clientSubmissions)
+      .where(
+        and(
+          eq(clientSubmissions.nibbletId, nibbletId),
+          eq(clientSubmissions.clientMessageId, clientMessageId),
+        ),
+      );
+    return row ?? null;
+  }
+
+  async submissionForTurn(nibbletId: string, turnId: string) {
+    const [row] = await this.db
+      .select()
+      .from(clientSubmissions)
+      .where(and(eq(clientSubmissions.nibbletId, nibbletId), eq(clientSubmissions.turnId, turnId)));
+    return row ?? null;
+  }
+
+  async acceptSubmission(
+    nibbletId: string,
+    clientMessageId: string,
+    payloadHash: string,
+    text: string,
+    attachments: FileRef[],
+  ): Promise<SendReceipt> {
+    const turnId = newId("turn");
+    const item: Extract<ThreadItem, { type: "user_message" }> = {
+      type: "user_message",
+      id: newId("msg"),
+      turnId,
+      createdAt: new Date().toISOString(),
+      source: "user",
+      text,
+      ...(attachments.length ? { attachments } : {}),
+    };
+    const stored = await this.db.transaction(async (tx) => {
+      await tx
+        .insert(clientSubmissions)
+        .values({ nibbletId, clientMessageId, payloadHash, turnId, userItemId: item.id });
+      const [row] = await tx
+        .insert(items)
+        .values({ nibbletId, itemId: item.id, item, seq: sql`nextval('item_seq')` })
+        .returning({ seq: items.seq });
+      if (!row) throw new Error("submission insert returned nothing");
+      return { nibbletId, seq: row.seq, item };
+    });
+    this.bus.publish({ type: "item", item: stored });
+    return { clientMessageId, turnId, state: "queued" };
+  }
+
+  async queuedSubmissions() {
+    const rows = await this.db
+      .select({ nibbletId: clientSubmissions.nibbletId, item: items.item })
+      .from(clientSubmissions)
+      .innerJoin(
+        items,
+        and(
+          eq(items.nibbletId, clientSubmissions.nibbletId),
+          eq(items.itemId, clientSubmissions.userItemId),
+        ),
+      )
+      .where(eq(clientSubmissions.state, "queued"))
+      .orderBy(asc(clientSubmissions.createdAt));
+    return rows.flatMap((r) =>
+      r.item.type === "user_message" ? [{ nibbletId: r.nibbletId, item: r.item }] : [],
+    );
+  }
+
+  async setSubmissionState(
+    nibbletId: string,
+    turnId: string,
+    state: SubmissionState,
+  ): Promise<void> {
+    await this.db
+      .update(clientSubmissions)
+      .set({ state })
+      .where(
+        and(
+          eq(clientSubmissions.nibbletId, nibbletId),
+          eq(clientSubmissions.turnId, turnId),
+          inArray(clientSubmissions.state, ["queued", "started"]),
+        ),
+      );
+  }
+
+  async cancelSubmissions(nibbletId: string): Promise<void> {
+    await this.db
+      .update(clientSubmissions)
+      .set({ state: "cancelled" })
+      .where(
+        and(
+          eq(clientSubmissions.nibbletId, nibbletId),
+          inArray(clientSubmissions.state, ["queued", "started"]),
+        ),
+      );
+  }
+
+  async putSubmissionTurn(
+    nibbletId: string,
+    item: Extract<ThreadItem, { type: "turn" }>,
+    state: SubmissionState,
+  ): Promise<void> {
+    const row = await this.db.transaction(async (tx) => {
+      await tx
+        .update(clientSubmissions)
+        .set({ state })
+        .where(
+          and(
+            eq(clientSubmissions.nibbletId, nibbletId),
+            eq(clientSubmissions.turnId, item.id),
+            inArray(clientSubmissions.state, ["queued", "started"]),
+          ),
+        );
+      const [stored] = await tx
+        .insert(items)
+        .values({ nibbletId, itemId: item.id, item, seq: sql`nextval('item_seq')` })
+        .onConflictDoUpdate({
+          target: [items.nibbletId, items.itemId],
+          set: { item, seq: sql`nextval('item_seq')` },
+        })
+        .returning({ seq: items.seq });
+      if (!stored) throw new Error("turn upsert returned nothing");
+      return stored;
+    });
+    this.bus.publish({ type: "item", item: { nibbletId, seq: row.seq, item } });
+  }
 
   /** Upserts an item with a fresh seq, so clients syncing "since N" see the change. */
   async putItem(nibbletId: string, item: ThreadItem): Promise<StoredItem> {

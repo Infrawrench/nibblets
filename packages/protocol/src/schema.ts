@@ -505,10 +505,26 @@ export const TunnelStatus = z.object({
 });
 export type TunnelStatus = z.infer<typeof TunnelStatus>;
 
+export const SubmissionState = z.enum([
+  "queued",
+  "started",
+  "finished",
+  "cancelled",
+  "interrupted",
+]);
+export type SubmissionState = z.infer<typeof SubmissionState>;
+export const SendReceipt = z.object({
+  clientMessageId: z.uuid(),
+  turnId: z.string(),
+  state: SubmissionState,
+});
+export type SendReceipt = z.infer<typeof SendReceipt>;
+
 export const ServerInfo = z.object({
   serverId: z.string(),
   name: z.string(),
   version: z.string(),
+  capabilities: z.object({ durableSendV1: z.boolean() }).optional(),
   credentials: z.array(CredentialStatus),
   /** What the machine running the nibblets has, for sizing their limits. */
   host: z.object({ cpus: z.int(), memoryMb: z.int() }).nullable(),

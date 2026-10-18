@@ -29,7 +29,9 @@ export interface HomeArchiver {
 /** What snapshots need from the conductor, to quiet a nibblet before touching it. */
 export interface Quieter {
   busy(nibbletId: string): boolean;
-  interrupt(nibbletId: string): void;
+  interrupt(nibbletId: string): void | Promise<void>;
+  beginRestore?(nibbletId: string): Promise<void>;
+  endRestore?(nibbletId: string): void;
   start(nibbletId: string): Promise<unknown>;
   stop(nibbletId: string): Promise<unknown>;
 }
@@ -159,42 +161,47 @@ export class Snapshots {
       const state = SnapshotState.parse(
         JSON.parse(gunzipSync(await readFile(this.file(target, "state"))).toString("utf8")),
       );
-      if (this.d.conductor.busy(nibbletId)) this.d.conductor.interrupt(nibbletId);
-      await this.waitIdle(nibbletId, 30_000).catch(() => undefined);
-
-      const name = target.label ? `“${target.label}”` : when(target.createdAt);
-      await this.take(nibbletId, "before_restore", `Before restoring ${name}`);
-
-      const before = await this.d.store.getNibblet(nibbletId);
-      const wasRunning = before.status !== "stopped" && before.status !== "error";
-      await this.d.conductor.stop(nibbletId);
-      await this.d.store.setStatus(nibbletId, "starting", "Restoring a snapshot…");
+      await this.d.conductor.beginRestore?.(nibbletId);
       try {
-        const old = await this.d.store.listSchedules(nibbletId);
-        for (const s of old) this.d.scheduler.disarm(s.id);
+        if (this.d.conductor.busy(nibbletId)) await this.d.conductor.interrupt(nibbletId);
+        await this.waitIdle(nibbletId, 30_000).catch(() => undefined);
 
-        await this.d.docker.restoreHome(nibbletId, createReadStream(this.file(target, "home")));
-        await importState(this.d.store.db, nibbletId, state);
+        const name = target.label ? `“${target.label}”` : when(target.createdAt);
+        await this.take(nibbletId, "before_restore", `Before restoring ${name}`);
 
-        for (const s of await this.d.store.listSchedules(nibbletId))
-          await this.d.scheduler.arm(s.id);
-        await this.d.store.setSetting(positionKey(nibbletId), {
-          snapshotId: target.id,
-          maxSeq: await maxSeq(this.d.store.db, nibbletId),
-        } satisfies Position);
-      } catch (err) {
-        await this.d.store.setStatus(
-          nibbletId,
-          "error",
-          `Restoring a snapshot failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        throw err;
+        const before = await this.d.store.getNibblet(nibbletId);
+        const wasRunning = before.status !== "stopped" && before.status !== "error";
+        await this.d.conductor.stop(nibbletId);
+        await this.d.store.setStatus(nibbletId, "starting", "Restoring a snapshot…");
+        try {
+          const old = await this.d.store.listSchedules(nibbletId);
+          for (const s of old) this.d.scheduler.disarm(s.id);
+
+          await this.d.docker.restoreHome(nibbletId, createReadStream(this.file(target, "home")));
+          await importState(this.d.store.db, nibbletId, state);
+
+          for (const s of await this.d.store.listSchedules(nibbletId))
+            await this.d.scheduler.arm(s.id);
+          await this.d.store.setSetting(positionKey(nibbletId), {
+            snapshotId: target.id,
+            maxSeq: await maxSeq(this.d.store.db, nibbletId),
+          } satisfies Position);
+        } catch (err) {
+          await this.d.store.setStatus(
+            nibbletId,
+            "error",
+            `Restoring a snapshot failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          throw err;
+        } finally {
+          this.d.bus.publish({ type: "thread_reset", nibbletId });
+          this.d.bus.publish({ type: "schedules_changed", nibbletId });
+        }
+        if (wasRunning) await this.d.conductor.start(nibbletId);
+        else await this.d.store.updateNibblet(nibbletId, { status: "stopped", statusDetail: null });
       } finally {
-        this.d.bus.publish({ type: "thread_reset", nibbletId });
-        this.d.bus.publish({ type: "schedules_changed", nibbletId });
+        this.d.conductor.endRestore?.(nibbletId);
       }
-      if (wasRunning) await this.d.conductor.start(nibbletId);
-      else await this.d.store.updateNibblet(nibbletId, { status: "stopped", statusDetail: null });
     });
   }
 
