@@ -70,6 +70,7 @@ async function decrypt(
 export class OfflineVault {
   private key: CryptoKey | null = null;
   private epoch = 0;
+  private closed = false;
   private readonly listeners = new Set<() => void>();
   private readonly writes = new Set<IDBTransaction>();
   private readonly channel: BroadcastChannel;
@@ -127,6 +128,7 @@ export class OfflineVault {
     for (const listener of this.listeners) listener();
   }
   private clearKey(): void {
+    const wasUnlocked = this.key !== null;
     this.epoch++;
     this.key = null;
     for (const transaction of this.writes) {
@@ -136,14 +138,17 @@ export class OfflineVault {
         if (!(error instanceof DOMException) || error.name !== "InvalidStateError") throw error;
       }
     }
-    this.notify();
+    if (wasUnlocked) this.notify();
   }
   lock(): void {
     this.clearKey();
-    this.channel.postMessage("lock");
+    if (!this.closed) this.channel.postMessage("lock");
   }
   close(): void {
-    this.lock();
+    if (this.closed) return;
+    this.closed = true;
+    this.clearKey();
+    this.channel.postMessage("lock");
     this.channel.close();
     this.listeners.clear();
     this.db.close();

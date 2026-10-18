@@ -257,6 +257,76 @@ describe("encrypted offline vault", () => {
     expect(vault.unlocked).toBe(false);
   });
 
+  it("bounds lock notifications when subscribers refresh malformed stored metadata", async () => {
+    const vault = await open();
+    await vault.create(passphrase);
+    await vault.update("payload", () => "saved");
+    await stored(vault.id, (value) => {
+      value.passphrase = { ...(value.passphrase as object), salt: "invalid" };
+    });
+    const corrupted = await stored(vault.id);
+    const refreshes: Promise<unknown>[] = [];
+    let notifications = 0;
+    const unsubscribe = vault.subscribe(() => {
+      notifications++;
+      if (notifications >= 8) unsubscribe();
+      refreshes.push(Promise.allSettled([vault.exists(), vault.hasPasskey()]));
+    });
+    await expect(vault.exists()).rejects.toThrow();
+    for (let index = 0; index < refreshes.length; index++) await refreshes[index];
+    unsubscribe();
+    expect(notifications).toBe(1);
+    expect(vault.unlocked).toBe(false);
+    expect(await stored(vault.id)).toEqual(corrupted);
+  });
+
+  it("broadcasts repeated explicit locks even when the initiating tab remains locked", async () => {
+    const first = await open();
+    await first.create(passphrase);
+    const second = await open();
+    await second.unlock(passphrase);
+    const nextLock = (): Promise<void> =>
+      new Promise((resolve) => {
+        const unsubscribe = second.subscribe(() => {
+          if (!second.unlocked) {
+            unsubscribe();
+            resolve();
+          }
+        });
+      });
+    const initiallyLocked = nextLock();
+    first.lock();
+    await initiallyLocked;
+    await second.unlock(passphrase);
+    expect(first.unlocked).toBe(false);
+    const lockedAgain = nextLock();
+    first.lock();
+    await lockedAgain;
+    expect(second.unlocked).toBe(false);
+  });
+
+  it("rejects malformed metadata reads completing after close without reopening or posting to a closed channel", async () => {
+    const vault = await open();
+    await vault.create(passphrase);
+    await stored(vault.id, (value) => {
+      value.version = 2;
+    });
+    const post = vi.spyOn(BroadcastChannel.prototype, "postMessage");
+    const reading = Promise.allSettled([vault.exists(), vault.hasPasskey()]);
+    vault.close();
+    expect(post).toHaveBeenCalledExactlyOnceWith("lock");
+    post.mockClear();
+    const outcomes = await reading;
+    expect(outcomes.every((outcome) => outcome.status === "rejected")).toBe(true);
+    for (const outcome of outcomes)
+      if (outcome.status === "rejected")
+        expect(outcome.reason).toEqual(new Error("Invalid vault format."));
+    expect(vault.unlocked).toBe(false);
+    expect(() => vault.close()).not.toThrow();
+    expect(() => vault.lock()).not.toThrow();
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it("keeps passphrase recovery when passkey setup fails or its wrapper is tampered", async () => {
     const vault = await open();
     await vault.create(passphrase);
