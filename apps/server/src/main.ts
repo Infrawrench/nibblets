@@ -143,6 +143,7 @@ async function main(): Promise<void> {
     harnessUpdates.stop();
     clearInterval(pruning);
     central.stop();
+    tunnel.stop();
     process.exit(0);
   };
   process.on("SIGTERM", shutdown);

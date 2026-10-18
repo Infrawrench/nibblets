@@ -1,19 +1,22 @@
 import { TunnelConfig, type TunnelStatus } from "@nibblet/protocol";
+import type Docker from "dockerode";
 import type { Config } from "./config.ts";
-import type { Orchestrator } from "./docker.ts";
+import { isNotFound, type Orchestrator } from "./docker.ts";
 import type { Store } from "./store.ts";
 
 export const TUNNEL_IMAGE = "cloudflare/cloudflared:2026.10.0";
 const NAME = "nibblet-tunnel";
-const QUICK_URL = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
+const QUICK_URL = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/g;
+const RETRY_MS = 1000;
+const DOCKER_TIMEOUT_MS = 30_000;
 
-/**
- * Runs cloudflared next to the server so it can be reached from anywhere.
- * The tunnel points at `server:8420` on the Docker network, so nothing has
- * to be published on the host.
- */
 export class Tunnel {
   private status: TunnelStatus = { mode: "off", state: "off", url: null, detail: null };
+  private generation = 0;
+  private stopped = false;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private pending = Promise.resolve();
+  private quickUrl: { container: string; startedAt: string; url: string } | undefined;
   private readonly docker: Orchestrator;
   private readonly store: Store;
   private readonly config: Config;
@@ -28,7 +31,6 @@ export class Tunnel {
     return this.status;
   }
 
-  /** The address people should use, preferring the tunnel's. */
   publicUrl(): string {
     return this.status.state === "up" && this.status.url
       ? this.status.url
@@ -36,73 +38,103 @@ export class Tunnel {
   }
 
   async restore(): Promise<void> {
+    const generation = this.generation;
     const saved = await this.store.getSetting("tunnel", (v) => TunnelConfig.parse(v), {
       mode: "off",
     });
-    await this.apply(saved).catch((err: unknown) => console.error("tunnel restore failed", err));
+    if (this.active(generation)) await this.configure(saved);
   }
 
   async configure(config: TunnelConfig): Promise<TunnelStatus> {
-    await this.store.setSetting("tunnel", config);
-    return this.apply(config);
+    if (this.stopped) return this.status;
+    const generation = ++this.generation;
+    clearTimeout(this.timer);
+    this.status = {
+      mode: config.mode,
+      state: config.mode === "off" ? "off" : "starting",
+      url: null,
+      detail: null,
+    };
+    await this.enqueue(async () => {
+      if (!this.active(generation)) return;
+      await this.store.setSetting("tunnel", config);
+      await this.reconcile(config, generation);
+    });
+    return this.status;
   }
 
-  /** cloudflared's arguments for a config. */
+  stop(): void {
+    this.stopped = true;
+    this.generation++;
+    clearTimeout(this.timer);
+  }
+
+  private active(generation: number): boolean {
+    return !this.stopped && generation === this.generation;
+  }
+
+  private enqueue(operation: () => Promise<void>): Promise<void> {
+    const next = this.pending.then(operation);
+    this.pending = next.catch(() => {});
+    return next;
+  }
+
   private command(config: Exclude<TunnelConfig, { mode: "off" }>): string[] {
     return config.mode === "quick"
       ? ["tunnel", "--no-autoupdate", "--url", this.config.NIBBLET_INTERNAL_URL]
       : ["tunnel", "--no-autoupdate", "run", "--token", config.token];
   }
 
-  /**
-   * Whether cloudflared is already running exactly this config. A server
-   * restart then keeps the tunnel, and with a quick tunnel its address, rather
-   * than handing out a new one.
-   */
-  private async alreadyRunning(cmd: string[]): Promise<boolean> {
+  private async reconcile(config: TunnelConfig, generation: number): Promise<void> {
+    if (!this.active(generation)) return;
     try {
-      const info = await this.docker.docker.getContainer(NAME).inspect();
-      return info.State.Running && JSON.stringify(info.Config.Cmd) === JSON.stringify(cmd);
-    } catch {
-      return false;
-    }
-  }
-
-  private async apply(config: TunnelConfig): Promise<TunnelStatus> {
-    if (config.mode !== "off" && (await this.alreadyRunning(this.command(config)))) {
-      if (config.mode === "token") {
-        this.status = {
-          mode: "token",
-          state: "up",
-          url: `https://${config.hostname}`,
-          detail: null,
-        };
-      } else {
-        this.status = { mode: "quick", state: "starting", url: null, detail: null };
-        void this.watchForQuickUrl();
+      let container = this.docker.docker.getContainer(NAME);
+      let info: Docker.ContainerInspectInfo | undefined;
+      try {
+        info = await container.inspect({ abortSignal: AbortSignal.timeout(DOCKER_TIMEOUT_MS) });
+      } catch (err) {
+        if (!isNotFound(err)) throw err;
       }
-      return this.status;
-    }
-    await this.docker.removeContainer(NAME);
-    if (config.mode === "off") {
-      this.status = { mode: "off", state: "off", url: null, detail: null };
-      return this.status;
-    }
-    this.status = { mode: config.mode, state: "starting", url: null, detail: null };
-    try {
-      await this.pull();
-      const cmd = this.command(config);
-      const container = await this.docker.docker.createContainer({
-        name: NAME,
-        Image: TUNNEL_IMAGE,
-        Cmd: cmd,
-        Labels: { "nibblet.managed": "true", "nibblet.role": "tunnel" },
-        HostConfig: {
-          NetworkMode: this.config.NIBBLET_NETWORK,
-          RestartPolicy: { Name: "unless-stopped" },
-        },
-      });
-      await container.start();
+      if (!this.active(generation)) return;
+      if (
+        info &&
+        (config.mode === "off" ||
+          JSON.stringify(info.Config.Cmd) !== JSON.stringify(this.command(config)))
+      ) {
+        await container.remove({
+          force: true,
+          abortSignal: AbortSignal.timeout(DOCKER_TIMEOUT_MS),
+        });
+        info = undefined;
+      }
+      if (!this.active(generation)) return;
+      if (config.mode === "off") {
+        this.status = { mode: "off", state: "off", url: null, detail: null };
+        return;
+      }
+      if (!info) {
+        await this.pull(generation);
+        if (!this.active(generation)) return;
+        container = await this.docker.docker.createContainer({
+          name: NAME,
+          Image: TUNNEL_IMAGE,
+          Cmd: this.command(config),
+          Labels: { "nibblet.managed": "true", "nibblet.role": "tunnel" },
+          HostConfig: {
+            NetworkMode: this.config.NIBBLET_NETWORK,
+            RestartPolicy: { Name: "unless-stopped" },
+          },
+          abortSignal: AbortSignal.timeout(DOCKER_TIMEOUT_MS),
+        });
+      }
+      if (!this.active(generation)) return;
+      if (!info?.State.Running) {
+        await container.start({ abortSignal: AbortSignal.timeout(DOCKER_TIMEOUT_MS) });
+        if (!this.active(generation)) return;
+        info = await container.inspect({ abortSignal: AbortSignal.timeout(DOCKER_TIMEOUT_MS) });
+      }
+      if (!this.active(generation)) return;
+      if (!info.State.Running) throw new Error("cloudflared isn't running");
       if (config.mode === "token") {
         this.status = {
           mode: "token",
@@ -111,52 +143,55 @@ export class Tunnel {
           detail: null,
         };
       } else {
-        void this.watchForQuickUrl();
+        const previous = this.quickUrl;
+        const sameRun =
+          previous?.container === info.Id && previous.startedAt === info.State.StartedAt;
+        if (!sameRun) {
+          this.quickUrl = undefined;
+          this.status = { mode: "quick", state: "starting", url: null, detail: null };
+        }
+        const logs = await container.logs({
+          stdout: true,
+          stderr: true,
+          tail: 5000,
+          since: info.State.StartedAt,
+          abortSignal: AbortSignal.timeout(DOCKER_TIMEOUT_MS),
+        });
+        if (!this.active(generation)) return;
+        const url =
+          logs.toString("utf8").match(QUICK_URL)?.at(-1) ?? (sameRun ? previous.url : null);
+        if (url) this.quickUrl = { container: info.Id, startedAt: info.State.StartedAt, url };
+        this.status = { mode: "quick", state: url ? "up" : "starting", url, detail: null };
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.status = { mode: config.mode, state: "error", url: null, detail: message };
+      if (!this.active(generation)) return;
+      this.status = {
+        mode: config.mode,
+        state: "error",
+        url: null,
+        detail: err instanceof Error ? err.message : String(err),
+      };
+    } finally {
+      if (this.active(generation) && (config.mode !== "off" || this.status.state === "error")) {
+        this.timer = setTimeout(() => {
+          void this.enqueue(() => this.reconcile(config, generation));
+        }, RETRY_MS);
+        this.timer.unref();
+      }
     }
-    return this.status;
   }
 
-  private async pull(): Promise<void> {
-    const images = await this.docker.docker.listImages({ filters: { reference: [TUNNEL_IMAGE] } });
-    if (images.length > 0) return;
-    const stream = await this.docker.docker.pull(TUNNEL_IMAGE);
+  private async pull(generation: number): Promise<void> {
+    const images = await this.docker.docker.listImages({
+      filters: { reference: [TUNNEL_IMAGE] },
+      abortSignal: AbortSignal.timeout(DOCKER_TIMEOUT_MS),
+    });
+    if (images.length > 0 || !this.active(generation)) return;
+    const stream = await this.docker.docker.pull(TUNNEL_IMAGE, {
+      abortSignal: AbortSignal.timeout(5 * 60_000),
+    });
     await new Promise<void>((resolve, reject) =>
       this.docker.docker.modem.followProgress(stream, (err) => (err ? reject(err) : resolve())),
     );
-  }
-
-  /** Quick tunnels print their random address to the log once they connect. */
-  private async watchForQuickUrl(): Promise<void> {
-    for (let attempt = 0; attempt < 60; attempt++) {
-      await new Promise((r) => setTimeout(r, 1000));
-      if (this.status.mode !== "quick") return;
-      const logs = await this.containerLogs();
-      const url = QUICK_URL.exec(logs)?.[0];
-      if (url) {
-        this.status = { mode: "quick", state: "up", url, detail: null };
-        return;
-      }
-    }
-    this.status = {
-      mode: "quick",
-      state: "error",
-      url: null,
-      detail: "cloudflared didn't report an address",
-    };
-  }
-
-  private async containerLogs(): Promise<string> {
-    try {
-      const buf = await this.docker.docker
-        .getContainer(NAME)
-        .logs({ stdout: true, stderr: true, tail: 5000 });
-      return buf.toString("utf8");
-    } catch {
-      return "";
-    }
   }
 }
