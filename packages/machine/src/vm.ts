@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:net";
-import { PassThrough, type Readable, type Writable } from "node:stream";
+import { pipeline, Transform, type Readable, type Writable } from "node:stream";
 import {
   DEFAULT_MEMORY_MB,
   GUEST_NAMES,
@@ -620,7 +620,7 @@ export class VirtualMachines implements MachinePlugin {
 
   async archiveHome(id: string, out: Writable): Promise<void> {
     // The caller ends `out`; the link ends what it's given.
-    const pass = new PassThrough();
+    const pass = metered((m) => this.log(`[${id}] archiving its home: ${m}`));
     pass.pipe(out, { end: false });
     // Cut off, its channel's destroyed with an error: that's a failed snapshot, not a short one.
     const drained = new Promise<void>((resolve, reject) => {
@@ -635,8 +635,11 @@ export class VirtualMachines implements MachinePlugin {
   }
 
   async restoreHome(id: string, archive: Readable): Promise<void> {
+    const sent = metered((m) => this.log(`[${id}] restoring its home: ${m}`));
+    // Its archive failing fails what the guest is sent, so the job ends.
+    pipeline(archive, sent, () => {});
     await this.withGuest(id, (link) =>
-      link.runToEnd({ command: "restore-home", stdin: archive }, 60 * 60_000),
+      link.runToEnd({ command: "restore-home", stdin: sent }, 60 * 60_000),
     );
   }
 
@@ -659,4 +662,29 @@ export class VirtualMachines implements MachinePlugin {
     await this.withGuest(id, (link) => link.runToEnd({ command: "tailscale-leave" }, 2 * 60_000));
     await this.client.update(id, { tailscale: false });
   }
+}
+
+/**
+ * A stream that passes everything through and says how much, every half a
+ * minute and at its end: a VM's channel to its guest can be slow (a COM
+ * port, for Windows), and a big home takes a while over it.
+ */
+function metered(say: (message: string) => void): Transform {
+  const started = Date.now();
+  let bytes = 0;
+  const so = () =>
+    `${(bytes / 1_000_000).toFixed(1)} MB in ${Math.round((Date.now() - started) / 1000)} s`;
+  const timer = setInterval(() => say(`${so()} so far`), 30_000);
+  timer.unref();
+  const meter = new Transform({
+    transform(chunk: Buffer, _enc, done) {
+      bytes += chunk.length;
+      done(null, chunk);
+    },
+  });
+  meter.once("close", () => {
+    clearInterval(timer);
+    say(so());
+  });
+  return meter;
 }

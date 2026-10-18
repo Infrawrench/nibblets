@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { Agent, setGlobalDispatcher } from "undici";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   GUEST_NAMES,
@@ -57,6 +58,10 @@ const FIRST_START_MS = vm ? 30 * 60_000 : 5 * 60_000;
 const INSTALL_MS = 90 * 60_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Some calls take as long as a VM takes (a Windows home over its COM port):
+// the tests' own timeouts say how long is too long, not fetch's five minutes.
+setGlobalDispatcher(new Agent({ headersTimeout: 30 * 60_000, bodyTimeout: 30 * 60_000 }));
 
 /** What Windows and macOS guests install the runner from: this commit, unless told another. */
 async function guestRef(): Promise<string> {
@@ -151,6 +156,11 @@ describe.skipIf(missing !== null)(title, () => {
     }
     await stack.up(guest === "linux" ? {} : { guestRef: await guestRef(), repo });
   }, 20 * 60_000);
+
+  // A test that failed, however it failed (a timeout too), with what the server said meanwhile.
+  afterEach(async (ctx) => {
+    if (ctx.task.result?.state === "fail") console.log(`The server said:\n${await stack.logs()}`);
+  });
 
   afterAll(async () => {
     await stack.down();
