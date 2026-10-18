@@ -107,6 +107,8 @@ describe("what Windows says while its image is made", () => {
     // Every failure starts the same, so a hypervisor can stop waiting.
     expect(SETUP_PS1).toContain(`Say "${INSTALL_FAILED}`);
     expect(BOOTSTRAP_PS1).toContain(`Say "${INSTALL_FAILED}`);
+    // The agent's user reads the packages, which a hard link to SYSTEM's store wouldn't let it.
+    expect(BOOTSTRAP_PS1).toContain("--package-import-method copy");
     // Before it shuts down, so a hypervisor hears it.
     expect(BOOTSTRAP_PS1.indexOf(INSTALL_DONE)).toBeLessThan(
       BOOTSTRAP_PS1.indexOf("Stop-Computer"),

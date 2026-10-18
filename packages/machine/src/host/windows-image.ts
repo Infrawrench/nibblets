@@ -223,7 +223,9 @@ if ($have.Trim() -ne $want) {
   $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = '0'
   Push-Location "$root\\app"
   Say "Installing the runner's packages"
-  & "$root\\node\\corepack.cmd" pnpm install --prod --frozen-lockfile --filter '@nibblet/runner...'
+  # Copied, not linked from pnpm's store: a hard link has the store's permissions, which are
+  # SYSTEM's own, so the agent's user couldn't read its packages. Copies take C:\Nibblets'.
+  & "$root\\node\\corepack.cmd" pnpm install --prod --frozen-lockfile --package-import-method copy --filter '@nibblet/runner...'
   if ($LASTEXITCODE -ne 0) { throw 'Installing the runner failed' }
   Pop-Location
   New-Item -ItemType Directory -Force -Path "$root\\bin" | Out-Null
