@@ -484,10 +484,15 @@ export class VirtualMachines implements MachinePlugin {
   }
 
   async logs(id: string, tail: number): Promise<string> {
+    // A sub-agent's are its run's, in its host's VM.
+    const sub = this.subagents.get(id);
+    const hostLink = sub ? this.links.get(sub.host) : undefined;
     const link = this.links.get(id);
-    const text = link
-      ? await link.tail(MAIN_RUN).catch(() => "")
-      : await this.client.console(id).catch(() => "");
+    const text = hostLink
+      ? await hostLink.tail(subagentRun(id)).catch(() => "")
+      : link
+        ? await link.tail(MAIN_RUN).catch(() => "")
+        : await this.client.console(id).catch(() => "");
     return text.split("\n").slice(-tail).join("\n");
   }
 
@@ -570,6 +575,10 @@ export class VirtualMachines implements MachinePlugin {
       if (!sub) return;
       this.subagents.delete(nibbletId);
       const tail = await link.tail(run).catch(() => "");
+      // Said here too: a sub-agent's output is only in its host's VM.
+      this.log(
+        `[${nibbletId}] sub-agent stopped (${exit.code ?? exit.signal ?? exit.error ?? "?"}): ${tail.trim().split("\n").slice(-15).join("\n")}`,
+      );
       sub.onExit(exit.code, exit.error ? `${tail}\n${exit.error}` : tail);
     });
   }
@@ -585,6 +594,8 @@ export class VirtualMachines implements MachinePlugin {
     if (!(await this.running(hostId))) return;
     const link = await this.link(hostId);
     await link.runToEnd({ command: "stop-subagent", args: [nibbletId] }, 60_000);
+    const tail = await link.tail(subagentRun(nibbletId)).catch(() => "");
+    this.log(`[${nibbletId}] sub-agent stopped: ${tail.trim().split("\n").slice(-15).join("\n")}`);
   }
 
   async removeSubagentState(hostId: string, nibbletId: string): Promise<void> {

@@ -313,12 +313,19 @@ describe.skipIf(missing !== null)(title, () => {
           throw new Error(`The sub-agent failed: ${sub.item.result ?? ""}\n${await stack.logs()}`);
         }
         if (Date.now() > until) {
+          // Stopped, it says what it last said, in the server's log.
+          const childId = sub?.item.type === "subagent" ? sub.item.childId : null;
+          const child = childId ? await stack.client.nibblets.get({ id: childId }) : null;
+          if (childId) {
+            await stack.client.nibblets.stop({ id: childId }).catch(() => undefined);
+            await sleep(20_000);
+          }
           const calls = (await stack.modelCalls()).map(
             (c) =>
               `${c.answer} <- ${c.last.slice(0, 120)} (${c.tools.filter((t) => t.includes("nibblet")).join(", ")})`,
           );
           throw new Error(
-            `No sub-agent reported back.\nThe model's calls:\n${calls.join("\n")}\nThe thread:\n${JSON.stringify(thread.map((s) => s.item)).slice(-3000)}\n${await stack.logs()}`,
+            `No sub-agent reported back (${child ? `${child.status}: ${child.statusDetail ?? ""}` : "none started"}).\nThe model's calls:\n${calls.join("\n")}\nThe thread:\n${JSON.stringify(thread.map((s) => s.item)).slice(-3000)}\n${await stack.logs()}`,
           );
         }
         await sleep(2000);
