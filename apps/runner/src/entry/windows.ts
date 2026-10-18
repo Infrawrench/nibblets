@@ -207,8 +207,10 @@ export const windows: EntryPlatform = {
     if (alive(pid)) await killTree(pid);
   },
 
+  // Each file it reads is said (`-v`, on stderr), so one it sticks on is named.
   archiveHome: () =>
     inherit("tar.exe", [
+      "-v",
       "-C",
       win.dirname(HOME),
       "-czf",

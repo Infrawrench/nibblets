@@ -329,40 +329,55 @@ export class GuestLink {
   }
 
   /**
-   * Runs a command and waits for it to end, failing unless it ends well.
-   * For the short ones: stopping a sub-agent, archiving a home folder.
+   * Runs a command and waits for it to end, failing unless it ends well, and
+   * saying what it printed when it doesn't. For the short ones: stopping a
+   * sub-agent, archiving a home folder. `abort` ends it early, killed.
    */
-  async runToEnd(opts: Omit<RunOptions, "run">, timeoutMs = 10 * 60_000): Promise<void> {
+  async runToEnd(
+    opts: Omit<RunOptions, "run" | "stderr">,
+    timeoutMs = 10 * 60_000,
+    abort?: AbortSignal,
+  ): Promise<void> {
     const run = `${this.jobPrefix}:${this.nextRequest++}`;
-    const stderr: Uint8Array[] = [];
+    // Only its last words: enough to say why, however much it says.
+    let stderr = "";
     const collect = new Writable({
       write(chunk: Uint8Array, _enc, done) {
-        stderr.push(chunk);
+        stderr = (stderr + Buffer.from(chunk).toString("utf8")).slice(-4000);
         done();
       },
     });
-    await this.run({ ...opts, run, stderr: opts.stderr ?? collect });
+    const failed = (why: string) => {
+      const said = stderr.trim().slice(-1500);
+      return new Error(`${opts.command} ${why}${said ? `: ${said}` : ""}`);
+    };
+    await this.run({ ...opts, run, stderr: collect });
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
     // Whichever loses the race still settles later; nobody's waiting by then.
     const lost = this.gone.then((): never => {
-      throw new GuestGone();
+      throw failed("lost touch with its machine");
     });
     lost.catch(() => {});
     const exit = await Promise.race([
       this.exited(run),
       lost,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${opts.command} took too long`)), timeoutMs);
+        timer = setTimeout(() => reject(failed("took too long")), timeoutMs);
+        onAbort = () => {
+          this.signal(run, "SIGKILL");
+          reject(failed(abort?.reason instanceof Error ? abort.reason.message : "was stopped"));
+        };
+        if (abort?.aborted) onAbort();
+        else abort?.addEventListener("abort", onAbort, { once: true });
       }),
-    ]).finally(() => clearTimeout(timer));
+    ]).finally(() => {
+      clearTimeout(timer);
+      if (onAbort) abort?.removeEventListener("abort", onAbort);
+    });
     this.exits.delete(run);
     if (this.cutOff.delete(run)) throw new Error(`${opts.command}'s output was cut off`);
-    if (exit.code !== 0) {
-      const said = Buffer.concat(stderr).toString("utf8").trim().slice(-500);
-      throw new Error(
-        `${opts.command} ${exit.error ?? `exited ${exit.code ?? exit.signal}`}${said ? `: ${said}` : ""}`,
-      );
-    }
+    if (exit.code !== 0) throw failed(exit.error ?? `exited ${exit.code ?? exit.signal}`);
   }
 
   signal(run: string, signal: GuestSignal): void {

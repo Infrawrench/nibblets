@@ -90,4 +90,22 @@ describe("a guest link", () => {
     }
     expect(new Set(names).size).toBe(2);
   });
+
+  it("kills a job that's stopped, and says what it last said", async () => {
+    const guest = pretend();
+    const opening = GuestLink.open(guest.socket, { nibbletId: "n", boot: "b" });
+    guest.hello();
+    const link = await opening;
+    const stop = new AbortController();
+    const job = link.runToEnd({ command: "archive-home" }, 60_000, stop.signal);
+    await new Promise((r) => setTimeout(r, 10));
+    const run = guest.sent.find((m) => m.type === "run");
+    if (run?.type !== "run" || run.stderr === null) throw new Error("no run");
+    guest.say({ type: "started", run: run.run, pid: 2 });
+    guest.data(run.stderr, [...new TextEncoder().encode("a nibblet/AppData/NTUSER.DAT\n")]);
+    await new Promise((r) => setTimeout(r, 10));
+    stop.abort(new Error("stalled"));
+    await expect(job).rejects.toThrow(/archive-home stalled: a nibblet\/AppData\/NTUSER\.DAT/);
+    expect(guest.sent).toContainEqual({ type: "signal", run: run.run, signal: "SIGKILL" });
+  });
 });

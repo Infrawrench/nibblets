@@ -620,7 +620,11 @@ export class VirtualMachines implements MachinePlugin {
 
   async archiveHome(id: string, out: Writable): Promise<void> {
     // The caller ends `out`; the link ends what it's given.
-    const pass = metered((m) => this.log(`[${id}] archiving its home: ${m}`));
+    const stalled = new AbortController();
+    const pass = metered(
+      (m) => this.log(`[${id}] archiving its home: ${m}`),
+      () => stalled.abort(new Error(STALLED)),
+    );
     pass.pipe(out, { end: false });
     // Cut off, its channel's destroyed with an error: that's a failed snapshot, not a short one.
     const drained = new Promise<void>((resolve, reject) => {
@@ -629,17 +633,21 @@ export class VirtualMachines implements MachinePlugin {
     });
     drained.catch(() => undefined);
     await this.withGuest(id, (link) =>
-      link.runToEnd({ command: "archive-home", stdout: pass }, 60 * 60_000),
+      link.runToEnd({ command: "archive-home", stdout: pass }, 60 * 60_000, stalled.signal),
     );
     await drained;
   }
 
   async restoreHome(id: string, archive: Readable): Promise<void> {
-    const sent = metered((m) => this.log(`[${id}] restoring its home: ${m}`));
+    const stalled = new AbortController();
+    const sent = metered(
+      (m) => this.log(`[${id}] restoring its home: ${m}`),
+      () => stalled.abort(new Error(STALLED)),
+    );
     // Its archive failing fails what the guest is sent, so the job ends.
     pipeline(archive, sent, () => {});
     await this.withGuest(id, (link) =>
-      link.runToEnd({ command: "restore-home", stdin: sent }, 60 * 60_000),
+      link.runToEnd({ command: "restore-home", stdin: sent }, 60 * 60_000, stalled.signal),
     );
   }
 
@@ -664,21 +672,31 @@ export class VirtualMachines implements MachinePlugin {
   }
 }
 
+/** How long a home's archive may go without a byte before it's given up on. */
+const STALL_MS = 3 * 60_000;
+const STALLED = `stalled, with nothing for ${STALL_MS / 60_000} minutes`;
+
 /**
  * A stream that passes everything through and says how much, every half a
  * minute and at its end: a VM's channel to its guest can be slow (a COM
- * port, for Windows), and a big home takes a while over it.
+ * port, for Windows), and a big home takes a while over it. Slow is fine;
+ * nothing at all for STALL_MS is `stalled`.
  */
-function metered(say: (message: string) => void): Transform {
+function metered(say: (message: string) => void, stalled: () => void): Transform {
   const started = Date.now();
   let bytes = 0;
+  let movedAt = Date.now();
   const so = () =>
     `${(bytes / 1_000_000).toFixed(1)} MB in ${Math.round((Date.now() - started) / 1000)} s`;
-  const timer = setInterval(() => say(`${so()} so far`), 30_000);
+  const timer = setInterval(() => {
+    say(`${so()} so far`);
+    if (Date.now() - movedAt > STALL_MS) stalled();
+  }, 30_000);
   timer.unref();
   const meter = new Transform({
     transform(chunk: Buffer, _enc, done) {
       bytes += chunk.length;
+      movedAt = Date.now();
       done(null, chunk);
     },
   });
