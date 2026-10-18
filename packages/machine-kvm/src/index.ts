@@ -48,6 +48,8 @@ const HOME_GB = 64;
 const WINDOWS_DISK_GB = 64;
 /** How long Windows gets to install itself and the runner, which is mostly downloading. */
 const INSTALL_HOURS = 3;
+/** Once it's said something, how long it may go without saying more: it says each step, and says it's still compiling. */
+const INSTALL_QUIET_MINUTES = 15;
 
 const x86 = process.arch !== "arm64";
 
@@ -384,21 +386,31 @@ export class Kvm implements HypervisorPlugin {
     }
     const started = Date.now();
     let last: string | null = null;
+    let lastAt = Date.now();
     try {
       for (let tick = 0; pid && alive(pid); tick++) {
         await sleep(15_000);
         const now = installSaid(await tailFile(said));
-        if (now !== last) ctx.log(`Windows' install: ${now}`);
+        if (now !== last) {
+          ctx.log(`Windows' install: ${now}`);
+          lastAt = Date.now();
+        }
         last = now;
+        const quiet = last !== null && Date.now() - lastAt > INSTALL_QUIET_MINUTES * 60_000;
         const failed = last?.startsWith(INSTALL_FAILED) ?? false;
         // PNG needs QEMU 7.1; an older one just doesn't save it.
-        if (tick % 4 === 0 || failed) {
+        if (tick % 4 === 0 || failed || quiet) {
           await qmp(control.qmp, [
             { execute: "screendump", arguments: { filename: screen, format: "png" } },
           ]).catch(() => undefined);
         }
         if (last && failed) {
           throw new Error(`Windows' install failed: ${last.slice(INSTALL_FAILED.length)}`);
+        }
+        if (quiet) {
+          throw new Error(
+            `Windows' install went quiet for ${INSTALL_QUIET_MINUTES} minutes after it said "${last ?? ""}". Its screen is in ${screen}`,
+          );
         }
         const minutes = Math.round((Date.now() - started) / 60_000);
         if (minutes > INSTALL_HOURS * 60) {

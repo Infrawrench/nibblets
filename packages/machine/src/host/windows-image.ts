@@ -236,7 +236,13 @@ if ($have.Trim() -ne $want) {
     if (Test-Path $out) { Remove-Item -Force $out }
     $compile = Start-Process -FilePath $csc -NoNewWindow -PassThru -RedirectStandardOutput "$root\\csc.log" -ArgumentList '/nologo', '/target:exe', "/out:$out", "$root\\app\\apps\\runner\\src\\machine\\windows\\$helper.cs"
     $null = $compile.Handle
-    if (-not $compile.WaitForExit(600000)) { $compile.Kill(); throw "Building its $helper helper took over 10 minutes" }
+    # Said every half a minute, so a hypervisor can tell a slow compiler from a stuck guest.
+    $begun = Get-Date
+    while (-not $compile.WaitForExit(30000)) {
+      $waited = [int]((Get-Date) - $begun).TotalSeconds
+      if ($waited -gt 600) { $compile.Kill(); throw "Building its $helper helper took over 10 minutes" }
+      Say "Building its $helper helper, $waited seconds in"
+    }
     if ($compile.ExitCode -ne 0) { throw "Building its $helper helper failed: $((Get-Content "$root\\csc.log" -Raw).Trim())" }
   }
   Set-Content "$root\\app\\.nibblets" $want
