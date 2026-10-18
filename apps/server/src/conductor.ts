@@ -1358,8 +1358,7 @@ export class Conductor {
     this.cardFiles.runnerGone(nibbletId);
     this.failActive(nibbletId, "failed", "Its container stopped");
     await this.subagentsGone(nibbletId, "Its parent's container stopped");
-    const logs = await this.machineFor(nibblet).logs(nibbletId, 20);
-    const tail = logs.trim().split("\n").slice(-3).join(" ");
+    const tail = exitReason(await this.machineFor(nibblet).logs(nibbletId, 40));
     await this.store.updateNibblet(nibbletId, {
       status: "error",
       statusDetail: `Its ${machineWord(this.machineFor(nibblet))} exited${code === null ? "" : ` with code ${code}`}${tail ? `: ${tail}` : ""}`,
@@ -1410,4 +1409,19 @@ export class Conductor {
       text,
     });
   }
+}
+
+/**
+ * Why a runner stopped, from the end of what it said: its last lines, and
+ * when it was Node's own error, that error, which comes well before them.
+ */
+export function exitReason(logs: string): string {
+  const lines = logs
+    .trim()
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const last = lines.slice(-3);
+  const thrown = lines.findLast((l) => /^(\w*Error|Uncaught)\b.*:/.test(l));
+  return (thrown && !last.includes(thrown) ? [thrown, ...last] : last).join(" ");
 }
