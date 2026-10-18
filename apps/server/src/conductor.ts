@@ -106,7 +106,12 @@ export class Conductor {
     await this.serial(nibbletId, async () => {
       this.restoring.add(nibbletId);
     });
-    await this.interrupt(nibbletId);
+    try {
+      await this.interrupt(nibbletId);
+    } catch (error) {
+      await this.serial(nibbletId, async () => this.endRestore(nibbletId));
+      throw error;
+    }
   }
 
   endRestore(nibbletId: string): void {

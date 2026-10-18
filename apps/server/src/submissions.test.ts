@@ -271,6 +271,43 @@ describe.skipIf(!url)("durable client submissions", () => {
     });
   });
 
+  it("clears the restore gate when cancelling submissions fails", async () => {
+    const existingKey = randomUUID();
+    const waitingKey = randomUUID();
+    const existing = await conductor.send(id, "existing queued message", [], existingKey, files);
+    const failure = new Error("transient cancellation failure");
+    let rejectCancellation!: (error: Error) => void;
+    let entered!: () => void;
+    const cancelling = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const cancelled = new Promise<void>((_resolve, reject) => {
+      rejectCancellation = reject;
+    });
+    vi.spyOn(store, "cancelSubmissions").mockImplementationOnce(async () => {
+      entered();
+      await cancelled;
+    });
+    const restoreFailed = expect(conductor.beginRestore(id)).rejects.toBe(failure);
+    await cancelling;
+    const waitingRejected = expect(
+      conductor.send(id, "waiting message", [], waitingKey, files),
+    ).rejects.toMatchObject({ code: "unavailable" });
+    rejectCancellation(failure);
+    await restoreFailed;
+    await waitingRejected;
+    expect(await conductor.send(id, "existing queued message", [], existingKey, files)).toEqual(
+      existing,
+    );
+    await expect(
+      conductor.send(id, "waiting message", [], waitingKey, files),
+    ).resolves.toMatchObject({ clientMessageId: waitingKey, state: "queued" });
+    await expect(
+      conductor.enqueue(id, "user", "ordinary message after failure"),
+    ).resolves.toBeTypeOf("string");
+    expect(await store.submission(id, existingKey)).toMatchObject({ state: "queued" });
+  });
+
   it("publishes the committed running marker and atomically commits terminal state", async () => {
     const key = randomUUID();
     const receipt = await conductor.send(id, "hello", [], key, files);
