@@ -16,6 +16,8 @@ import { join } from "node:path";
 import type { Duplex } from "node:stream";
 import { promisify } from "node:util";
 import { GUEST_PORT_NAME, type GuestImage, type GuestOs } from "@nibblet/protocol";
+import { z } from "zod";
+import { ask, qmp } from "./qmp.ts";
 import {
   alive,
   connectTo,
@@ -110,36 +112,6 @@ const files = (vm: VmRef) => ({
   agent: socketPath("kvm", vm.id, "agent"),
   qmp: socketPath("kvm", vm.id, "qmp"),
 });
-
-/** Says things to a QEMU over QMP, its control socket, one after another. */
-async function qmp(
-  path: string,
-  commands: { execute: string; arguments?: object }[],
-): Promise<void> {
-  const socket = await connectTo(path);
-  await new Promise<void>((resolve, reject) => {
-    let ready = false;
-    socket.on("data", (chunk: Buffer) => {
-      const text = chunk.toString();
-      // The greeting first, then capabilities' answer: then it listens.
-      if (!ready && text.includes('"QMP"')) {
-        socket.write(JSON.stringify({ execute: "qmp_capabilities" }));
-      } else if (!ready && text.includes('"return"')) {
-        ready = true;
-        for (const command of commands) socket.write(JSON.stringify(command));
-        setTimeout(() => {
-          socket.destroy();
-          resolve();
-        }, 200);
-      }
-    });
-    socket.once("error", reject);
-    setTimeout(() => {
-      socket.destroy();
-      reject(new Error("QEMU didn't answer"));
-    }, 5000);
-  });
-}
 
 /**
  * The devices a guest has. Linux's are virtio, with the agent's port a
@@ -263,22 +235,31 @@ async function qemu(
   let exited: string | null = null;
   child.once("exit", (code, signal) => (exited = signal ?? `code ${code ?? "?"}`));
   child.once("error", (err) => (exited = err.message));
+  // Started once it says it's running, as daemonising did: its devices are
+  // all there by then, so the agent's port opens once, not again as they come.
   const until = Date.now() + 60_000;
-  while (!existsSync(files.qmp) && exited === null && Date.now() < until) await sleep(200);
-  await sleep(1000);
-  if (exited !== null || !existsSync(files.qmp)) {
-    const said = (await tailFile(files.log, 2000)).trim();
-    throw new Error(
-      `QEMU didn't start (${exited ?? "it never listened"})${said ? `: ${said}` : ""}`,
-    );
+  for (;;) {
+    if (exited !== null || Date.now() > until) {
+      const said = (await tailFile(files.log, 2000)).trim();
+      throw new Error(
+        `QEMU didn't start (${exited ?? "it never said it was running"})${said ? `: ${said}` : ""}`,
+      );
+    }
+    const status = existsSync(files.qmp)
+      ? await ask(files.qmp, "query-status", Status).catch(() => null)
+      : null;
+    if (status?.running) return;
+    await sleep(200);
   }
 }
+
+const Status = z.object({ running: z.boolean() });
 
 /**
  * KVM, through QEMU, on Linux: Linux guests from the runner image (the
  * same disk as Apple's), and on x86 Windows guests from the user's
- * installer, each under a qcow2 overlay of its own. Each VM is a
- * daemonised QEMU, so it outlives the bridge, with its agent's port on a
+ * installer, each under a qcow2 overlay of its own. Each VM is a QEMU
+ * of its own, detached so it outlives the bridge, with its agent's port on a
  * unix socket.
  */
 export class Kvm implements HypervisorPlugin {

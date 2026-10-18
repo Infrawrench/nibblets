@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@nibblet/machine": "workspace:*",
-    "@nibblet/protocol": "workspace:*"
+    "@nibblet/protocol": "workspace:*",
+    "zod": "^4.6.7"
   }
 }
