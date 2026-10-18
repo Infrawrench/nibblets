@@ -249,14 +249,17 @@ describe.skipIf(!url)("durable client submissions", () => {
 
   it("holds new submissions throughout a restore while returning existing receipts", async () => {
     const key = randomUUID();
+    const waitingKey = randomUUID();
     await conductor.send(id, "old", [], key, files);
     await conductor.beginRestore(id);
-    await expect(conductor.send(id, "new", [], randomUUID(), files)).rejects.toMatchObject({
-      code: "conflict",
+    await expect(conductor.send(id, "new", [], waitingKey, files)).rejects.toMatchObject({
+      code: "unavailable",
     });
+    expect(await store.submission(id, waitingKey)).toBeNull();
     expect(await conductor.send(id, "old", [], key, files)).toMatchObject({ state: "cancelled" });
     conductor.endRestore(id);
-    await expect(conductor.send(id, "new", [], randomUUID(), files)).resolves.toMatchObject({
+    await expect(conductor.send(id, "new", [], waitingKey, files)).resolves.toMatchObject({
+      clientMessageId: waitingKey,
       state: "queued",
     });
   });
@@ -288,9 +291,8 @@ describe.skipIf(!url)("durable client submissions", () => {
 
   it("retains queued work after a running-marker transaction fails", async () => {
     const key = randomUUID();
-    Object.assign(conductor, { initializing: true });
+    Object.assign(conductor, { wake: async () => undefined });
     await conductor.send(id, "retry preparation", [], key, files);
-    Object.assign(conductor, { initializing: false });
     vi.spyOn(store, "putSubmissionTurn").mockRejectedValueOnce(
       new Error("transient write failure"),
     );
@@ -350,6 +352,89 @@ describe.skipIf(!url)("durable client submissions", () => {
     await runnerReady;
     expect(conductor.activeTurnId(id)).toBe(receipt.turnId);
     expect(turns()).toHaveLength(1);
+  });
+
+  it("keeps recovered queued messages ahead of messages sent during early startup", async () => {
+    const old = await conductor.send(id, "accepted before restart", [], randomUUID(), files);
+    const restarted = makeConductor();
+    Object.assign(restarted, { initializing: true });
+    let release!: () => void;
+    let entered!: () => void;
+    const resetting = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const reset = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(restarted.approvals, "resetStale").mockImplementationOnce(async () => {
+      entered();
+      await reset;
+    });
+    const reconciliation = restarted.reconcile();
+    await resetting;
+    const lookup = vi.spyOn(store, "submission");
+    const newer = restarted.send(id, "sent during restart", [], randomUUID(), files);
+    await store.getNibblet(id);
+    const attemptedBeforeRecovery = lookup.mock.calls.length;
+    release();
+    await reconciliation;
+    const accepted = await newer;
+    expect(attemptedBeforeRecovery).toBe(0);
+    await ready(restarted);
+    expect(turns()).toMatchObject([{ turnId: old.turnId, input: "accepted before restart" }]);
+    await restarted.onRunnerMessage(id, {
+      type: "turn_end",
+      turnId: old.turnId,
+      status: "completed",
+      error: null,
+      sessionId: null,
+      usage: null,
+    });
+    await ready(restarted);
+    expect(turns()).toMatchObject([
+      { turnId: old.turnId, input: "accepted before restart" },
+      { turnId: accepted.turnId, input: "sent during restart" },
+    ]);
+  });
+
+  it("restores mixed update queues before accepting messages during runner discovery", async () => {
+    const first = await conductor.send(id, "durable first", [], randomUUID(), files);
+    const legacy = await conductor.enqueue(id, "user", "legacy middle");
+    const third = await conductor.send(id, "durable third", [], randomUUID(), files);
+    await conductor.pauseForUpdate();
+    const restarted = makeConductor();
+    Object.assign(restarted, { initializing: true });
+    let release!: (value: Map<string, never>) => void;
+    Object.assign(docker, {
+      runners: () =>
+        new Promise<Map<string, never>>((resolve) => {
+          release = resolve;
+        }),
+    });
+    const reconciliation = restarted.reconcile();
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    const newest = await restarted.send(id, "new during discovery", [], randomUUID(), files);
+    release(new Map<string, never>());
+    await reconciliation;
+    await ready(restarted);
+    for (const turnId of [first.turnId, legacy, third.turnId]) {
+      expect(turns().at(-1)).toMatchObject({ turnId });
+      await restarted.onRunnerMessage(id, {
+        type: "turn_end",
+        turnId,
+        status: "completed",
+        error: null,
+        sessionId: null,
+        usage: null,
+      });
+      await ready(restarted);
+    }
+    expect(turns().map((turn) => turn.turnId)).toEqual([
+      first.turnId,
+      legacy,
+      third.turnId,
+      newest.turnId,
+    ]);
   });
 
   it("cancels a stopped child's queued receipt without creating generic resume work", async () => {

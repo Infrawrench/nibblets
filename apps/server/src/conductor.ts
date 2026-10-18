@@ -91,6 +91,10 @@ const SUBAGENT_RESUME_INPUT =
  */
 export class Conductor {
   private initializing = true;
+  private recovered!: () => void;
+  private readonly recovery = new Promise<void>((resolve) => {
+    this.recovered = resolve;
+  });
   private initialized!: () => void;
   private readonly initialization = new Promise<void>((resolve) => {
     this.initialized = resolve;
@@ -128,6 +132,7 @@ export class Conductor {
     clientMessageId: string,
     resolveFiles: () => Promise<FileRef[]>,
   ): Promise<SendReceipt> {
+    if (this.initializing) await this.recovery;
     const receipt = await this.serial(nibbletId, async () => {
       const payloadHash = createHash("sha256")
         .update(JSON.stringify([input, attachmentIds]))
@@ -139,7 +144,7 @@ export class Conductor {
         return { clientMessageId, turnId: previous.turnId, state: previous.state };
       }
       if (this.restoring.has(nibbletId))
-        throw new RpcError("conflict", "A snapshot is being restored");
+        throw new RpcError("unavailable", "A snapshot is being restored");
       await this.store.getNibblet(nibbletId);
       const attachments = await resolveFiles();
       const accepted = await this.store.acceptSubmission(
@@ -238,6 +243,7 @@ export class Conductor {
     try {
       await this.reconcileState();
     } finally {
+      this.recovered();
       this.initializing = false;
       this.initialized();
     }
@@ -252,6 +258,9 @@ export class Conductor {
   private async reconcileState(): Promise<void> {
     await this.approvals.resetStale();
     await this.limits.restore();
+    const resume = await this.store.getSetting(RESUME_SETTING, (v) => Resume.parse(v), {});
+    await this.store.deleteSetting(RESUME_SETTING);
+    for (const [id, { turns }] of Object.entries(resume)) this.mergeQueue(id, turns);
     for (const { nibbletId, item } of await this.store.queuedSubmissions()) {
       this.mergeQueue(nibbletId, [
         {
@@ -262,6 +271,7 @@ export class Conductor {
         },
       ]);
     }
+    this.recovered();
     const containers = await this.docker.runners();
     const all = await this.store.listNibblets();
     // A sub-agent runs in the container of the nibblet at the top of its tree.
@@ -292,8 +302,6 @@ export class Conductor {
     // Running turns live in memory, so the last server lost track of any it
     // left running. A runner that's still up may still be on one: wait for it
     // to say. Otherwise the turn is over, and the nibblet carries on below.
-    const resume = await this.store.getSetting(RESUME_SETTING, (v) => Resume.parse(v), {});
-    await this.store.deleteSetting(RESUME_SETTING);
     const lost: string[] = [];
     for (const { nibbletId, item } of await this.store.runningTurnItems()) {
       const runner = runners.get(nibbletId);
@@ -772,6 +780,7 @@ export class Conductor {
     attachments: FileRef[] = [],
     opts: { first?: boolean } = {},
   ): Promise<string> {
+    if (this.initializing) await this.recovery;
     return this.serial(nibbletId, () =>
       this.enqueueLocked(nibbletId, source, input, attachments, opts),
     );
@@ -785,7 +794,7 @@ export class Conductor {
     opts: { first?: boolean },
   ): Promise<string> {
     if (this.restoring.has(nibbletId))
-      throw new RpcError("conflict", "A snapshot is being restored");
+      throw new RpcError("unavailable", "A snapshot is being restored");
     // While waiting out a usage limit, heartbeats and schedules don't pile up.
     if (this.limits.waiting(nibbletId) && (source === "heartbeat" || source === "schedule")) {
       const pending = this.queues.get(nibbletId)?.find((t) => t.source === source);
