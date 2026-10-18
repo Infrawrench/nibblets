@@ -129,6 +129,14 @@ ${component(
   </settings>
   <settings pass="oobeSystem">
 ${component(
+  "Microsoft-Windows-International-Core",
+  // Here as well as in windowsPE, or the first-run screens ask for a region and a keyboard.
+  `      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>`,
+)}
+${component(
   "Microsoft-Windows-Shell-Setup",
   `      <OOBE>
         <HideEULAPage>true</HideEULAPage>
@@ -251,6 +259,13 @@ if ($have.Trim() -ne $want) {
 }
 
 if (Test-Path "$root\\preparing") {
+  # The image is Windows once it's set up, not part-way through its first-run screens.
+  $state = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State'
+  for ($waited = 0; (Get-ItemProperty $state -ErrorAction SilentlyContinue).ImageState -ne 'IMAGE_STATE_COMPLETE'; $waited++) {
+    if ($waited -ge 30) { throw "Windows' setup didn't finish: it's at $((Get-ItemProperty $state -ErrorAction SilentlyContinue).ImageState)" }
+    Say "Waiting for Windows to finish setting up, $waited minutes in"
+    Start-Sleep -Seconds 60
+  }
   Remove-Item -Force "$root\\preparing"
   Say '${INSTALL_DONE}'
   Stop-Transcript | Out-Null

@@ -84,6 +84,15 @@ describe("Windows' setup disc", () => {
     expect(xml).toContain('processorArchitecture="amd64"');
   });
 
+  it("answers the first-run screens' region and keyboard, so they don't wait for anyone", () => {
+    const oobe = /<settings pass="oobeSystem">([\s\S]*?)<\/settings>/.exec(
+      text("AUTOUNATTEND.XML"),
+    )?.[1];
+    expect(oobe).toContain("Microsoft-Windows-International-Core");
+    expect(oobe).toContain("<InputLocale>en-US</InputLocale>");
+    expect(oobe).toContain("<UserLocale>en-US</UserLocale>");
+  });
+
   it("gives every Windows it makes a different administrator's password", () => {
     const again = windowsSetupFiles({ repo: "r/r", ref: "main", arch: "amd64" });
     const password = (x: string) => /<Value>([^<]+)<\/Value><PlainText>/.exec(x)?.[1];
@@ -109,6 +118,10 @@ describe("what Windows says while its image is made", () => {
     expect(BOOTSTRAP_PS1).toContain(`Say "${INSTALL_FAILED}`);
     // The agent's user reads the packages, which a hard link to SYSTEM's store wouldn't let it.
     expect(BOOTSTRAP_PS1).toContain("--package-import-method copy");
+    // It waits for Windows' first-run screens to be done before it calls the image made.
+    expect(BOOTSTRAP_PS1.indexOf("IMAGE_STATE_COMPLETE")).toBeLessThan(
+      BOOTSTRAP_PS1.indexOf(INSTALL_DONE),
+    );
     // Before it shuts down, so a hypervisor hears it.
     expect(BOOTSTRAP_PS1.indexOf(INSTALL_DONE)).toBeLessThan(
       BOOTSTRAP_PS1.indexOf("Stop-Computer"),
