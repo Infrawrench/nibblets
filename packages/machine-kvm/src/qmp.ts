@@ -40,8 +40,11 @@ const Line = z.object({
   error: z.object({ desc: z.string() }).optional(),
 });
 
+/** One thing to say to QEMU: a command's name, or a command and its arguments. */
+export type QmpCommand = string | { execute: string; arguments?: object };
+
 /** Asks QEMU one thing over its control socket, and has its answer, as `answer` says it looks. */
-export async function ask<T>(path: string, command: string, answer: z.ZodType<T>): Promise<T> {
+export async function ask<T>(path: string, command: QmpCommand, answer: z.ZodType<T>): Promise<T> {
   const socket = await connectTo(path);
   try {
     return await new Promise<T>((resolve, reject) => {
@@ -61,7 +64,9 @@ export async function ask<T>(path: string, command: string, answer: z.ZodType<T>
           } else if (line.data.return !== undefined && !ready) {
             // The handshake's answer: now it takes commands.
             ready = true;
-            socket.write(JSON.stringify({ execute: command }));
+            socket.write(
+              JSON.stringify(typeof command === "string" ? { execute: command } : command),
+            );
           } else if (line.data.return !== undefined) {
             const said = answer.safeParse(line.data.return);
             return said.success ? resolve(said.data) : reject(said.error);

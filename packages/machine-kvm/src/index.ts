@@ -18,6 +18,7 @@ import { promisify } from "node:util";
 import { GUEST_PORT_NAME, type GuestImage, type GuestOs } from "@nibblet/protocol";
 import { z } from "zod";
 import { ask, qmp } from "./qmp.ts";
+import { litFraction } from "./screen.ts";
 import {
   alive,
   connectTo,
@@ -380,14 +381,27 @@ export class Kvm implements HypervisorPlugin {
     );
     const pid = await livePid(control.pid);
     // Windows' boot loader asks for a key before it boots from a DVD, for five
-    // seconds, once the firmware gets there: on a busy host that can be a while.
-    // Setup ignores keys while it loads, and asks nothing once it has its answers.
-    for (let i = 0; i < 60; i++) {
+    // seconds, once the firmware gets there: on a busy host that can be a
+    // while. So Enter, while the screen's dark (the prompt, then the logo while
+    // setup loads, which ignores keys), and never again once setup's own screen
+    // is up: Enter there is Cancel, and after a restart it would start setup over.
+    const shot = join(job.dir, "boot-screen.ppm");
+    for (let i = 0; i < 300; i++) {
       await sleep(2000);
+      const lit = await ask(
+        control.qmp,
+        { execute: "screendump", arguments: { filename: shot } },
+        z.object({}),
+      ).then(
+        async () => litFraction(await readFile(shot)),
+        () => 0,
+      );
+      if (lit > 0.5) break;
       await qmp(control.qmp, [
         { execute: "send-key", arguments: { keys: [{ type: "qcode", data: "ret" }] } },
       ]).catch(() => undefined);
     }
+    await rm(shot, { force: true });
     const started = Date.now();
     let last: string | null = null;
     let lastAt = Date.now();
