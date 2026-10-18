@@ -16,8 +16,14 @@ import {
   type CentralApi,
   type ChosenRoute,
 } from "./central.ts";
-import { createConnection, type LiveState, type ServerConnection } from "./connection.ts";
+import {
+  createConnection,
+  refetchOnLiveOpen,
+  type LiveState,
+  type ServerConnection,
+} from "./connection.ts";
 import { maxSeq, upsertItems } from "./thread.ts";
+import { OfflineBridge } from "./offline-bridge.tsx";
 
 /** Query keys, in one place so the live bridge and the hooks agree. */
 export const keys = {
@@ -104,6 +110,7 @@ export function ServersProvider({
 
   return (
     <ServersContext.Provider value={value}>
+      <OfflineBridge />
       {value.all.map((c) => (
         <LiveBridge key={c.id} connection={c} />
       ))}
@@ -124,7 +131,17 @@ export function LocalServers({
     queryKey: keys.info(connection.id),
     queryFn: () => connection.client.system.info({}),
     staleTime: 60_000,
+    refetchOnMount: false,
+    retryOnMount: false,
+    networkMode: "always",
   });
+  useEffect(
+    () =>
+      refetchOnLiveOpen(connection.live, () => {
+        void info.refetch();
+      }),
+    [connection, info.refetch],
+  );
   const name = info.data?.name ?? "This server";
   const systems = useMemo<System[]>(
     () => [
@@ -132,13 +149,13 @@ export function LocalServers({
         id: connection.id,
         name,
         platform: null,
-        online: true,
+        online: info.isSuccess,
         local: true,
         route: null,
-        connection,
+        connection: info.isSuccess ? connection : null,
       },
     ],
-    [connection, name],
+    [connection, name, info.isSuccess],
   );
   return <ServersProvider systems={systems}>{children}</ServersProvider>;
 }
@@ -153,6 +170,8 @@ export function CentralServers({ api, children }: { api: CentralApi; children: R
     queryKey: keys.centralServers(),
     queryFn: () => api.servers(),
     refetchInterval: 15_000,
+    retryOnMount: false,
+    retry: (count, failure) => failure instanceof TypeError && count < 2,
   });
   // This computer's own server first, then the rest as the account lists them.
   const localId = useMemo(() => localServerId(), []);
@@ -245,6 +264,13 @@ export function CentralServers({ api, children }: { api: CentralApi; children: R
     [api, list.data, qc],
   );
 
+  const accessFailure = list.error ?? list.failureReason;
+  if (accessFailure && !(accessFailure instanceof TypeError))
+    return (
+      <div role="alert" className="m-auto p-6 text-sm text-danger">
+        {accessFailure.message || "Nibblets Connect could not authorize this account."}
+      </div>
+    );
   return (
     <ServersProvider systems={systems} central={central}>
       {children}
@@ -256,9 +282,13 @@ export function CentralServers({ api, children }: { api: CentralApi; children: R
 function LiveBridge({ connection }: { connection: ServerConnection }) {
   const qc = useQueryClient();
   useEffect(() => {
+    let alive = true;
     const off = connection.live.subscribe((m) => applyLive(qc, connection.id, m));
-    const offReconnect = connection.live.onReconnect(() => void catchUp(qc, connection));
+    const offReconnect = connection.live.onReconnect(
+      () => void catchUp(qc, connection, () => alive).catch(() => undefined),
+    );
     return () => {
+      alive = false;
       off();
       offReconnect();
     };
@@ -307,7 +337,11 @@ export function applyLive(qc: QueryClient, server: string, m: LiveMessage): void
 }
 
 /** After a reconnect: refetch the list, and pull each open thread forward from its cursor. */
-async function catchUp(qc: QueryClient, connection: ServerConnection): Promise<void> {
+async function catchUp(
+  qc: QueryClient,
+  connection: ServerConnection,
+  alive: () => boolean,
+): Promise<void> {
   void qc.invalidateQueries({ queryKey: keys.nibblets(connection.id) });
   const threads = qc.getQueriesData<StoredItem[]>({ queryKey: ["thread", connection.id] });
   await Promise.all(
@@ -318,6 +352,7 @@ async function catchUp(qc: QueryClient, connection: ServerConnection): Promise<v
         nibbletId: id,
         sinceSeq: maxSeq(items),
       });
+      if (!alive()) return;
       qc.setQueryData<StoredItem[]>(key, (old) => upsertItems(old ?? [], fresh));
     }),
   );
@@ -333,6 +368,7 @@ export function useNibblets(connection: ServerConnection) {
   return useQuery({
     queryKey: keys.nibblets(connection.id),
     queryFn: () => connection.client.nibblets.list({}),
+    networkMode: "always",
   });
 }
 
@@ -341,6 +377,7 @@ export function useThread(connection: ServerConnection, id: string) {
     queryKey: keys.thread(connection.id, id),
     queryFn: async () =>
       upsertItems([], await connection.client.thread.items({ nibbletId: id, sinceSeq: 0 })),
+    networkMode: "always",
     staleTime: Infinity,
   });
 }

@@ -155,12 +155,15 @@ export function createClient<R extends Router>(router: R, transport: Transport):
 export function fetchTransport(
   base: string | (() => string),
   headers: () => Record<string, string> | Promise<Record<string, string>> = () => ({}),
+  beforeFetch?: () => void,
 ) {
   return async (path: string, input: unknown): Promise<RpcResponse> => {
     const root = typeof base === "string" ? base : base();
+    const auth = await headers();
+    beforeFetch?.();
     const res = await fetch(`${root}/${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json", ...(await headers()) },
+      headers: { "content-type": "application/json", ...auth },
       body: JSON.stringify(input ?? {}),
     });
     const body: unknown = await res.json().catch(() => null);

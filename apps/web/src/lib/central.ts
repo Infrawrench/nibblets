@@ -63,6 +63,15 @@ const PushTestResult = z.object({ sent: z.number(), failed: z.number() });
 
 const ErrorBody = z.object({ error: z.string() });
 
+export class CentralHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 /** The central service's API, on this page's own origin, signed in with a Clerk session. */
 export function centralApi(sessionToken: () => Promise<string | null>): CentralApi {
   const call = async (path: string, init: RequestInit = {}): Promise<unknown> => {
@@ -77,7 +86,10 @@ export function centralApi(sessionToken: () => Promise<string | null>): CentralA
     const body: unknown = await res.json().catch(() => null);
     if (!res.ok) {
       const parsed = ErrorBody.safeParse(body);
-      throw new Error(parsed.success ? parsed.data.error : `${res.status} ${res.statusText}`);
+      throw new CentralHttpError(
+        parsed.success ? parsed.data.error : `${res.status} ${res.statusText}`,
+        res.status,
+      );
     }
     return body;
   };
