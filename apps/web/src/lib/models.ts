@@ -1,5 +1,5 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { HarnessId, harnesses, type ModelOption } from "@nibblet/protocol";
+import { HarnessId, harnesses, type CredentialStatus, type ModelOption } from "@nibblet/protocol";
 import type { ServerConnection } from "./connection.ts";
 import { keys } from "./servers.tsx";
 
@@ -13,16 +13,20 @@ export interface HarnessModelState {
 export interface ModelCatalogue {
   forHarness(harness: HarnessId): HarnessModelState;
   find(harness: HarnessId, model: string): ModelOption | undefined;
-  /** The harnesses this server can run: Claude and Codex only once their subscription is added. */
+  /**
+   * The harnesses this server can run: Claude and Codex only once their
+   * subscription is added, DeepSeek once its API key is.
+   */
   offered: readonly HarnessId[];
   /** What a new nibblet starts on: the first offered harness's default model. */
   defaultChoice(): { harness: HarnessId; model: string } | null;
 }
 
-/** Which subscription each fixed-list harness bills to. */
-const subscription: Partial<Record<HarnessId, "anthropic" | "openai">> = {
+/** Which subscription (or API key) each fixed-list harness bills to. */
+const subscription: Partial<Record<HarnessId, CredentialStatus["provider"]>> = {
   claude: "anthropic",
   codex: "openai",
+  deepseek: "deepseek",
 };
 
 /** Harnesses whose models depend on the host's own setup, so the server is asked. */

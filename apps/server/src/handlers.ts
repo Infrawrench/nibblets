@@ -62,7 +62,7 @@ async function credentialStatus(config: Config): Promise<CredentialStatus[]> {
     return z.array(CredentialStatus).parse(await res.json());
   } catch (err) {
     const detail = `Credential proxy unreachable: ${err instanceof Error ? err.message : String(err)}`;
-    return (["anthropic", "openai"] as const).map((provider) => ({
+    return (["anthropic", "openai", "deepseek"] as const).map((provider) => ({
       provider,
       source: "none",
       ok: false,

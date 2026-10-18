@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const HarnessId = z.enum(["claude", "codex", "kimi", "opencode"]);
+export const HarnessId = z.enum(["claude", "codex", "deepseek", "kimi", "opencode"]);
 export type HarnessId = z.infer<typeof HarnessId>;
 
 export const Effort = z.enum(["low", "medium", "high", "xhigh", "max", "ultra"]);
@@ -47,6 +47,11 @@ export interface HarnessInfo {
    * installs newer releases of it for runners, ahead of the one in the image.
    */
   cli: { name: string; package: string; bin: string };
+  /**
+   * Set when the harness runs another harness's CLI rather than its own, so
+   * that one is installed and updated once, under the other harness.
+   */
+  cliOf?: HarnessId;
 }
 
 const claudeEfforts = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -146,6 +151,27 @@ const kimiModels = [
   },
 ] as const satisfies readonly ModelOption[];
 
+// DeepSeek's Anthropic-compatible API, which Claude Code drives. Only V4 Pro
+// declares effort levels; Flash is the one that can look at images.
+const deepseekModels = [
+  {
+    id: "deepseek-v4-pro",
+    label: "DeepSeek V4 Pro",
+    description: "Strongest DeepSeek model",
+    provider: "deepseek",
+    efforts: ["low", "high", "max"],
+    defaultEffort: "high",
+  },
+  {
+    id: "deepseek-flash",
+    label: "DeepSeek Flash",
+    description: "Fast and cheap, and sees images",
+    provider: "deepseek",
+    efforts: [],
+    defaultEffort: "medium",
+  },
+] as const satisfies readonly ModelOption[];
+
 export const harnesses: Record<HarnessId, HarnessInfo> = {
   claude: {
     id: "claude",
@@ -164,6 +190,16 @@ export const harnesses: Record<HarnessId, HarnessInfo> = {
     models: codexModels,
     dynamicModels: false,
     cli: { name: "Codex", package: "@openai/codex", bin: "codex" },
+  },
+  deepseek: {
+    id: "deepseek",
+    label: "DeepSeek",
+    description: "Claude Code on DeepSeek's API, with your DeepSeek API key",
+    defaultModel: "deepseek-v4-pro",
+    models: deepseekModels,
+    dynamicModels: false,
+    cli: { name: "Claude Code", package: "@anthropic-ai/claude-code", bin: "claude" },
+    cliOf: "claude",
   },
   kimi: {
     id: "kimi",
@@ -184,6 +220,11 @@ export const harnesses: Record<HarnessId, HarnessInfo> = {
     cli: { name: "OpenCode", package: "opencode-ai", bin: "opencode" },
   },
 };
+
+/** The harnesses with a CLI of their own to install and update. */
+export const cliHarnesses: readonly HarnessId[] = HarnessId.options.filter(
+  (id) => harnesses[id].cliOf === undefined,
+);
 
 export function findModel(harness: HarnessId, model: string): ModelOption | undefined {
   return harnesses[harness].models.find((m) => m.id === model);

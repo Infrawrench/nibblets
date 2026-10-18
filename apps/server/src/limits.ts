@@ -101,7 +101,9 @@ export class ProviderLimits {
       });
       if (!res.ok) return out;
       for (const status of z.array(CredentialStatus).parse(await res.json())) {
-        if (status.limitedUntil) out.set(status.provider, new Date(status.limitedUntil));
+        // DeepSeek is an API key, with no subscription limit to wait out.
+        if (status.limitedUntil && status.provider !== "deepseek")
+          out.set(status.provider, new Date(status.limitedUntil));
       }
     } catch {
       // No proxy answer: nothing known to be limited.

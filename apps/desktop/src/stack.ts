@@ -84,6 +84,8 @@ export class Stack {
       CODEX_AUTH_SOURCE: creds.codex === "none" ? "auto" : creds.codex,
       KEYCHAIN_BRIDGE_URL:
         creds.claude === "keychain" ? `http://host.docker.internal:${BRIDGE_PORT}` : "",
+      // Added by hand, so it has to survive this rewrite.
+      ...(existing.DEEPSEEK_API_KEY ? { DEEPSEEK_API_KEY: existing.DEEPSEEK_API_KEY } : {}),
       ...(this.paths.sourceDir ? { NIBBLET_SOURCE_DIR: this.paths.sourceDir } : {}),
       ...(this.paths.images
         ? { NIBBLET_IMAGE_PREFIX: this.paths.images.prefix, NIBBLET_TAG: this.paths.images.tag }

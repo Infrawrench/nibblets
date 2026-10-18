@@ -1,4 +1,5 @@
 import {
+  cliHarnesses,
   compareVersions,
   harnesses,
   HarnessId,
@@ -15,7 +16,8 @@ import type { Store } from "./store.ts";
 const CHECK_EVERY_MS = 6 * 60 * 60_000;
 const AUTO_SETTING = "harnessUpdates.auto";
 
-const Versions = z.record(
+// Only harnesses with a CLI of their own are listed.
+const Versions = z.partialRecord(
   HarnessId,
   z.object({ bundled: z.string(), installed: z.string().nullable() }),
 );
@@ -86,7 +88,7 @@ export class HarnessUpdater {
     return {
       auto: await this.auto(),
       checkedAt: this.checkedAt,
-      harnesses: HarnessId.options.map((id) => ({
+      harnesses: cliHarnesses.map((id) => ({
         id,
         label: harnesses[id].cli.name,
         bundled: this.versions?.[id]?.bundled ?? null,
@@ -101,7 +103,7 @@ export class HarnessUpdater {
   /** Looks up the newest release of each harness's CLI. */
   async check(): Promise<HarnessUpdates> {
     await Promise.all(
-      HarnessId.options.map(async (id) => {
+      cliHarnesses.map(async (id) => {
         try {
           this.latest.set(id, await latestOnNpm(harnesses[id].cli.package, this.deps.fetch));
           if (!this.updating.has(id)) this.errors.delete(id);
@@ -121,7 +123,7 @@ export class HarnessUpdater {
    */
   async update(only?: HarnessId): Promise<HarnessUpdates> {
     if (this.latest.size === 0) await this.check();
-    for (const id of only ? [only] : HarnessId.options) {
+    for (const id of only ? [harnesses[only].cliOf ?? only] : cliHarnesses) {
       const latest = this.latest.get(id);
       if (!latest || this.updating.has(id) || !this.behind(id, latest)) continue;
       this.updating.add(id);
@@ -133,7 +135,8 @@ export class HarnessUpdater {
 
   /** Goes back to the CLI in the runner image. */
   async useBundled(id: HarnessId): Promise<HarnessUpdates> {
-    await this.exclusively(() => this.deps.docker.harnessCli(["bundled", id]));
+    const own = harnesses[id].cliOf ?? id;
+    await this.exclusively(() => this.deps.docker.harnessCli(["bundled", own]));
     await this.loadVersions();
     return this.status();
   }

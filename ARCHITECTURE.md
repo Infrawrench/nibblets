@@ -24,11 +24,14 @@ Runner containers never see a Claude or ChatGPT subscription token. (What they c
 | ---------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `/anthropic/*`                     | `https://api.anthropic.com/*`             | `Authorization: Bearer <access>`, `anthropic-beta: oauth-2025-04-20` merged with any existing betas; drops `x-api-key` |
 | `/openai/*`                        | `https://chatgpt.com/backend-api/codex/*` | `Authorization: Bearer <access>`, `chatgpt-account-id`                                                                 |
+| `/deepseek/*`                      | `https://api.deepseek.com/anthropic/*`    | `x-api-key: <DEEPSEEK_API_KEY>`; drops `Authorization`                                                                 |
 | `/openai-auth/oauth/token`         | answered locally                          | Dummy tokens, so a harness that tries to refresh its placeholder login gets a harmless answer                          |
 | `GET /status`                      | answered locally (admin key)              | `CredentialStatus[]`                                                                                                   |
 | `PUT /admin/credentials/:provider` | answered locally (admin key)              | The desktop app pushes keychain credentials here                                                                       |
 
 Sources, per provider, are plugins: `file` (the host's `~/.claude/.credentials.json` or `~/.codex/auth.json`, bind-mounted read-write at `/creds/claude/.credentials.json` and `/creds/codex/auth.json`) and `keychain` (macOS: the desktop app reads `Claude Code-credentials` from the keychain and pushes it; refreshed tokens are pushed back through the desktop app's bridge). Refresh tokens rotate, so after refreshing the proxy writes the new pair back to its source, so the host's own CLI keeps working.
+
+DeepSeek is an API key, not a login: `DEEPSEEK_API_KEY` in `docker/.env` (the installer asks for it), passed only to the proxy. There's nothing to refresh, and its status reads `env`.
 
 Refresh endpoints: Anthropic `POST https://platform.claude.com/v1/oauth/token` JSON `{grant_type:"refresh_token", refresh_token, client_id:"9d1c250a-e61b-44d9-88ed-5944d1962f5e"}`; OpenAI `POST https://auth.openai.com/oauth/token` `{grant_type:"refresh_token", refresh_token, client_id:"app_EMoamEEZ73f0CkXaXp7hrann"}`.
 
@@ -96,6 +99,14 @@ OpenCode nibblets use the host's own OpenCode account, not the credential proxy.
 - **What changes in the container:** the host config's `mcp` section is dropped, because the nibblet brings its own servers. Provider URLs on the host's `localhost` or `127.0.0.1` are pointed at `host.docker.internal`, so a local Ollama still resolves.
 - **Not written back:** a provider whose OAuth token refreshes inside the container doesn't write it back to the host.
 - **Without a bridge or a login:** OpenCode falls back to Anthropic and OpenAI through the credential proxy.
+
+### DeepSeek
+
+DeepSeek nibblets are the Claude harness on DeepSeek's Anthropic-compatible API. `@nibblet/harness-deepseek` is a few lines on `claudeCodeHarness` from `@nibblet/harness-claude`, the same Claude Agent SDK loop and mapper, with the base URL set to the proxy's `/deepseek` route instead of `/anthropic`.
+
+- **The CLI:** it runs Claude Code, so it has no CLI of its own (`cliOf: "claude"`). The updater lists and installs Claude Code once, under Claude, and DeepSeek nibblets use that one too.
+- **Models:** V4 Pro, with DeepSeek's effort levels (`low`, `high`, `max`), and Flash, which has none. Effort is only sent for a level the model declares. Only Flash takes images; V4 Pro gets their paths. Claude Code's own background work runs on Flash (`ANTHROPIC_DEFAULT_HAIKU_MODEL`).
+- **Offered:** once the proxy reports a key, like Claude and Codex once their subscriptions are signed in. Its Settings row only shows once a key is set.
 
 ### Kimi Code
 

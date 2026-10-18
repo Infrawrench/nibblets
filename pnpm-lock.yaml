@@ -272,6 +272,9 @@ importers:
       '@nibblet/harness-codex':
         specifier: workspace:*
         version: link:../../packages/harness-codex
+      '@nibblet/harness-deepseek':
+        specifier: workspace:*
+        version: link:../../packages/harness-deepseek
       '@nibblet/harness-kimi':
         specifier: workspace:*
         version: link:../../packages/harness-kimi
@@ -456,6 +459,18 @@ importers:
       '@openai/codex-sdk':
         specifier: ^0.162.1
         version: 0.162.1
+
+  packages/harness-deepseek:
+    dependencies:
+      '@nibblet/harness':
+        specifier: workspace:*
+        version: link:../harness
+      '@nibblet/harness-claude':
+        specifier: workspace:*
+        version: link:../harness-claude
+      '@nibblet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
 
   packages/harness-kimi:
     dependencies:
