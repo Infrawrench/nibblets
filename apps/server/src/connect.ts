@@ -72,6 +72,8 @@ export class Connect {
   private link: Link | null = null;
   private pending: Pending | null = null;
   private beat: ReturnType<typeof setTimeout> | null = null;
+  private generation = 0;
+  private linkWrites: Promise<void> = Promise.resolve();
   private lastHeartbeatAt: string | null = null;
   private lastError: string | null = null;
   private routes: ServerRoutes = { lan: [], tailscale: null, tunnel: null };
@@ -169,7 +171,10 @@ export class Connect {
 
   async unlink(): Promise<ConnectStatus> {
     const link = this.link;
+    this.stop();
+    const generation = this.generation;
     await this.dropPending();
+    if (this.generation !== generation) return this.status();
     if (link) {
       // Best effort: the central side also forgets servers that stop beating.
       await this.fetch(`${link.centralUrl}/v1/servers/${link.serverId}/unlink`, {
@@ -178,7 +183,7 @@ export class Connect {
         signal: AbortSignal.timeout(10_000),
       }).catch(() => undefined);
     }
-    await this.forget();
+    if (this.generation === generation) await this.forget();
     return this.status();
   }
 
@@ -226,6 +231,7 @@ export class Connect {
   }
 
   stop(): void {
+    this.generation++;
     this.cancelPending();
     if (this.beat) clearTimeout(this.beat);
     this.beat = null;
@@ -279,8 +285,11 @@ export class Connect {
             tunnel: answer.tunnel,
             linkedAt: new Date().toISOString(),
           };
-          await this.deps.store.setSetting(SETTING, link);
+          const generation = this.generation;
+          await this.persistLink(link, generation);
+          if (this.generation !== generation) return;
           await this.deps.store.deleteSetting(PENDING_SETTING);
+          if (this.generation !== generation) return;
           await this.activate(link);
           return;
         }
@@ -293,8 +302,11 @@ export class Connect {
 
   /** Runs the tunnel and starts telling the central service where to find this server. */
   private async activate(link: Link): Promise<void> {
+    this.stop();
+    const generation = this.generation;
     this.link = link;
     this.jwks = null;
+    this.scheduleBeat(0, generation);
     await this.deps.tunnel
       .configure(
         link.tunnel
@@ -302,26 +314,40 @@ export class Connect {
           : { mode: "quick" },
       )
       .catch((err: unknown) => {
+        if (this.generation !== generation) return;
         this.lastError = `Tunnel: ${err instanceof Error ? err.message : String(err)}`;
       });
-    this.scheduleBeat(0);
+  }
+
+  private persistLink(link: Link | null, generation: number): Promise<void> {
+    const write = this.linkWrites.then(() => {
+      if (this.generation !== generation) return;
+      return link
+        ? this.deps.store.setSetting(SETTING, link)
+        : this.deps.store.deleteSetting(SETTING);
+    });
+    // A failed write reaches its caller without preventing a later unlink deletion.
+    this.linkWrites = write.catch(() => undefined);
+    return write;
   }
 
   private async forget(): Promise<void> {
-    if (this.beat) clearTimeout(this.beat);
-    this.beat = null;
+    this.stop();
+    const generation = this.generation;
     this.link = null;
     this.jwks = null;
     this.lastHeartbeatAt = null;
     this.lastError = null;
     this.routes = { lan: [], tailscale: null, tunnel: null };
-    await this.deps.store.deleteSetting(SETTING);
+    await this.persistLink(null, generation);
+    if (this.generation !== generation) return;
     await this.deps.tunnel.configure({ mode: "off" }).catch(() => undefined);
   }
 
-  private scheduleBeat(ms: number): void {
+  private scheduleBeat(ms: number, generation: number): void {
+    if (this.generation !== generation) return;
     if (this.beat) clearTimeout(this.beat);
-    this.beat = setTimeout(() => void this.heartbeat(), ms);
+    this.beat = setTimeout(() => void this.heartbeat(generation), ms);
   }
 
   async currentRoutes(): Promise<ServerRoutes> {
@@ -333,16 +359,22 @@ export class Connect {
     };
   }
 
-  private async heartbeat(): Promise<void> {
+  private async heartbeat(generation: number): Promise<void> {
     const link = this.link;
-    if (!link) return;
+    if (!link || this.generation !== generation) return;
     try {
-      this.routes = await this.currentRoutes();
+      const routes = await this.currentRoutes();
+      if (this.generation !== generation) return;
+      this.routes = routes;
+      const name = await this.deps.serverName();
+      if (this.generation !== generation) return;
+      const nibblets = await this.deps.nibbletCount();
+      if (this.generation !== generation) return;
       const body: HeartbeatRequest = {
-        name: await this.deps.serverName(),
+        name,
         version: this.deps.version,
-        nibblets: await this.deps.nibbletCount(),
-        routes: this.routes,
+        nibblets,
+        routes,
       };
       const res = await this.fetch(`${link.centralUrl}/v1/servers/${link.serverId}/heartbeat`, {
         method: "POST",
@@ -353,6 +385,7 @@ export class Connect {
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(15_000),
       });
+      if (this.generation !== generation) return;
       if (res.status === 401 || res.status === 404) {
         // The account removed this server.
         await this.forget();
@@ -360,6 +393,7 @@ export class Connect {
       }
       if (!res.ok) throw new Error(`heartbeat answered ${res.status}`);
       const answer = HeartbeatResponse.parse(await res.json());
+      if (this.generation !== generation) return;
       if (!answer.linked) {
         await this.forget();
         return;
@@ -367,17 +401,19 @@ export class Connect {
       // The service moved address; tokens it issues now name the new one.
       const moved = answer.centralUrl?.replace(/\/+$/, "");
       const safe = moved && /^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)[:/])/.test(`${moved}/`);
-      if (moved && safe && moved !== link.centralUrl && this.link === link) {
-        this.link = { ...link, centralUrl: moved };
-        await this.deps.store.setSetting(SETTING, this.link);
+      if (moved && safe && moved !== link.centralUrl) {
+        await this.persistLink({ ...link, centralUrl: moved }, generation);
+        if (this.generation !== generation) return;
+        link.centralUrl = moved;
       }
       this.lastHeartbeatAt = new Date().toISOString();
       this.lastError = null;
     } catch (err) {
+      if (this.generation !== generation) return;
       this.lastError = err instanceof Error ? err.message : String(err);
     }
-    if (this.link !== link) return;
+    if (this.generation !== generation) return;
     // A quick tunnel takes a few seconds to get its address; report it promptly.
-    this.scheduleBeat(this.routes.tunnel || link.tunnel ? HEARTBEAT_EVERY_MS : 5000);
+    this.scheduleBeat(this.routes.tunnel || link.tunnel ? HEARTBEAT_EVERY_MS : 5000, generation);
   }
 }
