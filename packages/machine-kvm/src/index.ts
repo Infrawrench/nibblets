@@ -1,10 +1,11 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   access,
   constants,
   copyFile,
   mkdir,
+  open,
   readFile,
   rename,
   rm,
@@ -101,6 +102,10 @@ const files = (vm: VmRef) => ({
   mac: join(vm.dir, "mac"),
   pid: join(vm.dir, "qemu.pid"),
   console: join(vm.dir, "console.log"),
+  /** QEMU's own output: why it stopped, if it did by itself. */
+  qemuLog: join(vm.dir, "qemu.log"),
+  /** Its screen, when it was last asked for. */
+  screen: join(vm.dir, "screen.png"),
   agent: socketPath("kvm", vm.id, "agent"),
   qmp: socketPath("kvm", vm.id, "qmp"),
 });
@@ -230,16 +235,42 @@ function baseArgs(
     "none",
     "-serial",
     "none",
-    "-daemonize",
+    "-msg",
+    "timestamp=on",
     "-pidfile",
     control.pid,
   ];
 }
 
-async function qemu(accel: Accel, args: string[]): Promise<void> {
-  await run(arch(accel).qemu, args, { timeout: 60_000 }).catch((err: unknown) => {
-    throw new Error(`QEMU didn't start: ${err instanceof Error ? err.message : String(err)}`);
+/**
+ * Starts QEMU in the background, on its own (so it outlives the bridge),
+ * with what it says in `log`: a VM that stops by itself says why there.
+ * Started once its control socket is up and it's still running a moment on.
+ */
+async function qemu(
+  accel: Accel,
+  args: string[],
+  files: { qmp: string; log: string },
+): Promise<void> {
+  const log = await open(files.log, "a");
+  const child = spawn(arch(accel).qemu, args, {
+    detached: true,
+    stdio: ["ignore", log.fd, log.fd],
   });
+  await log.close();
+  child.unref();
+  let exited: string | null = null;
+  child.once("exit", (code, signal) => (exited = signal ?? `code ${code ?? "?"}`));
+  child.once("error", (err) => (exited = err.message));
+  const until = Date.now() + 60_000;
+  while (!existsSync(files.qmp) && exited === null && Date.now() < until) await sleep(200);
+  await sleep(1000);
+  if (exited !== null || !existsSync(files.qmp)) {
+    const said = (await tailFile(files.log, 2000)).trim();
+    throw new Error(
+      `QEMU didn't start (${exited ?? "it never listened"})${said ? `: ${said}` : ""}`,
+    );
+  }
 }
 
 /**
@@ -326,37 +357,41 @@ export class Kvm implements HypervisorPlugin {
     await run("qemu-img", ["create", "-q", "-f", "qcow2", disk, `${WINDOWS_DISK_GB}G`]);
     await copyFile(fw.vars, vars);
     job.progress(null, "Starting Windows' installer");
-    await qemu(this.accel, [
-      ...baseArgs(
-        this.accel,
-        `nibblet-image-${Date.now().toString(36)}`,
-        { cpus: 2, memoryMb: 4096 },
-        { ...fw, vars },
-        control,
-      ),
-      "-device",
-      "ahci,id=ahci",
-      "-drive",
-      `if=none,id=disk,file=${disk},format=qcow2,discard=unmap`,
-      "-device",
-      "ide-hd,drive=disk,bus=ahci.0,bootindex=1",
-      "-drive",
-      `if=none,id=windows,file=${job.source},media=cdrom,readonly=on`,
-      "-device",
-      "ide-cd,drive=windows,bus=ahci.1,bootindex=0",
-      "-drive",
-      `if=none,id=setup,file=${setup},media=cdrom,readonly=on`,
-      "-device",
-      "ide-cd,drive=setup,bus=ahci.2",
-      "-netdev",
-      "user,id=net0",
-      "-device",
-      "e1000e,netdev=net0,romfile=",
-      "-chardev",
-      `file,id=said,path=${said}`,
-      "-device",
-      "isa-serial,chardev=said,index=0",
-    ]);
+    await qemu(
+      this.accel,
+      [
+        ...baseArgs(
+          this.accel,
+          `nibblet-image-${Date.now().toString(36)}`,
+          { cpus: 2, memoryMb: 4096 },
+          { ...fw, vars },
+          control,
+        ),
+        "-device",
+        "ahci,id=ahci",
+        "-drive",
+        `if=none,id=disk,file=${disk},format=qcow2,discard=unmap`,
+        "-device",
+        "ide-hd,drive=disk,bus=ahci.0,bootindex=1",
+        "-drive",
+        `if=none,id=windows,file=${job.source},media=cdrom,readonly=on`,
+        "-device",
+        "ide-cd,drive=windows,bus=ahci.1,bootindex=0",
+        "-drive",
+        `if=none,id=setup,file=${setup},media=cdrom,readonly=on`,
+        "-device",
+        "ide-cd,drive=setup,bus=ahci.2",
+        "-netdev",
+        "user,id=net0",
+        "-device",
+        "e1000e,netdev=net0,romfile=",
+        "-chardev",
+        `file,id=said,path=${said}`,
+        "-device",
+        "isa-serial,chardev=said,index=0",
+      ],
+      { qmp: control.qmp, log: join(ctx.dir, "windows-install-qemu.log") },
+    );
     const pid = await livePid(control.pid);
     // Windows' boot loader asks for a key before it boots from a DVD.
     for (let i = 0; i < 20; i++) {
@@ -406,10 +441,12 @@ export class Kvm implements HypervisorPlugin {
     await mkdir(vm.dir, { recursive: true });
     if (vm.fresh || !existsSync(f.system)) {
       // An overlay on the image: only what the guest changes is written here.
-      const [base, format] =
+      // Windows' is the size it was installed on, partitions and all;
+      // Linux's grows to SYSTEM_GB, which its root already is.
+      const [base, format, size] =
         vm.guest === "windows"
-          ? [join(vm.imageDir, "disk.qcow2"), "qcow2"]
-          : [join(vm.imageDir, linuxDiskFile("raw")), "raw"];
+          ? [join(vm.imageDir, "disk.qcow2"), "qcow2", []]
+          : [join(vm.imageDir, linuxDiskFile("raw")), "raw", [`${SYSTEM_GB}G`]];
       await rm(f.system, { force: true });
       await run("qemu-img", [
         "create",
@@ -421,7 +458,7 @@ export class Kvm implements HypervisorPlugin {
         "-b",
         base,
         f.system,
-        `${SYSTEM_GB}G`,
+        ...size,
       ]);
       // A Windows image's boot entries are in the variables it was installed with.
       await copyFile(vm.guest === "windows" ? join(vm.imageDir, "efi-vars.fd") : fw.vars, f.vars);
@@ -434,10 +471,14 @@ export class Kvm implements HypervisorPlugin {
     await rename(f.console, `${f.console}.old`).catch(() => undefined);
     for (const socket of [f.agent, f.qmp]) await rm(socket, { force: true });
     const mac = (await readFile(f.mac, "utf8")).trim();
-    await qemu(this.accel, [
-      ...baseArgs(this.accel, `nibblet-${vm.id}`, vm, { ...fw, vars: f.vars }, f),
-      ...deviceArgs(vm.guest, f, { agent: f.agent, console: f.console }, mac),
-    ]);
+    await qemu(
+      this.accel,
+      [
+        ...baseArgs(this.accel, `nibblet-${vm.id}`, vm, { ...fw, vars: f.vars }, f),
+        ...deviceArgs(vm.guest, f, { agent: f.agent, console: f.console }, mac),
+      ],
+      { qmp: f.qmp, log: f.qemuLog },
+    );
   }
 
   private pid(vm: VmRef): Promise<number | null> {
@@ -475,8 +516,27 @@ export class Kvm implements HypervisorPlugin {
     return connectTo(files(vm).agent);
   }
 
-  console(_ctx: HostContext, vm: VmRef): Promise<string> {
-    return tailFile(files(vm).console);
+  /**
+   * Its console. Windows says nothing there, so then it's what QEMU said,
+   * and its screen, saved for looking at.
+   */
+  async console(ctx: HostContext, vm: VmRef): Promise<string> {
+    const f = files(vm);
+    const said = await tailFile(f.console);
+    if (said.trim()) return said;
+    if (await this.running(ctx, vm)) {
+      await rm(f.screen, { force: true });
+      await qmp(f.qmp, [
+        { execute: "screendump", arguments: { filename: f.screen, format: "png" } },
+      ]).catch(() => undefined);
+    }
+    const qemuSaid = (await tailFile(f.qemuLog, 4000)).trim();
+    return [
+      qemuSaid ? `QEMU said:\n${qemuSaid}` : "",
+      existsSync(f.screen) ? `Its screen is in ${f.screen}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   async capacity() {

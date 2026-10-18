@@ -361,8 +361,14 @@ export class VirtualMachines implements MachinePlugin {
       }
       await sleep(1500);
     }
+    // Its console says why, if anything does: its boot, or for Windows what QEMU said and its screen.
+    const said = (await this.client.console(id).catch(() => ""))
+      .trim()
+      .split("\n")
+      .slice(-20)
+      .join("\n");
     throw new Error(
-      `Its virtual machine started, but its agent never answered${last instanceof Error ? `: ${last.message}` : ""}`,
+      `Its virtual machine started, but its agent never answered${last instanceof Error ? `: ${last.message}` : ""}${said ? `\n${said}` : ""}`,
     );
   }
 

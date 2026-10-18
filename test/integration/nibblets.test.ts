@@ -109,8 +109,8 @@ describe.skipIf(missing !== null)(title, () => {
       );
       if (replies.length >= count && finished.length >= count) return;
       const failed = thread.find((s) => s.item.type === "turn" && s.item.status === "failed");
-      if (failed || Date.now() > until) {
-        const now = await stack.client.nibblets.get({ id });
+      const now = await stack.client.nibblets.get({ id });
+      if (failed || now.status === "error" || Date.now() > until) {
         throw new Error(
           `No reply (${now.status}: ${now.statusDetail ?? ""}):\n${JSON.stringify(thread.map((s) => s.item)).slice(-3000)}\n${await stack.logs()}`,
         );
