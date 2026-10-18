@@ -23,7 +23,6 @@ import {
   type ServerConnection,
 } from "./connection.ts";
 import { maxSeq, upsertItems } from "./thread.ts";
-import { OfflineBridge } from "./offline-bridge.tsx";
 
 /** Query keys, in one place so the live bridge and the hooks agree. */
 export const keys = {
@@ -110,7 +109,6 @@ export function ServersProvider({
 
   return (
     <ServersContext.Provider value={value}>
-      <OfflineBridge />
       {value.all.map((c) => (
         <LiveBridge key={c.id} connection={c} />
       ))}

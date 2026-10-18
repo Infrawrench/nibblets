@@ -11,6 +11,7 @@ import { isCentralMode } from "./lib/central.ts";
 import { CentralApp } from "./components/CentralApp.tsx";
 import { Gate } from "./components/Gate.tsx";
 import { OfflineProvider } from "./lib/offline-context.tsx";
+import { OfflineBridge } from "./lib/offline-bridge.tsx";
 import "./styles.css";
 
 // The desktop app tags its user agent; on a Mac its window has no title bar.
@@ -62,7 +63,10 @@ async function boot(): Promise<void> {
       <QueryClientProvider client={queryClient}>
         <OfflineProvider principal={principal}>
           <Gate local={local}>
-            <LocalServers connection={local}>{app}</LocalServers>
+            <LocalServers connection={local}>
+              <OfflineBridge />
+              {app}
+            </LocalServers>
           </Gate>
         </OfflineProvider>
       </QueryClientProvider>

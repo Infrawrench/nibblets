@@ -16,6 +16,7 @@ import { forgetOtherClerkInstance } from "../lib/clerk-instance.ts";
 import { Hamster } from "./hamster/Hamster.tsx";
 import { Button } from "./ui/Button.tsx";
 import { OfflineProvider } from "../lib/offline-context.tsx";
+import { OfflineBridge } from "../lib/offline-bridge.tsx";
 
 /**
  * Nibblets Connect's UI: sign in with Clerk, then every server on the account.
@@ -124,7 +125,10 @@ function SignedInScope({
   return (
     <QueryClientProvider client={client}>
       <OfflineProvider principal={principal}>
-        <CentralServers api={api}>{children}</CentralServers>
+        <CentralServers api={api}>
+          <OfflineBridge />
+          {children}
+        </CentralServers>
       </OfflineProvider>
     </QueryClientProvider>
   );
