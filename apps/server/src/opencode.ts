@@ -76,12 +76,8 @@ export async function opencodeLogin(
   }
 }
 
-/**
- * Model lists for the picker. Claude and Codex have fixed lists; Kimi's is
- * fixed too, but only on offer once the host is signed in to Kimi Code.
- * OpenCode's is whatever `opencode models` gives for the host's login, run in
- * a throwaway runner container so it matches what a nibblet will see.
- */
+// OpenCode's live list runs in a throwaway runner to match what nibblets see.
+// Kimi's fixed list stays visible even when its host login is unavailable.
 export class HarnessModelLists {
   private cache: { key: string; at: number; result: Promise<HarnessModels> } | null = null;
   private readonly config: Config;
@@ -95,7 +91,8 @@ export class HarnessModelLists {
   async list(harness: HarnessId): Promise<HarnessModels> {
     if (harness === "opencode") return this.opencode();
     const detail = harness === "kimi" ? await kimiUnavailable(this.config) : null;
-    if (detail) return { harness, state: "unavailable", detail, models: [] };
+    if (detail)
+      return { harness, state: "unavailable", detail, models: [...harnesses[harness].models] };
     return { harness, state: "ready", detail: null, models: [...harnesses[harness].models] };
   }
 

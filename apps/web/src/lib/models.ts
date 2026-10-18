@@ -13,12 +13,9 @@ export interface HarnessModelState {
 export interface ModelCatalogue {
   forHarness(harness: HarnessId): HarnessModelState;
   find(harness: HarnessId, model: string): ModelOption | undefined;
-  /**
-   * The harnesses this server can run: Claude and Codex only once their
-   * subscription is added, DeepSeek once its API key is.
-   */
+  /** Signed-in harnesses plus Kimi; all harnesses when none are signed in. */
   offered: readonly HarnessId[];
-  /** What a new nibblet starts on: the first offered harness's default model. */
+  /** The first ready harness's default model, falling back when none are ready. */
   defaultChoice(): { harness: HarnessId; model: string } | null;
 }
 
@@ -77,20 +74,26 @@ export function useModels(connection: ServerConnection | null | undefined): Mode
   // Until the server says otherwise, everything is on offer.
   const signedIn = (harness: HarnessId) => {
     const provider = subscription[harness];
-    if (!provider) return hosted(harness)?.isPending || forHarness(harness).models.length > 0;
+    if (!provider) {
+      const state = forHarness(harness);
+      return hosted(harness)?.isPending || (state.unavailable === null && state.models.length > 0);
+    }
     const credential = info.data?.credentials.find((c) => c.provider === provider);
     return !info.data || (credential !== undefined && credential.source !== "none");
   };
   const ready = HarnessId.options.filter(signedIn);
   // With nothing signed in, hiding everything would leave nothing to pick.
-  const offered = ready.length > 0 ? ready : HarnessId.options;
+  const defaults = ready.length > 0 ? ready : HarnessId.options;
+  const offered = HarnessId.options.filter(
+    (harness) => harness === "kimi" || defaults.includes(harness),
+  );
 
   return {
     forHarness,
     find: (harness, model) => forHarness(harness).models.find((m) => m.id === model),
     offered,
     defaultChoice: () => {
-      for (const harness of offered) {
+      for (const harness of defaults) {
         const model = harnesses[harness].defaultModel || forHarness(harness).models[0]?.id;
         if (model) return { harness, model };
       }
