@@ -50,6 +50,8 @@ const WINDOWS_DISK_GB = 64;
 const INSTALL_HOURS = 3;
 /** Once it's said something, how long it may go without saying more: it says each step, and says it's still compiling. */
 const INSTALL_QUIET_MINUTES = 15;
+/** How long setup may take to get as far as saying anything: it's ten minutes or so with KVM. */
+const INSTALL_FIRST_WORD_MINUTES = 60;
 
 const x86 = process.arch !== "arm64";
 
@@ -377,9 +379,11 @@ export class Kvm implements HypervisorPlugin {
       { qmp: control.qmp, log: join(ctx.dir, "windows-install-qemu.log") },
     );
     const pid = await livePid(control.pid);
-    // Windows' boot loader asks for a key before it boots from a DVD.
-    for (let i = 0; i < 20; i++) {
-      await sleep(1000);
+    // Windows' boot loader asks for a key before it boots from a DVD, for five
+    // seconds, once the firmware gets there: on a busy host that can be a while.
+    // Setup ignores keys while it loads, and asks nothing once it has its answers.
+    for (let i = 0; i < 60; i++) {
+      await sleep(2000);
       await qmp(control.qmp, [
         { execute: "send-key", arguments: { keys: [{ type: "qcode", data: "ret" }] } },
       ]).catch(() => undefined);
@@ -396,7 +400,9 @@ export class Kvm implements HypervisorPlugin {
           lastAt = Date.now();
         }
         last = now;
-        const quiet = last !== null && Date.now() - lastAt > INSTALL_QUIET_MINUTES * 60_000;
+        const quiet =
+          Date.now() - lastAt >
+          (last === null ? INSTALL_FIRST_WORD_MINUTES : INSTALL_QUIET_MINUTES) * 60_000;
         const failed = last?.startsWith(INSTALL_FAILED) ?? false;
         // PNG needs QEMU 7.1; an older one just doesn't save it.
         if (tick % 4 === 0 || failed || quiet) {
@@ -409,7 +415,9 @@ export class Kvm implements HypervisorPlugin {
         }
         if (quiet) {
           throw new Error(
-            `Windows' install went quiet for ${INSTALL_QUIET_MINUTES} minutes after it said "${last ?? ""}". Its screen is in ${screen}`,
+            last === null
+              ? `Windows' setup said nothing in ${INSTALL_FIRST_WORD_MINUTES} minutes: it may not have started from its installer. Its screen is in ${screen}`
+              : `Windows' install went quiet for ${INSTALL_QUIET_MINUTES} minutes after it said "${last}". Its screen is in ${screen}`,
           );
         }
         const minutes = Math.round((Date.now() - started) / 60_000);
