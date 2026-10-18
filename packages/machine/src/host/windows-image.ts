@@ -7,7 +7,7 @@ import type { IsoFile } from "./iso.ts";
  * disk, installs Windows without asking anything, and at `specialize` runs
  * setup.ps1. That puts bootstrap.ps1 on C: and has it run at every startup
  * as SYSTEM: it installs Node and this release's runner (and builds the two
- * helpers in machine/windows), then runs the guest agent. The first time,
+ * helpers in machine/windows, with .NET Framework's compiler), then runs the guest agent. The first time,
  * while the image is being made, it shuts down instead, which is how the
  * hypervisor plugin knows the image is done.
  */
@@ -22,6 +22,8 @@ export const SETUP_LABEL = "NIBBLETSETUP";
 export const INSTALL_SAYS = "nibblets: ";
 /** The last thing it says, once the runner is in: then it shuts down. */
 export const INSTALL_DONE = "Done: shutting down to finish its image";
+/** What it says when a step fails, before why: it won't finish by itself then. */
+export const INSTALL_FAILED = "Failed: ";
 
 /** The last thing setup or the bootstrap said, from what COM1 recorded. */
 export function installSaid(recorded: string): string | null {
@@ -154,7 +156,7 @@ ${component(
 /** At `specialize`: the bootstrap onto C:, and a task to run it at every startup, as SYSTEM. */
 export const SETUP_PS1 = `$ErrorActionPreference = 'Stop'
 ${SAY_PS1}
-trap { Say "Setting up its bootstrap failed: $($_.Exception.Message)"; break }
+trap { Say "${INSTALL_FAILED}setting up its bootstrap: $($_.Exception.Message)"; break }
 Say 'Setting up its bootstrap'
 $media = (Get-Volume -FileSystemLabel ${SETUP_LABEL}).DriveLetter + ':\\'
 New-Item -ItemType Directory -Force -Path C:\\Nibblets | Out-Null
@@ -182,7 +184,7 @@ $root = 'C:\\Nibblets'
 $log = "$root\\bootstrap.log"
 Start-Transcript -Path $log -Append | Out-Null
 ${SAY_PS1}
-trap { Say "Its bootstrap failed: $($_.Exception.Message)"; break }
+trap { Say "${INSTALL_FAILED}$($_.Exception.Message)"; break }
 $install = Get-Content "$root\\install.json" -Raw | ConvertFrom-Json
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -224,13 +226,18 @@ if ($have.Trim() -ne $want) {
   & "$root\\node\\corepack.cmd" pnpm install --prod --frozen-lockfile --filter '@nibblet/runner...'
   if ($LASTEXITCODE -ne 0) { throw 'Installing the runner failed' }
   Pop-Location
-  Say 'Building its helpers'
   New-Item -ItemType Directory -Force -Path "$root\\bin" | Out-Null
+  # .NET Framework's own compiler, in a process of its own: it can be timed out, and says why it failed.
+  $csc = "$env:WINDIR\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe"
+  if (-not (Test-Path $csc)) { $csc = "$env:WINDIR\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe" }
   foreach ($helper in 'runas', 'serial') {
-    $source = Get-Content "$root\\app\\apps\\runner\\src\\machine\\windows\\$helper.cs" -Raw
+    Say "Building its $helper helper"
     $out = "$root\\bin\\nibblet-$helper.exe"
     if (Test-Path $out) { Remove-Item -Force $out }
-    Add-Type -TypeDefinition $source -OutputAssembly $out -OutputType ConsoleApplication
+    $compile = Start-Process -FilePath $csc -NoNewWindow -PassThru -RedirectStandardOutput "$root\\csc.log" -ArgumentList '/nologo', '/target:exe', "/out:$out", "$root\\app\\apps\\runner\\src\\machine\\windows\\$helper.cs"
+    $null = $compile.Handle
+    if (-not $compile.WaitForExit(600000)) { $compile.Kill(); throw "Building its $helper helper took over 10 minutes" }
+    if ($compile.ExitCode -ne 0) { throw "Building its $helper helper failed: $((Get-Content "$root\\csc.log" -Raw).Trim())" }
   }
   Set-Content "$root\\app\\.nibblets" $want
 }

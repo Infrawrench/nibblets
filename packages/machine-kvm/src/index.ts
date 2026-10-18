@@ -20,6 +20,7 @@ import {
   alive,
   connectTo,
   INSTALL_DONE,
+  INSTALL_FAILED,
   installSaid,
   linuxDiskFile,
   livePid,
@@ -408,11 +409,15 @@ export class Kvm implements HypervisorPlugin {
         const now = installSaid(await tailFile(said));
         if (now !== last) ctx.log(`Windows' install: ${now}`);
         last = now;
+        const failed = last?.startsWith(INSTALL_FAILED) ?? false;
         // PNG needs QEMU 7.1; an older one just doesn't save it.
-        if (tick % 4 === 0) {
+        if (tick % 4 === 0 || failed) {
           await qmp(control.qmp, [
             { execute: "screendump", arguments: { filename: screen, format: "png" } },
           ]).catch(() => undefined);
+        }
+        if (last && failed) {
+          throw new Error(`Windows' install failed: ${last.slice(INSTALL_FAILED.length)}`);
         }
         const minutes = Math.round((Date.now() - started) / 60_000);
         if (minutes > INSTALL_HOURS * 60) {

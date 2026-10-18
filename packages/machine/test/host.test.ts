@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   BOOTSTRAP_PS1,
   INSTALL_DONE,
+  INSTALL_FAILED,
   INSTALL_SAYS,
   installSaid,
   isoName,
@@ -103,6 +104,9 @@ describe("what Windows says while its image is made", () => {
   it("says each step, and that it's done, from setup and the bootstrap", () => {
     expect(SETUP_PS1).toContain("Say 'Setting up its bootstrap'");
     expect(BOOTSTRAP_PS1).toContain(`Say '${INSTALL_DONE}'`);
+    // Every failure starts the same, so a hypervisor can stop waiting.
+    expect(SETUP_PS1).toContain(`Say "${INSTALL_FAILED}`);
+    expect(BOOTSTRAP_PS1).toContain(`Say "${INSTALL_FAILED}`);
     // Before it shuts down, so a hypervisor hears it.
     expect(BOOTSTRAP_PS1.indexOf(INSTALL_DONE)).toBeLessThan(
       BOOTSTRAP_PS1.indexOf("Stop-Computer"),
