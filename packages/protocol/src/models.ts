@@ -151,24 +151,29 @@ const kimiModels = [
   },
 ] as const satisfies readonly ModelOption[];
 
-// DeepSeek's Anthropic-compatible API, which Claude Code drives. Only V4 Pro
-// declares effort levels; Flash is the one that can look at images.
+// DeepSeek's Anthropic-compatible API, which Claude Code drives. Both models
+// think at DeepSeek's three effort levels; Flash is the one that sees images.
+// `deepseek-flash` always serves the newest Flash (V4.1-Flash-1017 as of
+// October 2026), and `deepseek-v4-pro` is V4 Pro (0813).
+const deepseekEfforts = ["low", "high", "max"] as const;
+
 const deepseekModels = [
+  {
+    id: "deepseek-flash",
+    label: "DeepSeek V4.1 Flash",
+    description: "Newest DeepSeek model, fast and sees images",
+    provider: "deepseek",
+    efforts: deepseekEfforts,
+    defaultEffort: "high",
+    isNew: true,
+  },
   {
     id: "deepseek-v4-pro",
     label: "DeepSeek V4 Pro",
-    description: "Strongest DeepSeek model",
+    description: "Strongest for long, hard work",
     provider: "deepseek",
-    efforts: ["low", "high", "max"],
+    efforts: deepseekEfforts,
     defaultEffort: "high",
-  },
-  {
-    id: "deepseek-flash",
-    label: "DeepSeek Flash",
-    description: "Fast and cheap, and sees images",
-    provider: "deepseek",
-    efforts: [],
-    defaultEffort: "medium",
   },
 ] as const satisfies readonly ModelOption[];
 

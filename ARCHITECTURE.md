@@ -105,7 +105,7 @@ OpenCode nibblets use the host's own OpenCode account, not the credential proxy.
 DeepSeek nibblets are the Claude harness on DeepSeek's Anthropic-compatible API. `@nibblet/harness-deepseek` is a few lines on `claudeCodeHarness` from `@nibblet/harness-claude`, the same Claude Agent SDK loop and mapper, with the base URL set to the proxy's `/deepseek` route instead of `/anthropic`.
 
 - **The CLI:** it runs Claude Code, so it has no CLI of its own (`cliOf: "claude"`). The updater lists and installs Claude Code once, under Claude, and DeepSeek nibblets use that one too.
-- **Models:** V4 Pro, with DeepSeek's effort levels (`low`, `high`, `max`), and Flash, which has none. Effort is only sent for a level the model declares. Only Flash takes images; V4 Pro gets their paths. Claude Code's own background work runs on Flash (`ANTHROPIC_DEFAULT_HAIKU_MODEL`).
+- **Models:** V4.1 Flash (`deepseek-flash`, which DeepSeek keeps on its newest Flash) and V4 Pro (`deepseek-v4-pro`), both with DeepSeek's effort levels (`low`, `high`, `max`). Effort is only sent for a level the model declares, so `medium` is left to DeepSeek. Only Flash takes images; V4 Pro gets their paths. Claude Code's own background work runs on Flash (`ANTHROPIC_DEFAULT_HAIKU_MODEL`).
 - **Offered:** once the proxy reports a key, like Claude and Codex once their subscriptions are signed in. Its Settings row only shows once a key is set.
 
 ### Kimi Code

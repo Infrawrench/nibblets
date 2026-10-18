@@ -15,13 +15,14 @@ describe("deepseekHarness", () => {
 describe("deepseekEffort", () => {
   it("passes a level the model declares", () => {
     expect(deepseekEffort(config("deepseek-v4-pro", "max"))).toBe("max");
+    expect(deepseekEffort(config("deepseek-flash", "low"))).toBe("low");
   });
 
   it("leaves out a level the model doesn't take", () => {
     expect(deepseekEffort(config("deepseek-v4-pro", "medium"))).toBeUndefined();
   });
 
-  it("leaves effort out for a model without levels", () => {
-    expect(deepseekEffort(config("deepseek-flash", "high"))).toBeUndefined();
+  it("leaves effort out for a model it doesn't know", () => {
+    expect(deepseekEffort(config("deepseek-chat", "high"))).toBeUndefined();
   });
 });
