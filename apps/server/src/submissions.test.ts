@@ -8,11 +8,13 @@ import { loadConfig } from "./config.ts";
 import type { Orchestrator } from "./docker.ts";
 import { exportState, importState } from "./snapshot-state.ts";
 import { Store } from "./store.ts";
+import { lockTestDatabase } from "./test-database.ts";
 
 const url = process.env.NIBBLET_TEST_DATABASE_URL;
 
 describe.skipIf(!url)("durable client submissions", () => {
   let db: Db;
+  let unlockDatabase: (() => Promise<void>) | undefined;
   let store: Store;
   let conductor: Conductor;
   let id: string;
@@ -59,10 +61,15 @@ describe.skipIf(!url)("durable client submissions", () => {
 
   beforeAll(async () => {
     db = connect(url!);
+    unlockDatabase = await lockTestDatabase(db);
     await migrateDb(db);
-  });
+  }, 30_000);
   afterAll(async () => {
-    await db.$client.end();
+    try {
+      await unlockDatabase?.();
+    } finally {
+      await db?.$client.end();
+    }
   });
   beforeEach(async () => {
     events = [];
