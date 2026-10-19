@@ -95,6 +95,24 @@ describe("Runner", () => {
     expect(opened).toEqual(["claude-opus-5-5:-", "claude-haiku-5-5:s2"]);
   });
 
+  it("reopens the harness session when the host login changes, and only then", async () => {
+    const { runner, opened } = setup();
+    const login = (secret: string) => ({ ...config, hostLogin: { config: null, secret } });
+
+    runner.handle({ type: "configure", config: login("a") });
+    runner.handle(turn("t1", "one"));
+    await settle();
+    runner.handle({ type: "configure", config: login("a") });
+    runner.handle(turn("t2", "two"));
+    await settle();
+    expect(opened).toHaveLength(1);
+
+    runner.handle({ type: "configure", config: login("b") });
+    runner.handle(turn("t3", "three"));
+    await settle();
+    expect(opened).toHaveLength(2);
+  });
+
   it("interrupts the running turn and drops a queued one", async () => {
     const { runner, sent } = setup();
     runner.handle({ type: "configure", config });
