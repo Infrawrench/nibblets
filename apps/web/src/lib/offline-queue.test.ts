@@ -99,6 +99,7 @@ async function fixture() {
     enqueue: async () => {
       throw new Error("Not used in edit tests");
     },
+    beforeLock: () => () => undefined,
   };
   const connection = createMockServer();
   connection.pinClient = (guard) => ({

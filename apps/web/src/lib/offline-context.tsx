@@ -28,7 +28,12 @@ interface OfflineContextValue {
     attachments: string[],
   ) => Promise<void>;
   report: (error: unknown) => void;
+  /** Runs `flush` before this tab locks the vault, so pending writes land; returns an unsubscribe. */
+  beforeLock: (flush: () => Promise<void>) => () => void;
 }
+
+/** The longest a lock waits for pending writes. */
+const LOCK_FLUSH_MS = 1_000;
 const OfflineContext = createContext<OfflineContextValue | null>(null);
 export function clearOfflineQueries(client: QueryClient): void {
   void client.cancelQueries();
@@ -64,6 +69,20 @@ export function OfflineProvider({
   }));
   const dataScopeRef = useRef(dataScope);
   dataScopeRef.current = dataScope;
+  const lockFlushes = useRef(new Set<() => Promise<void>>());
+  const beforeLock = useCallback((flush: () => Promise<void>) => {
+    lockFlushes.current.add(flush);
+    return () => {
+      lockFlushes.current.delete(flush);
+    };
+  }, []);
+  const lock = async (opened: OfflineVault) => {
+    await Promise.race([
+      Promise.allSettled([...lockFlushes.current].map((flush) => flush())),
+      new Promise((resolve) => setTimeout(resolve, LOCK_FLUSH_MS)),
+    ]);
+    opened.lock();
+  };
   const report = useCallback(
     (failure: unknown) =>
       setError(
@@ -182,7 +201,7 @@ export function OfflineProvider({
     }
   };
   return (
-    <OfflineContext.Provider value={{ vault, payload, error, mutate, enqueue, report }}>
+    <OfflineContext.Provider value={{ vault, payload, error, mutate, enqueue, report, beforeLock }}>
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line bg-panel px-3 py-2 text-xs">
           {vault?.unlocked ? (
@@ -205,7 +224,7 @@ export function OfflineProvider({
                   </button>
                 </>
               ) : null}
-              <button onClick={() => vault.lock()}>Lock offline messages</button>
+              <button onClick={() => void lock(vault)}>Lock offline messages</button>
             </>
           ) : (
             <>

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { Nibblet } from "@nibblet/protocol";
 import { createMockServer } from "../../lib/mock.ts";
 import { emptyOfflinePayload } from "../../lib/offline-data.ts";
 import { Composer } from "./Composer.tsx";
@@ -21,6 +22,7 @@ vi.mock("../../lib/offline-context.tsx", async (original) => ({
       throw new Error("Unlock offline messages first.");
     },
     report: () => undefined,
+    beforeLock: () => () => undefined,
   }),
 }));
 
@@ -46,9 +48,10 @@ afterEach(async () => {
 
 it("sends to the server while a nibblet works when offline messages are locked", async () => {
   const connection = createMockServer();
+  const working: Nibblet["status"] = "working";
   const nibblet = {
     ...(await connection.client.nibblets.list({}))[0]!,
-    status: "working" as const,
+    status: working,
   };
   const send = vi.spyOn(connection.client.nibblets, "send").mockResolvedValue({ ok: true });
   await act(async () =>
