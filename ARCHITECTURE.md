@@ -140,6 +140,17 @@ The typed contract is `contract` in `packages/protocol/src/contract.ts`. Calls a
 
 First run prints, and the desktop app opens, a pairing link `http(s)://host/#pair=<code>`. The UI exchanges the code at `POST /api/pair` for a long-lived token.
 
+## Durable sends and offline chats
+
+`nibblets.send` takes an optional `clientMessageId`, a UUID. The server records it in `client_submissions`, keyed by nibblet and message ID with a SHA-256 of the text and attachment IDs, in the same transaction as the user message. Sending the same ID and content again returns the first receipt (its turn and state: queued, started, finished, cancelled or interrupted); the same ID with different content is a `conflict`. Queued submissions survive a restart and run in order once the server has recovered. `system.info` advertises this as `capabilities.durableSendV1`.
+
+The web app can keep recent chats and an outbox in an encrypted vault in IndexedDB (`apps/web/src/lib/offline-vault.ts`), one per origin and account: the bearer token locally, the Clerk user in central mode.
+
+- A random AES-256-GCM data key encrypts one payload: up to 20 conversations of 100 user and assistant messages (10 MiB in all), and the outbox. Each write bumps a revision that's bound into the associated data with the vault's ID, so an older copy can't be put back.
+- The data key is stored wrapped by a key from the recovery passphrase (PBKDF2-SHA256, 600,000 iterations) and, optionally, by one derived with HKDF-SHA256 from a passkey's WebAuthn PRF output.
+- Unwrapped, it's a non-extractable `CryptoKey` held in memory only. Locking drops it in every tab for the account, over a `BroadcastChannel`. Open chats are saved at most every second and a half, and when the page is hidden.
+- A queued message's ID is its `clientMessageId`. The outbox sends the head of each conversation, one at a time under a Web Lock, when the queue changes, the nibblet goes idle or the live socket reconnects. It sends only to a host whose `serverId` matches the one saved with the chat and that has `durableSendV1`, and retries a lost reply with the same ID, which the server's de-duplication makes safe. While the vault is locked, sends go straight to the server.
+
 ## Across machines: Nibblets Connect (`apps/connect`)
 
 Each machine runs its own server. Like T3 Connect, a central service (a Cloudflare Worker with D1, signed in with Clerk) lists every server on an account, without being in the data path:
