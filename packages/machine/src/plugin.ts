@@ -79,6 +79,12 @@ export interface MachinePlugin {
   capacity(): Promise<{ cpus: number; memoryMb: number } | null>;
   /** Signs out the machine a sleeping nibblet left on the tailnet. */
   leaveTailnet(nibbletId: string): Promise<void>;
+  /**
+   * For a running Windows guest: installs a product key and activates it,
+   * unless it's activated with that key already, saying which. Only plugins
+   * that run Windows have it.
+   */
+  activateWindows?(nibbletId: string, productKey: string): Promise<"activated" | "already">;
 }
 
 /** Everything a runner and its guard start with (`RunnerEnv & GuardEnv`). */

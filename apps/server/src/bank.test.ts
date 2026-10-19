@@ -26,6 +26,7 @@ function nibbletWith(id: string, spendingLimits: SpendingLimit[]): Nibblet {
     promptName: null,
     plain: false,
     machine: DEFAULT_MACHINE,
+    windowsProductKey: null,
     look: defaultHamsterLook,
     harness: "claude",
     model: "claude-opus-5-5",

@@ -12,6 +12,7 @@ const nibblet: Nibblet = {
   promptName: null,
   plain: false,
   machine: DEFAULT_MACHINE,
+  windowsProductKey: null,
   look: defaultHamsterLook,
   harness: "codex",
   model: "gpt-5",

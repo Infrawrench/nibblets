@@ -88,6 +88,8 @@ export const nibblets = pgTable("nibblets", {
   spendingLimits: jsonb("spending_limits").$type<SpendingLimit[]>().notNull().default([]),
   /** Where its person last said they were, with the place it's in. */
   location: jsonb("location").$type<NibbletLocation>(),
+  /** Unmasked, like `tailscale`: the API masks it on the way out. Windows machines only. */
+  windowsProductKey: text("windows_product_key"),
   statusText: text("status_text"),
   statusEmoji: text("status_emoji"),
   statusUpdatedAt: timestamp("status_updated_at", { withTimezone: true }),

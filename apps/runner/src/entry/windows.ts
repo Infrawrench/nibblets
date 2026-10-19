@@ -177,6 +177,21 @@ function alive(pid: number): boolean {
   }
 }
 
+/**
+ * Windows' own licensing service, as slmgr uses it: the key goes to it in
+ * the environment, never on a command line. Windows itself is the product
+ * whose application id this is.
+ */
+const ACTIVATE = `$windows = "ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL"
+$now = Get-CimInstance -ClassName SoftwareLicensingProduct -Filter $windows | Where-Object { $_.LicenseStatus -eq 1 }
+if ($now -and $now.PartialProductKey -eq $p.key.Substring($p.key.Length - 5)) { 'already'; return }
+$service = Get-CimInstance -ClassName SoftwareLicensingService
+Invoke-CimMethod -InputObject $service -MethodName InstallProductKey -Arguments @{ ProductKey = $p.key } | Out-Null
+Invoke-CimMethod -InputObject $service -MethodName RefreshLicenseStatus | Out-Null
+$product = Get-CimInstance -ClassName SoftwareLicensingProduct -Filter $windows | Select-Object -First 1
+Invoke-CimMethod -InputObject $product -MethodName Activate | Out-Null
+'activated'`;
+
 export const windows: EntryPlatform = {
   home: HOME,
   pids: win.join(NIBBLETS_DATA, "subagents"),
@@ -234,6 +249,11 @@ export const windows: EntryPlatform = {
       ...HOME_ARCHIVE_EXCLUDES.map((e) => `--exclude=${e}`),
       win.basename(HOME),
     ]),
+
+  async activateWindows(productKey) {
+    const said = (await ps(ACTIVATE, { key: productKey })).trim();
+    return said === "already" ? "already" : "activated";
+  },
 
   async restoreHome() {
     await ps(`Get-ChildItem -LiteralPath $p.home -Force | Remove-Item -Recurse -Force`, {

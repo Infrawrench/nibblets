@@ -31,6 +31,7 @@ const nibblet = (id: string, parentId: string | null, active: string): Nibblet =
   tailnetNode: null,
   spendingLimits: [],
   location: null,
+  windowsProductKey: null,
   statusText: null,
   statusEmoji: null,
   statusUpdatedAt: null,

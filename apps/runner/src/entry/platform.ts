@@ -51,4 +51,9 @@ export interface EntryPlatform {
   restoreHome(): Promise<void>;
   /** Signs out of the tailnet, where the platform has Tailscale. */
   leaveTailnet?(): Promise<void>;
+  /**
+   * Installs a product key and activates it, unless it's activated with that
+   * key already, where the platform is Windows.
+   */
+  activateWindows?(productKey: string): Promise<"activated" | "already">;
 }

@@ -59,6 +59,13 @@ const INSTALL_MS = 90 * 60_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Microsoft's published KMS client key for Windows 11 Pro: activating with it
+ * needs a KMS server, which CI hasn't got, but either way the nibblet says
+ * how it went, which is what's tested.
+ */
+const PRODUCT_KEY = "W269N-WFGWX-YVC9B-4J6C9-T83GX";
+
 // Some calls take as long as a VM takes (a Windows home over its COM port):
 // the tests' own timeouts say how long is too long, not fetch's five minutes.
 setGlobalDispatcher(new Agent({ headersTimeout: 30 * 60_000, bodyTimeout: 30 * 60_000 }));
@@ -219,6 +226,7 @@ describe.skipIf(missing !== null)(title, () => {
         model: harnesses.claude.defaultModel,
         effort: "low",
         machine,
+        ...(guest === "windows" ? { windowsProductKey: PRODUCT_KEY } : {}),
         browser: capabilities?.browser ?? false,
         message: "Say pong.",
       });
@@ -227,6 +235,29 @@ describe.skipIf(missing !== null)(title, () => {
       expect((await stack.modelCalls()).length).toBeGreaterThan(0);
     },
     FIRST_START_MS + 60_000,
+  );
+
+  it.skipIf(guest !== "windows")(
+    "tries its Windows product key, and says how it went, never showing it",
+    async () => {
+      expect(nibblet.windowsProductKey).toBe("•••••-•••••-•••••-•••••-T83GX");
+      expect(JSON.stringify(await stack.client.nibblets.get({ id: nibblet.id }))).not.toContain(
+        PRODUCT_KEY,
+      );
+      const until = Date.now() + 5 * 60_000;
+      for (;;) {
+        const said = (await items(nibblet.id)).find(
+          (s) => s.item.type === "notice" && s.item.text.includes("product key"),
+        );
+        if (said?.item.type === "notice") {
+          expect(said.item.text).not.toContain(PRODUCT_KEY);
+          return;
+        }
+        if (Date.now() > until) throw new Error("It never said how activating Windows went");
+        await sleep(3000);
+      }
+    },
+    6 * 60_000,
   );
 
   it("leaves another stack's nibblets alone", async () => {

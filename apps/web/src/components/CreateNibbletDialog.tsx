@@ -6,6 +6,7 @@ import {
   DEFAULT_MACHINE,
   harnesses,
   randomHamsterLook,
+  WindowsProductKey,
   type Effort,
   type MachineChoice,
   type HamsterLook,
@@ -18,7 +19,7 @@ import { ModelPicker, type ModelChoice } from "./ModelPicker.tsx";
 import { EffortMenu } from "./EffortMenu.tsx";
 import { Modal } from "./ui/Modal.tsx";
 import { Button } from "./ui/Button.tsx";
-import { FieldRow, Textarea } from "./ui/Field.tsx";
+import { FieldRow, Input, Textarea } from "./ui/Field.tsx";
 import { Switch } from "./ui/Switch.tsx";
 import { NibbletTools, type ToolsValue } from "./tools/NibbletTools.tsx";
 import { PromptNameField } from "./PromptNameField.tsx";
@@ -55,6 +56,7 @@ export function CreateNibbletDialog({
   const [promptName, setPromptName] = useState<string | null>(null);
   const [plain, setPlain] = useState(false);
   const [machine, setMachine] = useState<MachineChoice>(DEFAULT_MACHINE);
+  const [productKey, setProductKey] = useState("");
   const [vaults, setVaults] = useState<VaultGrant[]>([]);
   const [tools, setTools] = useState<ToolsValue>({
     hostTools: [],
@@ -82,6 +84,7 @@ export function CreateNibbletDialog({
     setPlain(false);
     setTools({ hostTools: [], cliCredentials: [], mcpServers: [], toolApprovals: [] });
     setMachine(DEFAULT_MACHINE);
+    setProductKey("");
     setError(null);
   }, [open]);
 
@@ -91,6 +94,10 @@ export function CreateNibbletDialog({
   const chosenMachine = machines.options.find((o) => o.key === machineKey(machine));
   // A guest without a browser can't have one, whatever the switch said.
   const canBrowse = chosenMachine?.guest.capabilities.browser ?? true;
+  // Optional, and only for Windows; checked as it's typed, as the server will.
+  const windows = machine.guest === "windows";
+  const keyCheck = windows && productKey.trim() ? WindowsProductKey.safeParse(productKey) : null;
+  const keyWrong = keyCheck !== null && !keyCheck.success;
   // Starts on Claude, but not on a server that has no Claude subscription.
   const fallback = catalogue.offered.includes(choice.harness) ? null : catalogue.defaultChoice();
   useEffect(() => {
@@ -115,6 +122,7 @@ export function CreateNibbletDialog({
         promptName: promptName?.trim() ?? null,
         plain,
         machine,
+        ...(keyCheck?.success ? { windowsProductKey: keyCheck.data } : {}),
         browser: browser && canBrowse,
         ...tools,
         ...(message.trim() ? { message: message.trim() } : {}),
@@ -202,6 +210,26 @@ export function CreateNibbletDialog({
             </div>
           </FieldRow>
           <MachinePicker options={machines.options} value={machine} onChange={setMachine} />
+          {windows ? (
+            <FieldRow
+              label="Product key"
+              hint={
+                keyWrong
+                  ? "A product key looks like XXXXX-XXXXX-XXXXX-XXXXX-XXXXX."
+                  : "Optional. Activates its Windows, which otherwise runs unactivated."
+              }
+            >
+              <Input
+                className="font-mono"
+                value={productKey}
+                onChange={(e) => setProductKey(e.target.value)}
+                placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
+                autoComplete="off"
+                spellCheck={false}
+                aria-invalid={keyWrong}
+              />
+            </FieldRow>
+          ) : null}
           <FieldRow
             label="Browser"
             hint="A Chromium, and a desktop for other apps, that it and you can both drive."
@@ -258,7 +286,7 @@ export function CreateNibbletDialog({
         ) : (
           <Button
             variant="primary"
-            disabled={busy || !name.trim() || chosenMachine?.ready === false}
+            disabled={busy || !name.trim() || chosenMachine?.ready === false || keyWrong}
             onClick={() => void create()}
           >
             {busy ? <Loader2 className="animate-spin" /> : null}

@@ -1,0 +1,1 @@
+ALTER TABLE "nibblets" ADD COLUMN "windows_product_key" text;

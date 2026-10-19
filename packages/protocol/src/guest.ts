@@ -57,6 +57,8 @@ export const EntryCommand = z.enum([
   "remove-subagent",
   "archive-home",
   "restore-home",
+  // Windows only: installs and activates the product key it's given on stdin.
+  "product-key",
 ]);
 export type EntryCommand = z.infer<typeof EntryCommand>;
 

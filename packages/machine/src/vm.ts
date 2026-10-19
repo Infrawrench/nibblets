@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:net";
-import { pipeline, Transform, type Readable, type Writable } from "node:stream";
+import { pipeline, Readable, Transform, Writable } from "node:stream";
 import {
   DEFAULT_MEMORY_MB,
   GUEST_NAMES,
@@ -672,6 +672,24 @@ export class VirtualMachines implements MachinePlugin {
 
   capacity(): Promise<{ cpus: number; memoryMb: number } | null> {
     return this.client.capacity();
+  }
+
+  async activateWindows(id: string, productKey: string): Promise<"activated" | "already"> {
+    let said = "";
+    const out = new Writable({
+      write(chunk: Buffer, _enc, done) {
+        said += chunk.toString("utf8");
+        done();
+      },
+    });
+    // On stdin: in no command line or environment the guest's other users might see.
+    await this.withGuest(id, (link) =>
+      link.runToEnd(
+        { command: "product-key", stdin: Readable.from([productKey]), stdout: out },
+        5 * 60_000,
+      ),
+    );
+    return said.trim() === "already" ? "already" : "activated";
   }
 
   /** Only a VM that may still be on a tailnet is booted to sign out. */

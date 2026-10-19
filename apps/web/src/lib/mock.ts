@@ -8,6 +8,7 @@ import {
   opencodeModel,
   MASKED,
   maskMcpServers,
+  maskProductKey,
   mergeMcpServers,
   tailnetHostname,
   randomHamsterLook,
@@ -200,6 +201,7 @@ export function createMockServer(): ServerConnection {
     tailnetNode: null,
     spendingLimits: [],
     location: null,
+    windowsProductKey: null,
     statusText: null,
     statusEmoji: null,
     statusUpdatedAt: null,
@@ -1150,6 +1152,17 @@ export function createMockServer(): ServerConnection {
         { os: "macos", image: { ...ready, state: "missing" }, capabilities: desktopVm },
       ],
     },
+    {
+      id: "hyperv",
+      name: "Hyper-V",
+      kind: "vm",
+      available: true,
+      detail: null,
+      recommended: false,
+      guests: [
+        { os: "windows", image: { ...ready, source: "windows-iso" }, capabilities: desktopVm },
+      ],
+    },
   ];
 
   const handlers: Handlers<Contract, null> = {
@@ -1208,6 +1221,9 @@ export function createMockServer(): ServerConnection {
             promptName: input.promptName ?? null,
             plain: input.plain ?? false,
             machine: input.machine,
+            windowsProductKey: input.windowsProductKey
+              ? maskProductKey(input.windowsProductKey)
+              : null,
             browser: input.browser,
             hostTools: input.hostTools,
             cliCredentials: input.cliCredentials,

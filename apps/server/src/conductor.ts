@@ -14,6 +14,7 @@ import {
   type TailscaleLogin,
   isReservedMcpName,
   nameInPrompt,
+  maskProductKey,
   tailnetHostname,
   DESKTOP_VIEW_PORT,
   DEFAULT_MACHINE,
@@ -466,6 +467,9 @@ export class Conductor {
             .catch((err: unknown) => console.warn(`[${nibbletId}] ${String(err)}`)),
       });
       const started = await this.store.updateNibblet(nibbletId, { containerId });
+      if (row.machine.guest === "windows" && row.windowsProductKey) {
+        void this.activateWindows(nibbletId, plugin, row.windowsProductKey);
+      }
       for (const id of working) {
         await this.enqueue(id, "system", SUBAGENT_RESUME_INPUT, [], { first: true }).catch(
           (err: unknown) => console.error(`couldn't restart ${id}`, err),
@@ -1392,6 +1396,37 @@ export class Conductor {
       usage,
       endedAt: status === "running" ? null : now(),
     });
+  }
+
+  /**
+   * A Windows nibblet's Windows activated with its product key, unless it is
+   * already, while its runner gets going. Said in its thread, unless there's
+   * nothing new; failing, it's tried again when it next starts.
+   */
+  private async activateWindows(
+    nibbletId: string,
+    plugin: MachinePlugin,
+    productKey: string,
+  ): Promise<void> {
+    try {
+      if (!plugin.activateWindows) throw new Error(`${plugin.name} doesn't run Windows`);
+      const done = await plugin.activateWindows(nibbletId, productKey);
+      if (done === "activated") {
+        await this.notice(
+          nibbletId,
+          null,
+          "info",
+          `Activated Windows with its product key (${maskProductKey(productKey)}).`,
+        );
+      }
+    } catch (err) {
+      await this.notice(
+        nibbletId,
+        null,
+        "warning",
+        `Couldn't activate Windows with its product key, so it'll try again when it next starts: ${err instanceof Error ? err.message : String(err)}`,
+      ).catch((e: unknown) => console.warn(`[${nibbletId}] ${String(e)}`));
+    }
   }
 
   private async notice(

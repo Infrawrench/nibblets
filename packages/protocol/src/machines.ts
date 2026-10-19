@@ -83,3 +83,23 @@ export const PrepareMachineImage = z.object({
   source: z.string().min(1).max(4096).optional(),
 });
 export type PrepareMachineImage = z.infer<typeof PrepareMachineImage>;
+
+/**
+ * A Windows product key, as Microsoft prints them: five groups of five
+ * letters and digits. Given when a Windows nibblet's made, it's installed
+ * and activated in its VM whenever that boots unactivated.
+ */
+export const WindowsProductKey = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(
+    /^[A-Z0-9]{5}(-[A-Z0-9]{5}){4}$/,
+    "A product key looks like XXXXX-XXXXX-XXXXX-XXXXX-XXXXX",
+  );
+export type WindowsProductKey = z.infer<typeof WindowsProductKey>;
+
+/** A product key with all but its last group hidden, as Windows itself shows one. */
+export function maskProductKey(key: string): string {
+  return `•••••-•••••-•••••-•••••-${key.slice(-5)}`;
+}

@@ -125,6 +125,9 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         await s.machines.check(input.machine).catch((err: unknown) => {
           throw new RpcError("bad_request", err instanceof Error ? err.message : String(err));
         });
+        if (input.windowsProductKey && input.machine?.guest !== "windows") {
+          throw new RpcError("bad_request", "A Windows product key is only for a Windows machine");
+        }
         if (input.mcpServers?.length && input.hostTools?.length) {
           const host = await hostTools(s.config);
           input = {

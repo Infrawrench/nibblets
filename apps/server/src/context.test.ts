@@ -45,6 +45,7 @@ const nibblet: Nibblet = {
   tailnetNode: null,
   spendingLimits: [],
   location: null,
+  windowsProductKey: null,
   statusText: "Watching the deploy",
   statusEmoji: null,
   statusUpdatedAt: null,

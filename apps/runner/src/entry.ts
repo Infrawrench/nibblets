@@ -27,7 +27,7 @@ import "kill-emudhra";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
-import { GUARD_ONLY_ENV } from "@nibblet/protocol";
+import { GUARD_ONLY_ENV, WindowsProductKey } from "@nibblet/protocol";
 import { platformHere } from "./entry/index.ts";
 import { pick } from "./entry/shared.ts";
 
@@ -244,6 +244,14 @@ async function leaveTailnet(): Promise<void> {
   await platform.leaveTailnet?.();
 }
 
+/** `entry.ts product-key`: Windows' activation, with the key on stdin, never in its arguments. */
+async function productKey(): Promise<void> {
+  if (!platform.activateWindows) throw new Error("this machine doesn't run Windows");
+  let key = "";
+  for await (const chunk of process.stdin) key += String(chunk);
+  console.log(await platform.activateWindows(WindowsProductKey.parse(key)));
+}
+
 /** What the server runs in a nibblet's machine; see EntryCommand in protocol. */
 const commands: Record<string, () => Promise<void>> = {
   subagent,
@@ -252,6 +260,7 @@ const commands: Record<string, () => Promise<void>> = {
   "remove-subagent": removeSubagent,
   "archive-home": () => platform.archiveHome(),
   "restore-home": () => platform.restoreHome(),
+  "product-key": productKey,
 };
 
 if (import.meta.main) {
