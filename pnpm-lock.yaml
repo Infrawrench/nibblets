@@ -321,6 +321,9 @@ importers:
       '@nibblet/bank':
         specifier: workspace:*
         version: link:../../packages/bank
+      '@nibblet/bank-slash':
+        specifier: workspace:*
+        version: link:../../packages/bank-slash
       '@nibblet/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -437,6 +440,18 @@ importers:
       '@nibblet/protocol':
         specifier: workspace:*
         version: link:../protocol
+
+  packages/bank-slash:
+    dependencies:
+      '@nibblet/bank':
+        specifier: workspace:*
+        version: link:../bank
+      '@nibblet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
   packages/db:
     dependencies:
