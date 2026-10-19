@@ -77,10 +77,10 @@ export async function opencodeLogin(
 }
 
 /**
- * Model lists for the picker. Claude and Codex have fixed lists; Kimi's is
- * fixed too, but only on offer once the host is signed in to Kimi Code.
- * OpenCode's is whatever `opencode models` gives for the host's login, run in
- * a throwaway runner container so it matches what a nibblet will see.
+ * Model lists for the picker. Claude, Codex and DeepSeek have fixed lists;
+ * Kimi's is fixed too, but only on offer once the host is signed in to Kimi
+ * Code. OpenCode's is whatever `opencode models` gives for the host's login,
+ * run in a throwaway runner container so it matches what a nibblet will see.
  */
 export class HarnessModelLists {
   private cache: { key: string; at: number; result: Promise<HarnessModels> } | null = null;

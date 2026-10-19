@@ -15,7 +15,8 @@ export interface ModelCatalogue {
   find(harness: HarnessId, model: string): ModelOption | undefined;
   /**
    * The harnesses this server can run: Claude and Codex only once their
-   * subscription is added, DeepSeek once its API key is.
+   * subscription is added, DeepSeek once its API key is, Kimi and OpenCode
+   * once the host is signed in to them.
    */
   offered: readonly HarnessId[];
   /** What a new nibblet starts on: the first offered harness's default model. */
@@ -74,10 +75,15 @@ export function useModels(connection: ServerConnection | null | undefined): Mode
     };
   };
 
-  // Until the server says otherwise, everything is on offer.
+  // Until the server says otherwise, subscriptions count as signed in. A host
+  // harness waits for its list, so a new nibblet never starts on one that
+  // turns out to be unusable.
   const signedIn = (harness: HarnessId) => {
     const provider = subscription[harness];
-    if (!provider) return hosted(harness)?.isPending || forHarness(harness).models.length > 0;
+    if (!provider) {
+      const state = forHarness(harness);
+      return !state.loading && state.unavailable === null && state.models.length > 0;
+    }
     const credential = info.data?.credentials.find((c) => c.provider === provider);
     return !info.data || (credential !== undefined && credential.source !== "none");
   };
