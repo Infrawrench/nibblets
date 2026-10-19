@@ -68,17 +68,21 @@ function effortsFor(model: string) {
  * the host has no login to share, since Kimi Code has no other way in.
  */
 export async function prepareHome(ctx: HarnessContext): Promise<string> {
-  const login = ctx.config.kimiLogin;
-  if (!login?.token) {
+  const login = ctx.config.hostLogin;
+  if (!login?.secret) {
     throw new Error(
       "Kimi Code needs a login: run `kimi login` on this machine, or pick another harness.",
     );
   }
-  const config = kimiConfig(login, ctx.config.effort, effortsFor(ctx.config.model));
+  const config = kimiConfig(
+    { config: login.config, token: login.secret },
+    ctx.config.effort,
+    effortsFor(ctx.config.model),
+  );
   const home = path.join(ctx.stateDir ?? ctx.workdir, ".kimi-code");
   await mkdir(home, { recursive: true, mode: 0o700 });
   await writeMcpConfig(home, ctx.mcpServers);
-  await installLogin(home, login.token, config, KIMI_SECRETS);
+  await installLogin(home, login.secret, config, KIMI_SECRETS);
   return home;
 }
 

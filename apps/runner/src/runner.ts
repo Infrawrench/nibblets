@@ -142,7 +142,7 @@ export class Runner {
       config.gated,
       // Changed logins need a fresh harness so its agents see the new env.
       config.cli,
-      config.opencodeLogin,
+      config.hostLogin,
     ]);
     if (this.session?.key === key) return this.session.session;
     await this.guardReady;

@@ -14,8 +14,7 @@ const config: RunnerConfig = {
   hostMcp: [],
   gated: [],
   cli: [],
-  opencodeLogin: null,
-  kimiLogin: null,
+  hostLogin: null,
 };
 
 /** A harness that echoes its input, or waits for an abort when told to. */

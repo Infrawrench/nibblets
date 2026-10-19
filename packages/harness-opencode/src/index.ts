@@ -70,7 +70,7 @@ export function opencodeConfig(ctx: HarnessContext): Config {
     // The container is the sandbox; nobody is there to approve prompts.
     permission: { edit: "allow", bash: "allow", webfetch: "allow" },
   };
-  if (ctx.config.opencodeLogin) return own;
+  if (ctx.config.hostLogin) return own;
   return {
     ...own,
     provider: {
@@ -138,8 +138,9 @@ export const opencodeHarness = defineHarness({
     const home = path.join(ctx.stateDir ?? ctx.workdir, ".opencode");
     const dirs = await prepareHome(home);
     // The token lives outside the home volume, in the container's own /tmp.
-    if (ctx.config.opencodeLogin) {
-      await installLogin(dirs, ctx.config.opencodeLogin, OPENCODE_SECRETS);
+    const host = ctx.config.hostLogin;
+    if (host) {
+      await installLogin(dirs, { config: host.config, auth: host.secret }, OPENCODE_SECRETS);
     }
     await warmModelsCache((m) => ctx.log("warn", m));
 

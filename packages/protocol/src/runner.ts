@@ -69,10 +69,8 @@ export const RunnerConfig = z.object({
   gated: z.array(z.string()).default([]),
   /** Borrowed host CLI logins, fetched fresh on every configure. Never stored. */
   cli: z.array(CliLogin).default([]),
-  /** For OpenCode nibblets: the host's OpenCode login, or null to use the credential proxy. */
-  opencodeLogin: OpencodeLogin.nullable().default(null),
-  /** For Kimi nibblets: the host's Kimi Code login, or null when there's none to share. */
-  kimiLogin: KimiLogin.nullable().default(null),
+  /** The host login this harness borrows, or null when it has none (OpenCode then uses the credential proxy). */
+  hostLogin: HostLogin.nullable().default(null),
 });
 export type RunnerConfig = z.infer<typeof RunnerConfig>;
 
