@@ -17,6 +17,7 @@ import { PromptNameField } from "../PromptNameField.tsx";
 import { NibbletVaults } from "../onepassword/OnePasswordSection.tsx";
 import { BudgetSection } from "./BudgetSection.tsx";
 import { ResourcesSection } from "./ResourcesSection.tsx";
+import { NibbletSpending } from "../bank/NibbletSpending.tsx";
 import { TailscaleSection } from "./TailscaleSection.tsx";
 
 export function NibbletSettings({
@@ -215,6 +216,8 @@ export function NibbletSettings({
       />
 
       <NibbletVaults connection={connection} nibblet={nibblet} />
+
+      <NibbletSpending connection={connection} nibblet={nibblet} />
 
       <TailscaleSection connection={connection} nibblet={nibblet} />
 

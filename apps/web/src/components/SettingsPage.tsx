@@ -5,6 +5,7 @@ import type { CredentialStatus } from "@nibblet/protocol";
 import type { ServerConnection } from "../lib/connection.ts";
 import { AccountSection, RemoteAccessSection } from "./RemoteAccess.tsx";
 import { TailnetKeysSection } from "./TailnetKeysSection.tsx";
+import { BankSection } from "./bank/BankSection.tsx";
 import { keys, useServers } from "../lib/servers.tsx";
 import { clockTime, relativeTime } from "../lib/time.ts";
 import { Button } from "./ui/Button.tsx";
@@ -53,6 +54,7 @@ export function SettingsPage() {
             <CredentialsSection connection={connection} />
             <HostToolsSection connection={connection} />
             <OnePasswordSettings connection={connection} />
+            <BankSection connection={connection} />
             <RemoteAccessSection connection={connection} />
             <TailnetKeysSection connection={connection} />
             <PairingSection connection={connection} />

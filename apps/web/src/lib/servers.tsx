@@ -29,6 +29,9 @@ export const keys = {
   tasks: (server: string, id: string) => ["tasks", server, id] as const,
   apps: (server: string, id: string) => ["apps", server, id] as const,
   spend: (server: string, id: string) => ["spend", server, id] as const,
+  bank: (server: string) => ["bank", server] as const,
+  cards: (server: string, id: string) => ["cards", server, id] as const,
+  allowances: (server: string, id: string) => ["allowances", server, id] as const,
   memories: (server: string, id: string | null, query: string) =>
     ["memories", server, id, query] as const,
   hostTools: (server: string) => ["hostTools", server] as const,
@@ -320,6 +323,11 @@ export function applyLive(qc: QueryClient, server: string, m: LiveMessage): void
       return;
     case "snapshots_changed":
       void qc.invalidateQueries({ queryKey: keys.snapshots(server, m.nibbletId) });
+      return;
+    case "cards_changed":
+      void qc.invalidateQueries({ queryKey: keys.cards(server, m.nibbletId) });
+      void qc.invalidateQueries({ queryKey: keys.allowances(server, m.nibbletId) });
+      void qc.invalidateQueries({ queryKey: keys.bank(server) });
       return;
   }
 }
