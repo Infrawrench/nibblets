@@ -11,7 +11,24 @@ const unavailableKimi: HarnessModels = {
   harness: "kimi",
   state: "unavailable",
   detail: "Kimi Code isn't signed in on the host",
+  models: [],
+};
+
+const readyKimi: HarnessModels = {
+  harness: "kimi",
+  state: "ready",
+  detail: null,
   models: [...harnesses.kimi.models],
+};
+
+const openai: CredentialStatus = {
+  provider: "openai",
+  source: "file",
+  ok: true,
+  detail: "",
+  plan: null,
+  expiresAt: null,
+  limitedUntil: null,
 };
 
 function catalogue(credentials: CredentialStatus[], kimi: HarnessModels | null): ModelCatalogue {
@@ -45,27 +62,20 @@ function catalogue(credentials: CredentialStatus[], kimi: HarnessModels | null):
 }
 
 describe("useModels", () => {
-  it("offers unavailable Kimi with its warning while defaulting to signed-in Codex", () => {
-    const models = catalogue(
-      [
-        {
-          provider: "openai",
-          source: "file",
-          ok: true,
-          detail: "",
-          plan: null,
-          expiresAt: null,
-          limitedUntil: null,
-        },
-      ],
-      unavailableKimi,
-    );
-    expect(models.offered).toEqual(["codex", "kimi"]);
+  it("leaves out unavailable Kimi, keeping its warning, and defaults to signed-in Codex", () => {
+    const models = catalogue([openai], unavailableKimi);
+    expect(models.offered).toEqual(["codex"]);
     expect(models.forHarness("kimi")).toEqual({
-      models: harnesses.kimi.models,
+      models: [],
       loading: false,
       unavailable: unavailableKimi.detail,
     });
+    expect(models.defaultChoice()).toEqual({ harness: "codex", model: "gpt-5.6-terra" });
+  });
+
+  it("offers Kimi alongside Codex once the host is signed in to it", () => {
+    const models = catalogue([openai], readyKimi);
+    expect(models.offered).toEqual(["codex", "kimi"]);
     expect(models.defaultChoice()).toEqual({ harness: "codex", model: "gpt-5.6-terra" });
   });
 
@@ -76,12 +86,12 @@ describe("useModels", () => {
   });
 
   it("defaults to K3 when Kimi is the only ready harness", () => {
-    const models = catalogue([], { ...unavailableKimi, state: "ready", detail: null });
+    const models = catalogue([], readyKimi);
     expect(models.offered).toEqual(["kimi"]);
     expect(models.defaultChoice()).toEqual({ harness: "kimi", model: "kimi-code/k3" });
   });
 
-  it("keeps pending Kimi offered without choosing it as the default", () => {
+  it("doesn't start on Kimi while its list is still loading", () => {
     const models = catalogue([], null);
     expect(models.offered).toEqual(["claude", "codex", "deepseek", "kimi", "opencode"]);
     expect(models.forHarness("kimi")).toEqual({ models: [], loading: true, unavailable: null });

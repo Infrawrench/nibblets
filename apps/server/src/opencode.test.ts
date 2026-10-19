@@ -22,6 +22,7 @@ describe("HarnessModelLists", () => {
     expect(claude.models.map((m) => m.id)).toContain("claude-opus-5-5");
     expect(await lists.accepts("codex", "gpt-5.6-terra")).toBe(true);
     expect(await lists.accepts("claude", "gpt-5.6-terra")).toBe(false);
+    expect(harnesses.codex.defaultModel).toBe("gpt-5.6-terra");
   });
 
   it("says why OpenCode's list is missing, and still takes provider/model ids", async () => {
@@ -49,17 +50,11 @@ describe("HarnessModelLists", () => {
     });
     expect(await lists.accepts("codex", id)).toBe(true);
     expect(await lists.accepts("claude", id)).toBe(false);
-    expect(harnesses.codex.defaultModel).toBe("gpt-5.6-terra");
   });
 
-  it("lists Kimi's models while explaining why it is unavailable", async () => {
+  it("offers Kimi only once the host is signed in, but still knows its models", async () => {
     const kimi = await lists.list("kimi");
-    expect(kimi.state).toBe("unavailable");
-    expect(kimi.models.map((model) => model.id)).toEqual([
-      "kimi-code/k3",
-      "kimi-code/kimi-for-coding",
-      "kimi-code/kimi-for-coding-highspeed",
-    ]);
+    expect(kimi).toMatchObject({ state: "unavailable", models: [] });
     expect(kimi.detail).toBeTruthy();
     expect(await lists.accepts("kimi", "kimi-code/k3")).toBe(true);
   });

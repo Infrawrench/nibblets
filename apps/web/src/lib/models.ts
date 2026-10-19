@@ -13,9 +13,13 @@ export interface HarnessModelState {
 export interface ModelCatalogue {
   forHarness(harness: HarnessId): HarnessModelState;
   find(harness: HarnessId, model: string): ModelOption | undefined;
-  /** Signed-in harnesses plus Kimi; all harnesses when none are signed in. */
+  /**
+   * The harnesses this server can run: Claude and Codex only once their
+   * subscription is added, DeepSeek once its API key is, Kimi and OpenCode
+   * once the host is signed in to them.
+   */
   offered: readonly HarnessId[];
-  /** The first ready harness's default model, falling back when none are ready. */
+  /** What a new nibblet starts on: the first offered harness's default model. */
   defaultChoice(): { harness: HarnessId; model: string } | null;
 }
 
@@ -71,7 +75,9 @@ export function useModels(connection: ServerConnection | null | undefined): Mode
     };
   };
 
-  // Until the server says otherwise, everything is on offer.
+  // Until the server says otherwise, subscriptions count as signed in. A host
+  // harness waits for its list, so a new nibblet never starts on one that
+  // turns out to be unusable.
   const signedIn = (harness: HarnessId) => {
     const provider = subscription[harness];
     if (!provider) {
@@ -83,17 +89,14 @@ export function useModels(connection: ServerConnection | null | undefined): Mode
   };
   const ready = HarnessId.options.filter(signedIn);
   // With nothing signed in, hiding everything would leave nothing to pick.
-  const defaults = ready.length > 0 ? ready : HarnessId.options;
-  const offered = HarnessId.options.filter(
-    (harness) => harness === "kimi" || defaults.includes(harness),
-  );
+  const offered = ready.length > 0 ? ready : HarnessId.options;
 
   return {
     forHarness,
     find: (harness, model) => forHarness(harness).models.find((m) => m.id === model),
     offered,
     defaultChoice: () => {
-      for (const harness of defaults) {
+      for (const harness of offered) {
         const model = harnesses[harness].defaultModel || forHarness(harness).models[0]?.id;
         if (model) return { harness, model };
       }
