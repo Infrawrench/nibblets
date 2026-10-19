@@ -9,6 +9,8 @@ import {
   type HeartbeatRequest,
   type PushNote,
   type ServerRoutes,
+  type TunnelConfig,
+  type TunnelStatus,
 } from "@nibblet/protocol";
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import { z } from "zod";
@@ -74,6 +76,7 @@ export class Connect {
   private beat: ReturnType<typeof setTimeout> | null = null;
   private generation = 0;
   private linkWrites: Promise<void> = Promise.resolve();
+  private tunnelWrites: Promise<void> = Promise.resolve();
   private lastHeartbeatAt: string | null = null;
   private lastError: string | null = null;
   private routes: ServerRoutes = { lan: [], tailscale: null, tunnel: null };
@@ -312,16 +315,28 @@ export class Connect {
     this.link = link;
     this.jwks = null;
     this.scheduleBeat(0, generation);
-    await this.deps.tunnel
-      .configure(
-        link.tunnel
-          ? { mode: "token", token: link.tunnel.token, hostname: link.tunnel.hostname }
-          : { mode: "quick" },
-      )
-      .catch((err: unknown) => {
-        if (this.generation !== generation) return;
-        this.lastError = `Tunnel: ${err instanceof Error ? err.message : String(err)}`;
-      });
+    await this.configureTunnel(
+      link.tunnel
+        ? { mode: "token", token: link.tunnel.token, hostname: link.tunnel.hostname }
+        : { mode: "quick" },
+    ).catch((err: unknown) => {
+      if (this.generation !== generation) return;
+      this.lastError = `Tunnel: ${err instanceof Error ? err.message : String(err)}`;
+    });
+  }
+
+  /**
+   * Applies tunnel settings one at a time. The first heartbeat can forget the
+   * link while activation's setup is still running, and an "off" that finished
+   * first would leave that setup's tunnel up.
+   */
+  private configureTunnel(config: TunnelConfig): Promise<TunnelStatus> {
+    const write = this.tunnelWrites.then(() => this.deps.tunnel.configure(config));
+    this.tunnelWrites = write.then(
+      () => undefined,
+      () => undefined,
+    );
+    return write;
   }
 
   private persistLink(link: Link | null, generation: number): Promise<void> {
@@ -346,7 +361,7 @@ export class Connect {
     this.routes = { lan: [], tailscale: null, tunnel: null };
     await this.persistLink(null, generation);
     if (this.generation !== generation) return;
-    await this.deps.tunnel.configure({ mode: "off" }).catch(() => undefined);
+    await this.configureTunnel({ mode: "off" }).catch(() => undefined);
   }
 
   private scheduleBeat(ms: number, generation: number): void {

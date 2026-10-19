@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HEARTBEAT_EVERY_MS, type TunnelStatus } from "@nibblet/protocol";
+import { z } from "zod";
 import { Connect, type ConnectDeps } from "./connect.ts";
 
 const saved = {
@@ -16,12 +17,13 @@ const tunnelStatus: TunnelStatus = {
   url: "https://tunnel.example",
   detail: null,
 };
+const Json = z.json();
 const response = (centralUrl = saved.centralUrl): Response =>
   Response.json({ linked: true, centralUrl });
 
 describe("Connect heartbeats", () => {
   let connect: Connect;
-  let settings: Map<string, unknown>;
+  let settings: Map<string, z.infer<typeof Json>>;
   let deps: ConnectDeps;
   let fetcher: ReturnType<typeof vi.fn<typeof fetch>>;
   let configure: ReturnType<typeof vi.fn<ConnectDeps["tunnel"]["configure"]>>;
@@ -37,7 +39,7 @@ describe("Connect heartbeats", () => {
           return settings.has(key) ? parse(settings.get(key)) : fallback;
         },
         setSetting: vi.fn(async (key, value) => {
-          settings.set(key, structuredClone(value));
+          settings.set(key, Json.parse(structuredClone(value)));
         }),
         deleteSetting: vi.fn(async (key) => {
           settings.delete(key);
@@ -87,7 +89,7 @@ describe("Connect heartbeats", () => {
   it("does not resurrect the saved link when a canonical write commits during unlink", async () => {
     const commit = Promise.withResolvers<void>();
     vi.mocked(deps.store.setSetting).mockImplementationOnce(async (key, value) => {
-      const snapshot = structuredClone(value);
+      const snapshot = Json.parse(structuredClone(value));
       await commit.promise;
       settings.set(key, snapshot);
     });
@@ -293,5 +295,25 @@ describe("Connect heartbeats", () => {
     await restoring;
     await vi.advanceTimersByTimeAsync(5000);
     expect(tunnelRoutes()).toEqual([null, "https://server.tunnel.example"]);
+  });
+
+  it("lets a slow tunnel setup finish before the first heartbeat turns it off", async () => {
+    const events: string[] = [];
+    const setup = Promise.withResolvers<void>();
+    configure.mockImplementation(async (config) => {
+      events.push(`start ${config.mode}`);
+      if (config.mode !== "off") await setup.promise;
+      events.push(`end ${config.mode}`);
+      return tunnelStatus;
+    });
+    fetcher.mockResolvedValueOnce(new Response(null, { status: 401 }));
+    const restoring = connect.restore();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(connect.status().state).toBe("unlinked");
+    expect(events).toEqual(["start quick"]);
+    setup.resolve();
+    await restoring;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events).toEqual(["start quick", "end quick", "start off", "end off"]);
   });
 });
