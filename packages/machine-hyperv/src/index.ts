@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Duplex } from "node:stream";
-import type { GuestImage, GuestOs } from "@nibblet/protocol";
+import { GuestOs, HYPERV_AGENT_PORT, hypervServiceId, type GuestImage } from "@nibblet/protocol";
 import {
   connectTo,
   linuxDiskFile,
@@ -13,6 +13,7 @@ import {
   type VmSpec,
 } from "@nibblet/machine/host";
 import { z } from "zod";
+import { connectHvSock, hvsockHelper } from "./hvsock.ts";
 import { meta } from "./meta.ts";
 import { powershell, psJson, type PowerShell } from "./powershell.ts";
 import { installWindows } from "./windows.ts";
@@ -37,7 +38,12 @@ const consolePipe = (id: string) => `\\\\.\\pipe\\nibblet-${id}-console`;
 const files = (vm: VmRef) => ({
   system: join(vm.dir, "system.vhdx"),
   home: join(vm.dir, "home.vhdx"),
+  /** Its guest's OS, which says how its agent is reached. */
+  guest: join(vm.dir, "guest"),
 });
+
+/** The agent's Hyper-V socket, as Hyper-V names the service a Linux guest's vsock port is. */
+const AGENT_SERVICE = hypervServiceId(HYPERV_AGENT_PORT);
 
 const DETECT = `
 $cmd = Get-Command Get-VM -ErrorAction SilentlyContinue
@@ -85,9 +91,24 @@ else { Set-VMFirmware -VM $vm -EnableSecureBoot On -SecureBootTemplate Microsoft
 Set-VMFirmware -VM $vm -FirstBootDevice (Get-VMHardDiskDrive -VM $vm | Select-Object -First 1)
 Set-VMProcessor -VM $vm -Count $p.cpus
 Set-VMMemory -VM $vm -DynamicMemoryEnabled $false -StartupBytes ([int64]$p.memoryMb * 1MB)
+# Hyper-V lets a VM and the host talk over a socket for a service it knows of.
+# HKLM wants an administrator: without one, it may be registered already.
+try {
+  $key = "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Virtualization\\GuestCommunicationServices\\$($p.service)"
+  if (-not (Test-Path $key)) {
+    New-Item -Path $key -Force | Out-Null
+    New-ItemProperty -Path $key -Name ElementName -Value 'Nibblets agent' -PropertyType String -Force | Out-Null
+  }
+} catch {}
 Start-VM -VM $vm
 @{ ok = $true } | ConvertTo-Json -Compress
 `;
+
+/** A VM's id, which a Hyper-V socket is addressed to. */
+const VM_ID = `
+@{ id = (Get-VM -Name $p.name -ErrorAction Stop).Id.Guid } | ConvertTo-Json -Compress
+`;
+const VmId = z.object({ id: z.uuid() });
 
 /** Every nibblet's VM and how it is, in one go: PowerShell is slow to start. */
 const STATES = `
@@ -162,6 +183,7 @@ export class HyperV implements HypervisorPlugin {
       throw new Error(`There's no image at ${base}`);
     }
     this.states = null;
+    await writeFile(f.guest, vm.guest);
     await psJson(this.ps, Ok, START, {
       name: vmName(vm.id),
       dir: vm.dir,
@@ -177,6 +199,7 @@ export class HyperV implements HypervisorPlugin {
       switch: this.switchName,
       agent: agentPipe(vm.id),
       console: consolePipe(vm.id),
+      service: AGENT_SERVICE,
     });
   }
 
@@ -209,8 +232,20 @@ export class HyperV implements HypervisorPlugin {
     await psJson(this.ps, Ok, REMOVE, { name: vmName(vm.id) });
   }
 
-  connect(_ctx: HostContext, vm: VmRef): Promise<Duplex> {
-    return connectTo(agentPipe(vm.id));
+  /**
+   * Its agent's port: a Hyper-V socket for Linux, whose COM port loses what
+   * comes in; Windows' COM2, through its relay, otherwise.
+   */
+  async connect(ctx: HostContext, vm: VmRef): Promise<Duplex> {
+    const guest = GuestOs.catch("linux").parse(
+      (await readFile(files(vm).guest, "utf8").catch(() => "")).trim(),
+    );
+    if (guest !== "linux") return connectTo(agentPipe(vm.id));
+    const [helper, { id }] = await Promise.all([
+      hvsockHelper(join(ctx.dir, "bin")),
+      psJson(this.ps, VmId, VM_ID, { name: vmName(vm.id) }),
+    ]);
+    return connectHvSock(helper, id, AGENT_SERVICE);
   }
 
   /** Hyper-V keeps no console of its own, and nothing reads COM1 for it; the agent's runs say more. */

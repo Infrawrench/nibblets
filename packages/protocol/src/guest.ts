@@ -33,6 +33,18 @@ export const GUEST_CHANNELS = 0x8000_0000;
 /** The name the serial port has in the guest, where the hypervisor can name it. */
 export const GUEST_PORT_NAME = "dev.nibblets.agent";
 
+/**
+ * On Hyper-V, the agent's port is a Hyper-V socket rather than a COM port:
+ * the guest listens on this vsock port, and the host connects to it by the
+ * service id Hyper-V gives a Linux vsock port (hypervServiceId).
+ */
+export const HYPERV_AGENT_PORT = 0x4e42;
+
+/** The Hyper-V service id for a Linux guest's vsock port, as hv_sock maps them. */
+export function hypervServiceId(port: number): string {
+  return `${port.toString(16).padStart(8, "0")}-facb-11e6-bd58-64006a7986d3`;
+}
+
 /** Run ids the server uses for the processes it adopts again after a restart. */
 export const MAIN_RUN = "main";
 export const subagentRun = (nibbletId: string): string => `subagent:${nibbletId}`;

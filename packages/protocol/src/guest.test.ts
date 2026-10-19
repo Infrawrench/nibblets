@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { decodeFrame, encodeFrame, encodeSerial, SerialReader, type SerialFrame } from "./guest.ts";
+import {
+  decodeFrame,
+  encodeFrame,
+  encodeSerial,
+  HYPERV_AGENT_PORT,
+  hypervServiceId,
+  SerialReader,
+  type SerialFrame,
+} from "./guest.ts";
 
 const bytes = (...n: number[]) => new Uint8Array(n);
 const message = (text: string): SerialFrame => ({ kind: "message", text });
@@ -53,5 +61,11 @@ describe("SerialReader", () => {
     expect(reader.push(new Uint8Array([...bogus, ...encodeSerial(message("ok"))]))).toEqual([
       message("ok"),
     ]);
+  });
+});
+
+describe("the agent's Hyper-V socket", () => {
+  it("is the service id hv_sock gives its vsock port", () => {
+    expect(hypervServiceId(HYPERV_AGENT_PORT)).toBe("00004e42-facb-11e6-bd58-64006a7986d3");
   });
 });

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -97,5 +97,24 @@ describe("Hyper-V", () => {
       memoryMb: 16384,
     });
     expect(calls[0]?.params).toEqual({ switch: "nibblets" });
+  });
+
+  it("says which guest it is, and registers the agent's Hyper-V socket, as it starts one", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "hyperv-"));
+    await writeFile(join(dir, "system.vhdx"), "");
+    const { ps, calls } = fake([{ ok: true }]);
+    await new HyperV({ powershell: ps }).start(ctx, {
+      id: "nib_c",
+      dir,
+      guest: "linux",
+      cpus: 2,
+      memoryMb: 2048,
+      imageDir: "/no-image",
+      fresh: false,
+    });
+    // How connect knows to use a Hyper-V socket rather than COM2.
+    expect(await readFile(join(dir, "guest"), "utf8")).toBe("linux");
+    expect(calls[0]?.params).toMatchObject({ service: "00004e42-facb-11e6-bd58-64006a7986d3" });
+    await rm(dir, { recursive: true, force: true });
   });
 });

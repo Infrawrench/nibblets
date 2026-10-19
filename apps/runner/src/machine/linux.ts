@@ -2,8 +2,13 @@ import { execFile } from "node:child_process";
 import { mkdir, open, readdir, readFile, stat, writeFile, type FileHandle } from "node:fs/promises";
 import { Duplex } from "node:stream";
 import { promisify } from "node:util";
-import { GUEST_PORT_NAME, TAILSCALE_GID, TAILSCALE_UID } from "@nibblet/protocol";
-import { entryArgv, type GuestPlugin } from "./guest.ts";
+import {
+  GUEST_PORT_NAME,
+  HYPERV_AGENT_PORT,
+  TAILSCALE_GID,
+  TAILSCALE_UID,
+} from "@nibblet/protocol";
+import { entryArgv, relayStream, type GuestPlugin } from "./guest.ts";
 
 const run = promisify(execFile);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -14,6 +19,8 @@ const HOME = "/home/nibblet";
 const TAILSCALE_STATE = "/var/lib/nibblet-tailscale";
 const HOME_LABEL = "nibblet-home";
 const ENTRY = new URL("../entry.ts", import.meta.url).pathname;
+/** The relay for Hyper-V's socket, which Node can't open itself. */
+const HVSOCK_RELAY = new URL("./hvsock-relay.py", import.meta.url).pathname;
 
 /**
  * Where its port shows up: a named virtio serial port (KVM), the second
@@ -193,6 +200,12 @@ export const linux: GuestPlugin = {
   },
 
   async openPort(log) {
+    // On Hyper-V, a Hyper-V socket: a COM port there loses what comes in.
+    if (await exists("/sys/bus/vmbus/devices")) {
+      await sh("modprobe", ["hv_sock"]).catch(() => "");
+      log(`talking to the host on Hyper-V socket port ${HYPERV_AGENT_PORT}`);
+      return relayStream("python3", [HVSOCK_RELAY, String(HYPERV_AGENT_PORT)]);
+    }
     // udev names the port a moment after boot.
     for (let attempt = 0; attempt < 60; attempt++) {
       for (const path of PORTS) {
