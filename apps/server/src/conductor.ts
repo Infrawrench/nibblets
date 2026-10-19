@@ -38,8 +38,7 @@ import {
 import { dropOverlaps, hostTools } from "./hostmcp.ts";
 import { onePasswordLogin } from "./onepassword.ts";
 import { keyId, mintAuthKey, readTailnetOAuth } from "./tailnet-keys.ts";
-import { opencodeLogin } from "./opencode.ts";
-import { kimiLogin } from "./kimi.ts";
+import { hostLoginFor } from "./host-login.ts";
 import { runnerName, type Orchestrator } from "./docker.ts";
 import { TerminalHub } from "./terminals.ts";
 import { desktopToken, guardToken, hashToken, newId, viewToken, type Store } from "./store.ts";
@@ -981,16 +980,10 @@ export class Conductor {
         cli: await cliLogins(this.config, row.cliCredentials, (m) =>
           console.warn(`[${nibbletId}] ${m}`),
         ),
-        opencodeLogin:
-          row.harness === "opencode"
-            ? await opencodeLogin(this.config, row.model, (m) =>
-                console.warn(`[${nibbletId}] ${m}`),
-              )
-            : null,
-        kimiLogin:
-          row.harness === "kimi"
-            ? await kimiLogin(this.config, (m) => console.warn(`[${nibbletId}] ${m}`))
-            : null,
+        hostLogin: await hostLoginFor(this.config, row.harness, {
+          model: row.model,
+          warn: (m) => console.warn(`[${nibbletId}] ${m}`),
+        }),
       },
     });
   }

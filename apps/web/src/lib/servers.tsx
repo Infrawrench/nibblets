@@ -185,8 +185,6 @@ export function CentralServers({ api, children }: { api: CentralApi; children: R
     queries: servers.map((s) => ({
       queryKey: keys.route(s.id, JSON.stringify(s.routes)),
       queryFn: () => chooseRoute(s.routes, undefined, s.id === localId),
-      // This computer's server can be reached even before its heartbeat says it's up.
-      enabled: s.online || s.id === localId,
       // Re-probe now and then, so a closer route is picked up when it appears.
       refetchInterval: 30_000,
       staleTime: 25_000,
@@ -195,55 +193,73 @@ export function CentralServers({ api, children }: { api: CentralApi; children: R
 
   // One connection per server for as long as it's listed; its base follows the route.
   const bases = useRef(new Map<string, string>());
-  // The last route that answered. A re-probe that fails once (a slow reply, a
-  // blip) keeps it rather than dropping the server; its live socket says
-  // whether it's really reachable.
+  // Historical routes are reconnect destinations, not evidence of reachability.
   const lastRoutes = useRef(new Map<string, ChosenRoute>());
   const connections = useRef(new Map<string, ServerConnection>());
-  servers.forEach((s, i) => {
-    const route = routes[i]?.data;
-    if (route) {
-      bases.current.set(s.id, route.url);
-      lastRoutes.current.set(s.id, route);
+  const subscriptions = useRef(new Map<string, () => void>());
+  const [liveStates, setLiveStates] = useState(new Map<string, LiveState>());
+  const systems = servers.map((s, i): System => {
+    const probe = routes[i];
+    const currentRoute = probe?.status === "success" ? probe.data : null;
+    if (currentRoute) {
+      bases.current.set(s.id, currentRoute.url);
+      lastRoutes.current.set(s.id, currentRoute);
+    }
+    const route = currentRoute ?? lastRoutes.current.get(s.id) ?? null;
+    let connection = connections.current.get(s.id) ?? null;
+    if (route && !connection) {
+      connection = createConnection(
+        s.id,
+        () => bases.current.get(s.id) ?? route.url,
+        () => tokens.get(s.id),
+      );
+      connections.current.set(s.id, connection);
+    }
+    const online = currentRoute != null || liveStates.get(s.id) === "open";
+    return {
+      id: s.id,
+      name: s.name,
+      platform: s.platform,
+      online,
+      local: s.id === localId,
+      route,
+      connection: online ? connection : null,
+    };
+  });
+
+  useEffect(() => {
+    const listed = new Set(servers.map((s) => s.id));
+    for (const [id, connection] of connections.current) {
+      if (!listed.has(id)) {
+        subscriptions.current.get(id)?.();
+        subscriptions.current.delete(id);
+        connection.live.close();
+        connections.current.delete(id);
+        lastRoutes.current.delete(id);
+        bases.current.delete(id);
+        setLiveStates((old) => {
+          const next = new Map(old);
+          next.delete(id);
+          return next;
+        });
+      } else if (!subscriptions.current.has(id)) {
+        subscriptions.current.set(
+          id,
+          connection.live.onState((state) => {
+            setLiveStates((old) => {
+              if (old.get(id) === state) return old;
+              return new Map(old).set(id, state);
+            });
+          }),
+        );
+      }
     }
   });
 
-  const systems = useMemo<System[]>(() => {
-    const listed = new Set(servers.map((s) => s.id));
-    for (const [id, c] of connections.current) {
-      if (!listed.has(id)) {
-        c.live.close();
-        connections.current.delete(id);
-        lastRoutes.current.delete(id);
-      }
-    }
-    return servers.map((s, i) => {
-      const local = s.id === localId;
-      const route =
-        s.online || local ? (routes[i]?.data ?? lastRoutes.current.get(s.id) ?? null) : null;
-      let connection = connections.current.get(s.id) ?? null;
-      if (route && !connection) {
-        connection = createConnection(
-          s.id,
-          () => bases.current.get(s.id) ?? route.url,
-          () => tokens.get(s.id),
-        );
-        connections.current.set(s.id, connection);
-      }
-      return {
-        id: s.id,
-        name: s.name,
-        platform: s.platform,
-        online: (s.online || local) && route !== null,
-        local,
-        route,
-        connection: route ? connection : null,
-      };
-    });
-  }, [servers, routes.map((r) => r.data?.url ?? "").join("|"), tokens]);
-
   useEffect(
     () => () => {
+      for (const off of subscriptions.current.values()) off();
+      subscriptions.current.clear();
       for (const c of connections.current.values()) c.live.close();
       connections.current.clear();
     },
@@ -282,9 +298,10 @@ function LiveBridge({ connection }: { connection: ServerConnection }) {
   useEffect(() => {
     let alive = true;
     const off = connection.live.subscribe((m) => applyLive(qc, connection.id, m));
-    const offReconnect = connection.live.onReconnect(
-      () => void catchUp(qc, connection, () => alive).catch(() => undefined),
-    );
+    // Catch up now, and again whenever the socket comes back.
+    const sync = () => void catchUp(qc, connection, () => alive).catch(() => undefined);
+    const offReconnect = connection.live.onReconnect(sync);
+    sync();
     return () => {
       alive = false;
       off();
@@ -334,7 +351,7 @@ export function applyLive(qc: QueryClient, server: string, m: LiveMessage): void
   }
 }
 
-/** After a reconnect: refetch the list, and pull each open thread forward from its cursor. */
+/** On mount and after a reconnect: refetch the list, and pull each open thread forward from its cursor. */
 async function catchUp(
   qc: QueryClient,
   connection: ServerConnection,

@@ -39,7 +39,9 @@ describe("HarnessModelLists", () => {
   });
 
   it("never puts the host's OpenCode login in a nibblet the API returns", () => {
-    expect(Object.keys(Nibblet.shape)).not.toContain("opencodeLogin");
+    const keys = Object.keys(Nibblet.shape);
+    for (const name of ["hostLogin", "opencodeLogin", "kimiLogin"])
+      expect(keys).not.toContain(name);
   });
 });
 

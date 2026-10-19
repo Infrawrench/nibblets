@@ -169,6 +169,7 @@ export function socketFeed(url: () => Promise<string>): LiveFeed {
   let attempt = 0;
   let everOpened = false;
   let watchdog: ReturnType<typeof setTimeout> | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let state: LiveState = "connecting";
 
   const setState = (s: LiveState) => {
@@ -187,7 +188,9 @@ export function socketFeed(url: () => Promise<string>): LiveFeed {
     else if (attempt > QUIET_RETRIES) setState("closed");
     let ws: WebSocket;
     try {
-      ws = new WebSocket(await url());
+      const address = await url();
+      if (closed) return;
+      ws = new WebSocket(address);
     } catch {
       retry();
       return;
@@ -220,7 +223,10 @@ export function socketFeed(url: () => Promise<string>): LiveFeed {
     if (closed) return;
     attempt++;
     // The first retry is immediate: most drops are an idle socket being tidied away.
-    setTimeout(() => void connect(), attempt === 1 ? 0 : Math.min(15_000, 500 * 2 ** attempt));
+    retryTimer = setTimeout(
+      () => void connect(),
+      attempt === 1 ? 0 : Math.min(15_000, 500 * 2 ** attempt),
+    );
   };
 
   void connect();
@@ -244,6 +250,7 @@ export function socketFeed(url: () => Promise<string>): LiveFeed {
     close() {
       closed = true;
       if (watchdog) clearTimeout(watchdog);
+      if (retryTimer) clearTimeout(retryTimer);
       socket?.close();
     },
   };
