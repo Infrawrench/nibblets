@@ -12,7 +12,10 @@ class InstantSocket {
   close() {}
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 describe("live feed state", () => {
   it("tells a listener that arrives after the socket opened that it's open", async () => {
@@ -24,4 +27,34 @@ describe("live feed state", () => {
     expect(seen).toEqual(["open"]);
     feed.close();
   });
+});
+
+it("does not open a socket after closing while its ticket is pending", async () => {
+  const socket = vi.fn();
+  vi.stubGlobal("WebSocket", socket);
+  let resolve!: (url: string) => void;
+  const feed = socketFeed(
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  feed.close();
+  resolve("ws://remote.example/api/live");
+  await Promise.resolve();
+  expect(socket).not.toHaveBeenCalled();
+});
+
+it("cancels a pending reconnect timer on close", async () => {
+  vi.useFakeTimers();
+  const ticket = vi.fn(async () => {
+    throw new Error("offline");
+  });
+  const feed = socketFeed(ticket);
+  await Promise.resolve();
+  expect(vi.getTimerCount()).toBe(1);
+  feed.close();
+  expect(vi.getTimerCount()).toBe(0);
+  await vi.runAllTimersAsync();
+  expect(ticket).toHaveBeenCalledTimes(1);
 });
