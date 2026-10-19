@@ -51,7 +51,8 @@ export function NibbletSpending({
   const [draft, setDraft] = useState<LimitsDraft>(saved);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => setDraft(saved), [saved]);
+  // By content: every live update brings a new nibblet, which mustn't wipe what's half typed.
+  useEffect(() => setDraft(saved), [JSON.stringify(saved)]);
 
   if (assets.length === 0 && !cards.data?.length) return null;
 
