@@ -48,6 +48,14 @@ jobs:
         env:
           NIBBLET_TEST_DATABASE_URL: postgres://nibblet:nibblet@localhost:5432/nibblet
 
+  windows-helpers:
+    name: Windows guest helpers
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v5
+      - run: ./test/windows/helpers.ps1
+        shell: pwsh
+
   images:
     name: Docker images
     runs-on: ubuntu-latest
