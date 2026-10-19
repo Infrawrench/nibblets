@@ -1,7 +1,7 @@
 import { TunnelConfig, type TunnelStatus } from "@nibblet/protocol";
 import type Docker from "dockerode";
 import type { Config } from "./config.ts";
-import { isNotFound, type Orchestrator } from "./docker.ts";
+import { isNotFound } from "./docker.ts";
 import type { Store } from "./store.ts";
 
 export const TUNNEL_IMAGE = "cloudflare/cloudflared:2026.10.0";
@@ -12,6 +12,32 @@ const STARTING_POLL_MS = 1000;
 const HEALTHY_POLL_MS = 15_000;
 const ERROR_RETRY_MS = 5000;
 const DOCKER_TIMEOUT_MS = 30_000;
+
+type ContainerInfo = Pick<Docker.ContainerInspectInfo, "Id"> & {
+  Config: Pick<Docker.ContainerInspectInfo["Config"], "Cmd">;
+  State: Pick<Docker.ContainerInspectInfo["State"], "Running" | "StartedAt">;
+};
+
+interface TunnelContainer {
+  inspect(options: { abortSignal: AbortSignal }): Promise<ContainerInfo>;
+  start(options: { abortSignal: AbortSignal }): Promise<void>;
+  remove(options: { force: boolean; abortSignal: AbortSignal }): Promise<void>;
+  logs(options: Docker.ContainerLogsOptions & { follow?: false }): Promise<Buffer>;
+}
+
+/** Just the parts of Docker the tunnel uses. */
+interface TunnelDocker {
+  getContainer(id: string): TunnelContainer;
+  createContainer(options: Docker.ContainerCreateOptions): Promise<TunnelContainer>;
+  listImages(options: Docker.ListImagesOptions): Promise<Pick<Docker.ImageInfo, "Id">[]>;
+  pull(repoTag: string, options: { abortSignal: AbortSignal }): Promise<NodeJS.ReadableStream>;
+  modem: {
+    followProgress(stream: NodeJS.ReadableStream, onFinished: (err: Error | null) => void): void;
+  };
+}
+
+type TunnelStore = Pick<Store, "getSetting" | "setSetting">;
+type TunnelEnv = Pick<Config, "NIBBLET_INTERNAL_URL" | "NIBBLET_PUBLIC_URL" | "NIBBLET_NETWORK">;
 
 /** Docker's logs endpoint takes Unix seconds; without a usable start time, read the whole log. */
 function unixSeconds(timestamp: string): number {
@@ -35,11 +61,11 @@ export class Tunnel {
   private pending = Promise.resolve();
   private startingPollMs = STARTING_POLL_MS;
   private quickUrl: { container: string; startedAt: string; url: string } | undefined;
-  private readonly docker: Orchestrator;
-  private readonly store: Store;
-  private readonly config: Config;
+  private readonly docker: { docker: TunnelDocker };
+  private readonly store: TunnelStore;
+  private readonly config: TunnelEnv;
 
-  constructor(docker: Orchestrator, store: Store, config: Config) {
+  constructor(docker: { docker: TunnelDocker }, store: TunnelStore, config: TunnelEnv) {
     this.docker = docker;
     this.store = store;
     this.config = config;
@@ -121,7 +147,7 @@ export class Tunnel {
     if (!this.active(generation)) return;
     try {
       let container = this.docker.docker.getContainer(NAME);
-      let info: Docker.ContainerInspectInfo | undefined;
+      let info: ContainerInfo | undefined;
       try {
         info = await container.inspect({ abortSignal: AbortSignal.timeout(DOCKER_TIMEOUT_MS) });
       } catch (err) {

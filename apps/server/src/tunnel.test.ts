@@ -1,7 +1,6 @@
+import { Readable } from "node:stream";
+import type Docker from "dockerode";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Config } from "./config.ts";
-import type { Orchestrator } from "./docker.ts";
-import type { Store } from "./store.ts";
 import { Tunnel } from "./tunnel.ts";
 
 const command = ["tunnel", "--no-autoupdate", "--url", "http://server:8420"];
@@ -25,32 +24,31 @@ function setup(running = true) {
     remove: vi.fn(async () => {
       exists = false;
     }),
-    logs: vi.fn(async (_options: unknown): Promise<Buffer> => Buffer.from("")),
+    logs: vi.fn(async (_options: Docker.ContainerLogsOptions): Promise<Buffer> => Buffer.from("")),
   };
   const docker = {
     getContainer: vi.fn(() => container),
-    listImages: vi.fn(async () => [{}]),
-    pull: vi.fn(async () => ({})),
-    modem: { followProgress: vi.fn((_stream, done) => done(null)) },
-    createContainer: vi.fn(async (options) => {
+    listImages: vi.fn(async () => [{ Id: "image" }]),
+    pull: vi.fn(async () => Readable.from([])),
+    modem: {
+      followProgress: (_stream: NodeJS.ReadableStream, done: (err: Error | null) => void) =>
+        done(null),
+    },
+    createContainer: vi.fn(async (options: Docker.ContainerCreateOptions) => {
       exists = true;
-      info.Config.Cmd = options.Cmd;
+      info.Config.Cmd = options.Cmd ?? [];
       return container;
     }),
   };
   const store = {
-    setSetting: vi.fn(async (_key: string, _value: unknown) => {}),
-    getSetting: vi.fn(async () => ({ mode: "quick" })),
+    setSetting: vi.fn(async () => {}),
+    getSetting: async <T>(_key: string, _parse: (v: never) => T, fallback: T) => fallback,
   };
-  const tunnel = new Tunnel(
-    { docker } as unknown as Orchestrator,
-    store as unknown as Store,
-    {
-      NIBBLET_INTERNAL_URL: "http://server:8420",
-      NIBBLET_PUBLIC_URL: "http://local",
-      NIBBLET_NETWORK: "network",
-    } as Config,
-  );
+  const tunnel = new Tunnel({ docker }, store, {
+    NIBBLET_INTERNAL_URL: "http://server:8420",
+    NIBBLET_PUBLIC_URL: "http://local",
+    NIBBLET_NETWORK: "network",
+  });
   return { tunnel, container, docker, store, info };
 }
 
@@ -254,7 +252,7 @@ describe("Tunnel recovery", () => {
       await initial;
       await next;
       expect(
-        docker.createContainer.mock.calls.every(([options]) => options.Cmd.includes("run")),
+        docker.createContainer.mock.calls.every(([options]) => options.Cmd?.includes("run")),
       ).toBe(true);
       expect(container.start).toHaveBeenCalledTimes(action === "token" ? 1 : 0);
     },
