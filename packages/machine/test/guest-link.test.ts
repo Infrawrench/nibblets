@@ -1,6 +1,6 @@
-import { Writable } from "node:stream";
+import { Readable, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { encodeFrame, ServerToGuest } from "@nibblet/protocol";
+import { decodeFrame, encodeFrame, ServerToGuest } from "@nibblet/protocol";
 import { GuestLink, type GuestSocket } from "../src/guest-link.ts";
 
 /** A socket to a pretend guest: what the link sends is kept; `say` is the guest talking. */
@@ -107,5 +107,27 @@ describe("a guest link", () => {
     stop.abort(new Error("stalled"));
     await expect(job).rejects.toThrow(/archive-home stalled: a nibblet\/AppData\/NTUSER\.DAT/);
     expect(guest.sent).toContainEqual({ type: "signal", run: run.run, signal: "SIGKILL" });
+  });
+
+  it("sends a stream of strings as their bytes, not an empty frame", async () => {
+    const guest = pretend();
+    const frames: Uint8Array[] = [];
+    const send = guest.socket.send;
+    guest.socket.send = (data) => {
+      if (typeof data !== "string") frames.push(data);
+      send(data);
+    };
+    const opening = GuestLink.open(guest.socket, { nibbletId: "n", boot: "b" });
+    guest.hello();
+    const link = await opening;
+    void link.runToEnd({ command: "product-key", stdin: Readable.from(["ABCDE"]) }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 20));
+    const run = guest.sent.find((m) => m.type === "run");
+    if (run?.type !== "run" || run.stdin === null) throw new Error("no run");
+    // What it's given goes in once it's started.
+    guest.say({ type: "started", run: run.run, pid: 2 });
+    await new Promise((r) => setTimeout(r, 20));
+    const sent = frames.map((f) => decodeFrame(f)).find((f) => f?.channel === run.stdin);
+    expect(new TextDecoder().decode(sent?.data)).toBe("ABCDE");
   });
 });

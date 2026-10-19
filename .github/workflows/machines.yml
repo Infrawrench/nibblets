@@ -48,6 +48,7 @@ jobs:
       - name: Build the runner and the server
         if: env.WINDOWS_ISO_URL != ''
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           docker build -f docker/runner.Dockerfile -t nibblet/runner:dev .
           docker build -f docker/server.Dockerfile -t nibblet/server:dev .
       - uses: pnpm/action-setup@v4
@@ -114,6 +115,7 @@ jobs:
         # Windows Server has no Default Switch. Its containers' NAT goes first:
         # Windows doesn't always allow two.
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           Get-NetNat | Remove-NetNat -Confirm:$false
           New-VMSwitch -Name nibblets -SwitchType Internal | Out-Null
           $adapter = Get-NetAdapter | Where-Object Name -like '*(nibblets)*'
@@ -127,6 +129,7 @@ jobs:
           Set-NetFirewallProfile -All -Enabled False
       - name: Docker in WSL
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           wsl --set-default-version 2
           wsl --install -d $env:DISTRO --no-launch --web-download
           $setup = @'
@@ -154,8 +157,21 @@ jobs:
           "DOCKER_HOST=tcp://localhost:2375" >> $env:GITHUB_ENV
           $gateway = (wsl -d $env:DISTRO -- sh -c "ip route show default | cut -d' ' -f3").Trim()
           "NIBBLET_TEST_HOST_FROM_DOCKER=$gateway" >> $env:GITHUB_ENV
+      - name: BuildKit for Docker's CLI
+        # Windows' has no buildx, and without it the runner image (COPY --chmod) won't build.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $release = Invoke-RestMethod https://api.github.com/repos/docker/buildx/releases/latest -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN" }
+          $asset = $release.assets | Where-Object name -like '*.windows-amd64.exe' | Select-Object -First 1
+          $plugins = Join-Path $HOME '.docker\cli-plugins'
+          New-Item -ItemType Directory -Force -Path $plugins | Out-Null
+          Invoke-WebRequest $asset.browser_download_url -OutFile (Join-Path $plugins 'docker-buildx.exe')
+          docker buildx version
       - name: Check Docker
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           docker version --format 'client {{.Client.Version}}, server {{.Server.Version}} ({{.Server.Os}})'
           docker compose version
       - name: Build the runner and the server

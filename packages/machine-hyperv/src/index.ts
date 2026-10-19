@@ -139,7 +139,7 @@ export class HyperV implements HypervisorPlugin {
   async detect(_ctx: HostContext) {
     if (process.platform !== "win32")
       return { available: false, detail: "Only on Windows", guests: [] };
-    const found = await psJson(this.ps, Detect, DETECT, { switch: this.switchName });
+    const found = await this.host();
     if (!found.ok) return { available: false, detail: found.detail, guests: [] };
     const guests: GuestOs[] = ["linux", "windows"];
     return { available: true, detail: null, guests };
@@ -219,7 +219,12 @@ export class HyperV implements HypervisorPlugin {
   }
 
   async capacity() {
-    const found = await psJson(this.ps, Detect, DETECT, {});
+    const found = await this.host();
     return found.ok ? { cpus: found.cpus, memoryMb: found.memoryMb } : null;
+  }
+
+  /** Whether it can run VMs here, through its switch, and what it has to give them. */
+  private host() {
+    return psJson(this.ps, Detect, DETECT, { switch: this.switchName });
   }
 }

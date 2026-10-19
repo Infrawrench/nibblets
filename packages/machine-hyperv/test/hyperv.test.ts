@@ -89,4 +89,13 @@ describe("Hyper-V", () => {
     expect(calls[0]?.params).toMatchObject({ switch: "nibblets" });
     await rm(dir, { recursive: true, force: true });
   });
+
+  it("asks about its own switch whenever it looks at the host", async () => {
+    const { ps, calls } = fake([{ ok: true, cpus: 4, memoryMb: 16384 }]);
+    expect(await new HyperV({ powershell: ps, switch: "nibblets" }).capacity()).toEqual({
+      cpus: 4,
+      memoryMb: 16384,
+    });
+    expect(calls[0]?.params).toEqual({ switch: "nibblets" });
+  });
 });

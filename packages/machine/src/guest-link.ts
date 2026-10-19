@@ -443,12 +443,21 @@ export class GuestLink {
   /** `source` goes out on `channel`, waiting while the socket is backed up; then the empty frame. */
   private pipeIn(channel: number, source: Readable): void {
     const gone = () => this.isGone;
-    source.on("data", (chunk: Buffer) => {
+    source.on("data", (chunk: Buffer | string) => {
       if (this.isGone) {
         source.destroy();
         return;
       }
-      this.socket.send(encodeFrame(channel, chunk));
+      // A stream of strings (Readable.from(["…"]), say) sends their bytes. And
+      // if sending fails, that's this stream's error, not the whole server's.
+      try {
+        this.socket.send(
+          encodeFrame(channel, typeof chunk === "string" ? Buffer.from(chunk) : chunk),
+        );
+      } catch (err) {
+        source.destroy(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
       if (this.socket.bufferedAmount > HIGH_WATER) {
         source.pause();
         void room(this.socket, gone).then(() => source.resume());

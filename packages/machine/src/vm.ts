@@ -685,7 +685,7 @@ export class VirtualMachines implements MachinePlugin {
     // On stdin: in no command line or environment the guest's other users might see.
     await this.withGuest(id, (link) =>
       link.runToEnd(
-        { command: "product-key", stdin: Readable.from([productKey]), stdout: out },
+        { command: "product-key", stdin: Readable.from([Buffer.from(productKey)]), stdout: out },
         5 * 60_000,
       ),
     );
