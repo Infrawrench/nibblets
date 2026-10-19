@@ -7,7 +7,10 @@ import type { Store } from "./store.ts";
 export const TUNNEL_IMAGE = "cloudflare/cloudflared:2026.10.0";
 const NAME = "nibblet-tunnel";
 const QUICK_URL = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/g;
+// Poll fast only while waiting for a quick URL; back off once up or failing.
 const RETRY_MS = 1000;
+const HEALTHY_POLL_MS = 15_000;
+const ERROR_RETRY_MS = 5000;
 const DOCKER_TIMEOUT_MS = 30_000;
 
 export class Tunnel {
@@ -173,9 +176,15 @@ export class Tunnel {
       };
     } finally {
       if (this.active(generation) && (config.mode !== "off" || this.status.state === "error")) {
+        const delay =
+          this.status.state === "up"
+            ? HEALTHY_POLL_MS
+            : this.status.state === "error"
+              ? ERROR_RETRY_MS
+              : RETRY_MS;
         this.timer = setTimeout(() => {
           void this.enqueue(() => this.reconcile(config, generation));
-        }, RETRY_MS);
+        }, delay);
         this.timer.unref();
       }
     }

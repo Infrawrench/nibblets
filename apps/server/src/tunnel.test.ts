@@ -73,6 +73,38 @@ describe("Tunnel recovery", () => {
     expect(container.start).not.toHaveBeenCalled();
   });
 
+  it("health-checks an up tunnel every 15 s, not every second", async () => {
+    const { tunnel, container } = setup();
+    await tunnel.configure({ mode: "token", token: "test", hostname: "example.com" });
+    expect(tunnel.current().state).toBe("up");
+    const configured = container.inspect.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(container.inspect).toHaveBeenCalledTimes(configured);
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(container.inspect).toHaveBeenCalledTimes(configured + 1);
+  });
+
+  it("retries an errored tunnel after 5 s, not 1 s", async () => {
+    const { tunnel, container } = setup();
+    container.inspect.mockRejectedValueOnce(new Error("offline"));
+    await tunnel.configure({ mode: "quick" });
+    expect(tunnel.current().state).toBe("error");
+    expect(container.inspect).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(container.inspect).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(container.inspect).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps polling every second while a quick URL has not appeared", async () => {
+    const { tunnel, container } = setup();
+    await tunnel.configure({ mode: "quick" });
+    expect(tunnel.current().state).toBe("starting");
+    expect(container.inspect).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(container.inspect).toHaveBeenCalledTimes(2);
+  });
+
   it.each(["inspect", "pull", "start"] as const)(
     "recovers after a transient %s failure",
     async (operation) => {
@@ -87,7 +119,7 @@ describe("Tunnel recovery", () => {
         expect(container.remove).not.toHaveBeenCalled();
       }
       container.logs.mockResolvedValue(Buffer.from("https://recovered.trycloudflare.com"));
-      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(5000);
       expect(tunnel.current()).toMatchObject({
         state: "up",
         url: "https://recovered.trycloudflare.com",
@@ -106,18 +138,18 @@ describe("Tunnel recovery", () => {
       expect.objectContaining({ since: info.State.StartedAt }),
     );
     container.logs.mockResolvedValue(Buffer.from("normal operation after startup log rollover"));
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(15_000);
     expect(tunnel.current().url).toBe("https://last.trycloudflare.com");
     info.State.StartedAt = "2026-10-18T17:01:00.987654321Z";
     container.logs.mockResolvedValue(Buffer.from(""));
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(15_000);
     expect(tunnel.current()).toMatchObject({ state: "starting", url: null });
     container.logs.mockResolvedValue(Buffer.from("https://restart.trycloudflare.com"));
     await vi.advanceTimersByTimeAsync(1000);
     expect(tunnel.current().url).toBe("https://restart.trycloudflare.com");
     info.Id = "replacement";
     container.logs.mockResolvedValue(Buffer.from(""));
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(15_000);
     expect(tunnel.current()).toMatchObject({ state: "starting", url: null });
   });
 
