@@ -361,6 +361,18 @@ describe("Bank", () => {
     expect(logs.join("\n")).toMatch(/never settled/);
   });
 
+  it("gives an old card killed now a day from its killing to settle", async () => {
+    const { card } = await request("20.00", "multi_use");
+    clock = new Date(clock.getTime() + 2 * 24 * 60 * 60_000);
+    issuer.unsettled = true;
+    expect(await bank.kill(card.id, "user")).toMatchObject({ state: "closing" });
+    await bank.sync();
+    expect((await store.cardRow(card.id)).state).toBe("closing");
+    clock = new Date(clock.getTime() + 25 * 60 * 60_000);
+    await bank.sync();
+    expect((await store.cardRow(card.id)).state).toBe("closed");
+  });
+
   it("doesn't pass on a plugin's own error, which could carry a credential", async () => {
     const { card } = await request("5.00", "multi_use");
     issuer.leaky = true;

@@ -396,11 +396,12 @@ function describeCard(card: Card, path: string | null) {
 }
 
 /** A tool's error as text the agent can act on, rather than a failed call. */
+/** A card tool's result, or its refusal as a tool error the agent can tell from success. */
 async function answer(work: () => Promise<ReturnType<typeof text>>) {
   try {
     return await work();
   } catch (err) {
-    if (err instanceof RpcError) return text(err.message);
+    if (err instanceof RpcError) return { ...text(err.message), isError: true };
     throw err;
   }
 }

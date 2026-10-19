@@ -94,6 +94,7 @@ export const Card = z.object({
   state: CardState,
   closedBy: CardClosedBy.nullable(),
   createdAt: Timestamp,
+  /** When it closed; while it's `closing`, when it was killed. */
   closedAt: Timestamp.nullable(),
 });
 export type Card = z.infer<typeof Card>;

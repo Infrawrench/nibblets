@@ -405,19 +405,25 @@ export class Bank {
 
   /**
    * Closes a card at its provider. Until the provider says it's settled, it
-   * stays `closing` (and counts in full), and `sync` tries again; after a
-   * day it's recorded as closed anyway, with a warning, since its id (and so
-   * a wallet's key) is still in its row.
+   * stays `closing` (and counts in full), and `sync` tries again; a day
+   * after it was killed, it's recorded as closed anyway, with a warning,
+   * since its id (and so a wallet's key) is still in its row.
    */
   private async close(row: CardRow, plugin: BankPlugin, by: CardClosedBy): Promise<CardRow> {
     if (row.state !== "closing") {
-      row = await this.deps.store.updateCard(row.id, { state: "closing", closedBy: by });
+      // Its `closedAt` is when it was killed until it's closed.
+      row = await this.deps.store.updateCard(row.id, {
+        state: "closing",
+        closedBy: by,
+        closedAt: this.now(),
+      });
       this.paths.delete(row.id);
       await this.deps.files.remove(row.nibbletId, row.id).catch(() => undefined);
       this.changed(row.nibbletId);
     }
     const result = await this.guard(plugin, "close the card", () => plugin.close(cardRef(row)));
-    const stale = this.now().getTime() - row.createdAt.getTime() >= UNSETTLED_AFTER_MS;
+    const killed = row.closedAt ?? row.createdAt;
+    const stale = this.now().getTime() - killed.getTime() >= UNSETTLED_AFTER_MS;
     if (!result.settled && !stale) {
       return this.deps.store.updateCard(row.id, {
         spentMinor: result.spent.toString(),

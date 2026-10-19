@@ -48,6 +48,15 @@ describe("CardFiles", () => {
     await expect(stat(path)).rejects.toThrow();
   });
 
+  it("removes a card asked to go while it's still being written", async () => {
+    // The server can time out on a put and kill the card before the put lands.
+    const writing = cards.put(file);
+    await cards.remove(file.id);
+    await writing;
+    await expect(stat(cards.pathOf(file.id))).rejects.toThrow();
+    await expect(stat(`${cards.pathOf(file.id)}.partial`)).rejects.toThrow();
+  });
+
   it("refuses an id that could leave its folder", async () => {
     await expect(cards.put({ ...file, id: "../escape" })).rejects.toThrow(/isn't a card id/);
     await expect(cards.remove("a/b")).rejects.toThrow(/isn't a card id/);
