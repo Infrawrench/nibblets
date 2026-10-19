@@ -15,6 +15,9 @@ export function useQueuedMessages(
   const offline = useOffline();
   const [editing, setEditing] = useState<OutgoingMessage | null>(null);
   const release = useRef<(() => void) | null>(null);
+  const committing = useRef(false);
+  const releaseRequested = useRef(false);
+  const [savingEdit, setSavingEdit] = useState(false);
   const reserving = useRef(false);
   const parked = useRef("");
   const latestText = useRef(text);
@@ -23,22 +26,29 @@ export function useQueuedMessages(
   const pending = offline.payload.outbox.filter(
     (m) => m.server === server && m.conversation === id && m.state !== "accepted",
   );
-  const done = () => {
+  const releaseLease = () => {
+    if (committing.current) {
+      releaseRequested.current = true;
+      return;
+    }
     release.current?.();
     release.current = null;
-    setEditing(null);
+    releaseRequested.current = false;
+  };
+  const done = () => {
+    releaseLease();
+    if (mounted.current) setEditing(null);
   };
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      release.current?.();
+      releaseLease();
     };
   }, [server, id]);
   useEffect(() => {
     if (!offline.vault?.unlocked) {
-      release.current?.();
-      release.current = null;
+      releaseLease();
       setEditing(null);
       setText("");
     }
@@ -88,27 +98,36 @@ export function useQueuedMessages(
     await reserved;
   };
   const cancel = () => {
-    setText(parked.current);
+    if (mounted.current) setText(parked.current);
     done();
   };
   const send = async (attachments: string[]) => {
+    if (committing.current) throw new Error("This queued edit is still being saved.");
     if (editing) {
-      await offline.mutate((data) => {
-        const existing = data.outbox.find((m) => m.id === editing.id);
-        if (!existing || existing.attempted || existing.state !== "queued")
-          throw new Error("This message is already being sent.");
-        const updated = { ...existing, text: text.trim() };
-        enqueueMessage(
-          { ...data, outbox: data.outbox.filter((m) => m.id !== editing.id) },
-          updated,
-        );
-        return { ...data, outbox: data.outbox.map((m) => (m.id === editing.id ? updated : m)) };
-      });
-      setText(parked.current);
-      done();
+      committing.current = true;
+      setSavingEdit(true);
+      try {
+        await offline.mutate((data) => {
+          const existing = data.outbox.find((m) => m.id === editing.id);
+          if (!existing || existing.attempted || existing.state !== "queued")
+            throw new Error("This message is already being sent.");
+          const updated = { ...existing, text: text.trim() };
+          enqueueMessage(
+            { ...data, outbox: data.outbox.filter((m) => m.id !== editing.id) },
+            updated,
+          );
+          return { ...data, outbox: data.outbox.map((m) => (m.id === editing.id ? updated : m)) };
+        });
+        if (mounted.current) setText(parked.current);
+        releaseRequested.current = true;
+      } finally {
+        committing.current = false;
+        if (mounted.current) setSavingEdit(false);
+        if (releaseRequested.current) done();
+      }
     } else {
       await offline.enqueue(server, id, text.trim(), attachments);
-      setText("");
+      if (mounted.current) setText("");
     }
   };
   const remove = async (message: OutgoingMessage) => {
@@ -123,7 +142,7 @@ export function useQueuedMessages(
       }),
     );
   };
-  return { offline, pending, editing, recall, cancel, send, remove };
+  return { offline, pending, editing, savingEdit, recall, cancel, send, remove };
 }
 
 export function QueuedMessages({ queue }: { queue: ReturnType<typeof useQueuedMessages> }) {
@@ -164,7 +183,10 @@ export function QueuedMessages({ queue }: { queue: ReturnType<typeof useQueuedMe
           {queue.editing.attachments.length
             ? ` · ${queue.editing.attachments.length} existing attachment(s) retained`
             : ""}
-          . <button onClick={queue.cancel}>Cancel edit</button>
+          .{" "}
+          <button disabled={queue.savingEdit} onClick={queue.cancel}>
+            Cancel edit
+          </button>
         </div>
       ) : null}
     </div>
