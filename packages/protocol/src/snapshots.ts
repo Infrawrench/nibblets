@@ -62,11 +62,14 @@ export type SnapshotTimeline = z.infer<typeof SnapshotTimeline>;
 export const HOME_ARCHIVE_EXCLUDES = [
   "nibblet/.cache",
   "nibblet/.npm/_cacache",
-  // The browser's profile, in the guard's home (and where it was before the guard).
-  ...["nibblet/.guard/.config/chromium", "nibblet/.config/chromium"].flatMap((profile) => [
-    `${profile}/*/Cache`,
-    `${profile}/*/Code Cache`,
-    `${profile}/*/GPUCache`,
-    `${profile}/*/Service Worker/CacheStorage`,
-  ]),
+  // The browser's profile, in the guard's home (and where it was before the
+  // guard), and Edge's on Windows.
+  ...["nibblet/.guard/.config/chromium", "nibblet/.config/chromium", "nibblet/.browser"].flatMap(
+    (profile) => [
+      `${profile}/*/Cache`,
+      `${profile}/*/Code Cache`,
+      `${profile}/*/GPUCache`,
+      `${profile}/*/Service Worker/CacheStorage`,
+    ],
+  ),
 ];

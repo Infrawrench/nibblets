@@ -54,7 +54,12 @@ export interface WindowsSetup {
   arch: "amd64" | "arm64";
   /** Which edition in the installer, by its index; 1 is the first. */
   imageIndex?: number;
+  /** The OpenComputerUse release to install for its browser and desktop; WINDOWS_OCU_VERSION unless given. */
+  ocu?: string;
 }
+
+/** The OpenComputerUse release Windows guests run: 0.11 or later for a live view of them. */
+export const WINDOWS_OCU_VERSION = "0.10.0";
 
 const xml = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -255,6 +260,11 @@ if ($have.Trim() -ne $want) {
     }
     if ($compile.ExitCode -ne 0) { throw "Building its $helper helper failed: $((Get-Content "$root\\csc.log" -Raw).Trim())" }
   }
+  # What drives its browser and desktop. There's no build for ARM.
+  if ($arch -eq 'x64') {
+    Say "Downloading OpenComputerUse $($install.ocu)"
+    Get-Download "https://github.com/IAmJSD/OpenComputerUse/releases/download/v$($install.ocu)/opencomputeruse-windows-x86_64.exe" "$root\\bin\\opencomputeruse.exe"
+  }
   Set-Content "$root\\app\\.nibblets" $want
 }
 
@@ -265,6 +275,57 @@ if (Test-Path "$root\\preparing") {
     if ($waited -ge 30) { throw "Windows' setup didn't finish: it's at $((Get-ItemProperty $state -ErrorAction SilentlyContinue).ImageState)" }
     Say "Waiting for Windows to finish setting up, $waited minutes in"
     Start-Sleep -Seconds 60
+  }
+  # A desktop for its browser and apps: the agent's user, signed in at boot.
+  $secret = 'C:\\ProgramData\\Nibblets\\agent.json'
+  if (-not (Test-Path $secret)) {
+    Say 'Setting up its desktop'
+    New-Item -ItemType Directory -Force -Path (Split-Path $secret) | Out-Null
+    $chars = [char[]]'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    $bytes = New-Object byte[] 24
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    $password = (-join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })) + 'aA1!'
+    $pw = ConvertTo-SecureString $password -AsPlainText -Force
+    New-LocalUser -Name 'nibblet' -Password $pw -PasswordNeverExpires -UserMayNotChangePassword -Description 'Nibblets agent' | Out-Null
+    Add-LocalGroupMember -Group 'Users' -Member 'nibblet'
+    # As the entry keeps it: for runas, and SYSTEM's and Administrators' alone.
+    @{ user = 'nibblet'; password = $password } | ConvertTo-Json -Compress | Set-Content -Path $secret -Encoding ascii
+    icacls $secret /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' /Q | Out-Null
+    $list = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\SpecialAccounts\\UserList'
+    New-Item -Path $list -Force | Out-Null
+    New-ItemProperty -Path $list -Name 'nibblet' -Value 0 -PropertyType DWord -Force | Out-Null
+    # Where its home disk mounts: made now, so Windows puts its profile beside it, not in it.
+    New-Item -ItemType Directory -Force -Path 'C:\\Users\\nibblet' | Out-Null
+    $winlogon = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon'
+    Set-ItemProperty $winlogon -Name AutoAdminLogon -Value '1'
+    Set-ItemProperty $winlogon -Name DefaultUserName -Value 'nibblet'
+    Set-ItemProperty $winlogon -Name DefaultDomainName -Value $env:COMPUTERNAME
+    Set-ItemProperty $winlogon -Name DefaultPassword -Value $password
+    Set-ItemProperty $winlogon -Name EnableFirstLogonAnimation -Value 0 -Type DWord
+    # Nothing between it and its desktop: no privacy questions, no lock screen, no sleep.
+    function Policy($path, $name, $value, $type = 'DWord') {
+      New-Item -Path $path -Force -ErrorAction SilentlyContinue | Out-Null
+      New-ItemProperty -Path $path -Name $name -Value $value -PropertyType $type -Force | Out-Null
+    }
+    Policy 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\OOBE' DisablePrivacyExperience 1
+    Policy 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\Personalization' NoLockScreen 1
+    Policy 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent' DisableWindowsConsumerFeatures 1
+    powercfg /change monitor-timeout-ac 0
+    powercfg /change standby-timeout-ac 0
+    powercfg /hibernate off
+    # Nor "Let's finish setting up your device", for every new user.
+    reg load 'HKU\\NibbletDefault' 'C:\\Users\\Default\\NTUSER.DAT' | Out-Null
+    Policy 'Registry::HKEY_USERS\\NibbletDefault\\Software\\Microsoft\\Windows\\CurrentVersion\\UserProfileEngagement' ScoobeSystemSettingEnabled 0
+    [GC]::Collect()
+    reg unload 'HKU\\NibbletDefault' | Out-Null
+    # Its browser is Edge, with its profile on its home disk, and no first-run questions.
+    $edge = 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge'
+    Policy $edge HideFirstRunExperience 1
+    Policy $edge AutoImportAtFirstRun 4
+    Policy $edge DefaultBrowserSettingEnabled 0
+    Policy $edge BackgroundModeEnabled 0
+    Policy $edge StartupBoostEnabled 0
+    Policy $edge UserDataDir 'C:\\Users\\nibblet\\.browser' String
   }
   Remove-Item -Force "$root\\preparing"
   Say '${INSTALL_DONE}'
@@ -289,7 +350,9 @@ export function windowsSetupFiles(setup: WindowsSetup): IsoFile[] {
     { name: "BOOTSTRAP.PS1", data: encoder.encode(BOOTSTRAP_PS1) },
     {
       name: "INSTALL.JSON",
-      data: encoder.encode(JSON.stringify({ repo: setup.repo, ref: setup.ref })),
+      data: encoder.encode(
+        JSON.stringify({ repo: setup.repo, ref: setup.ref, ocu: setup.ocu ?? WINDOWS_OCU_VERSION }),
+      ),
     },
   ];
 }

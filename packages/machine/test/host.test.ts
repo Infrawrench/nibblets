@@ -9,6 +9,7 @@ import {
   makeIso,
   SETUP_LABEL,
   SETUP_PS1,
+  WINDOWS_OCU_VERSION,
   windowsSetupFiles,
 } from "../src/host/index.ts";
 
@@ -74,7 +75,20 @@ describe("Windows' setup disc", () => {
     expect(JSON.parse(text("INSTALL.JSON"))).toEqual({
       repo: "Infrawrench/nibblets",
       ref: "v0.4.0",
+      ocu: WINDOWS_OCU_VERSION,
     });
+  });
+
+  it("signs the agent's user in at boot, for a desktop, with Edge's profile on its home disk", () => {
+    const boot = text("BOOTSTRAP.PS1");
+    expect(boot).toContain("AutoAdminLogon -Value '1'");
+    expect(boot).toContain("DefaultUserName -Value 'nibblet'");
+    // The home disk's mount point comes first, so the profile goes beside it.
+    expect(boot.indexOf("'C:\\Users\\nibblet' | Out-Null")).toBeLessThan(
+      boot.indexOf("AutoAdminLogon"),
+    );
+    expect(boot).toContain("UserDataDir 'C:\\Users\\nibblet\\.browser' String");
+    expect(boot).toContain("opencomputeruse-windows-x86_64.exe");
   });
 
   it("finds itself by its label, and runs setup at specialize", () => {

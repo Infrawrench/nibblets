@@ -19,8 +19,10 @@
  * The runner starts another, the desktop (see desktop.ts), for the agent's
  * other apps, as the agent's own user.
  *
- * Overrides: `OCU_CMD` (default `opencomputeruse`), `OCU_ARGS` (space
- * separated), `OCU_MCP_URL`.
+ * Overrides: `OCU_CMD` (default `opencomputeruse`), `OCU_CMD_ARGS` (a JSON
+ * array of arguments before its own, for a command that starts it: on
+ * Windows, runas into the signed-in session), `OCU_ARGS` (space separated),
+ * `OCU_MCP_URL`.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -28,6 +30,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { McpServerSpec } from "@nibblet/harness";
 import { BROWSER_MCP_PORT, VIEW_PORT } from "@nibblet/protocol";
+import { z } from "zod";
 
 // The tokens go in the environment (OCU_SERVE_TOKEN, OCU_VIEW_TOKEN), never
 // the command line, which every process in the container can read.
@@ -54,6 +57,15 @@ export async function clearProfileLock(home: string): Promise<void> {
     // They're symlinks, mostly to things that are gone: rm doesn't follow them.
     await rm(path.join(profile, name), { force: true });
   }
+}
+
+/**
+ * Its environment, without the nibblet's own settings and secrets: it needs
+ * none of them, and where it runs as the agent's user (Windows, macOS), a
+ * process of that user's can read another's environment.
+ */
+function ocuEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("NIBBLET_")));
 }
 
 export interface ComputerOptions {
@@ -93,7 +105,13 @@ export async function startComputer(
 ): Promise<Computer | null> {
   const token = opts.token ?? randomBytes(24).toString("base64url");
   const command = process.env.OCU_CMD ?? "opencomputeruse";
-  const args = opts.args ?? process.env.OCU_ARGS?.split(" ").filter(Boolean) ?? serveArgs(ports);
+  const lead = process.env.OCU_CMD_ARGS
+    ? z.array(z.string()).parse(JSON.parse(process.env.OCU_CMD_ARGS))
+    : [];
+  const args = [
+    ...lead,
+    ...(opts.args ?? process.env.OCU_ARGS?.split(" ").filter(Boolean) ?? serveArgs(ports)),
+  ];
   const tokens = { OCU_SERVE_TOKEN: token, OCU_VIEW_TOKEN: viewToken };
   const url = process.env.OCU_MCP_URL ?? `http://127.0.0.1:${ports.mcp}/mcp`;
   const stdio: Computer | null =
@@ -113,7 +131,7 @@ export async function startComputer(
   try {
     child = spawn(command, args, {
       stdio: ["ignore", "inherit", "inherit"],
-      env: { ...(opts.env ?? process.env), ...tokens, OCU_LINUX_DISPLAY: "wayland" },
+      env: { ...ocuEnv(opts.env ?? process.env), ...tokens, OCU_LINUX_DISPLAY: "wayland" },
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
     });
   } catch (err) {

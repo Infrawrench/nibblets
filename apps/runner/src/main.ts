@@ -60,7 +60,8 @@ let apps: DesktopApps | null = null;
 const scanApps = () =>
   void apps?.scan().catch((err: unknown) => log("warn", `couldn't list apps: ${String(err)}`));
 async function setUpDesktop(token: string): Promise<void> {
-  if (env.NIBBLET_SUBAGENT === "1") {
+  // A sub-agent's host started it; on Windows, the entry did.
+  if (env.NIBBLET_SUBAGENT === "1" || env.NIBBLET_DESKTOP_JOIN === "1") {
     const joined = await joinDesktop(token);
     if (!joined) {
       log("warn", "its host container's desktop isn't answering; no desktop apps");

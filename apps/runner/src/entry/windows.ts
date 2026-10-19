@@ -26,6 +26,8 @@ export const NIBBLETS_DATA = "C:\\ProgramData\\Nibblets";
 /** The agent's password, for runas to log it on with: SYSTEM's and Administrators' alone. */
 export const AGENT_SECRET = win.join(NIBBLETS_DATA, "agent.json");
 export const RUNAS = "C:\\Nibblets\\bin\\nibblet-runas.exe";
+/** Downloaded by the bootstrap, for its browser and desktop (x64 only). */
+const OCU = "C:\\Nibblets\\bin\\opencomputeruse.exe";
 const scripts = () => fileURLToPath(new URL("..", import.meta.url));
 const SYSTEM = "*S-1-5-18";
 const ADMINISTRATORS = "*S-1-5-32-544";
@@ -194,6 +196,8 @@ Invoke-CimMethod -InputObject $product -MethodName Activate | Out-Null
 
 export const windows: EntryPlatform = {
   home: HOME,
+  // In the session the agent's user is signed in to at boot, where its windows are seen.
+  ocu: { command: RUNAS, args: ["--session", "nibblet", OCU] },
   pids: win.join(NIBBLETS_DATA, "subagents"),
   guardEnv: ["PATH", "PATHEXT", "SystemRoot", "SystemDrive", "windir", "TEMP", "TMP", "NODE_ENV"],
 

@@ -1,9 +1,11 @@
 import {
   formatAmount,
+  GUEST_NAMES,
   nameInPrompt,
   placeLabel,
   TAILSCALE_PROXY_PORT,
   type AssetInfo,
+  type GuestOs,
   type Heartbeat,
   type Memory,
   type Nibblet,
@@ -15,6 +17,38 @@ import {
 } from "@nibblet/protocol";
 
 export const QUIET_REPLY = "NO_REPLY";
+
+/** What it lives in, as the prompt says it: "container" or "machine", and the whole of it. */
+function machineWords(nibblet: Nibblet): { box: string; home: string } {
+  if (nibblet.machine.backend === "docker") {
+    return { box: "container", home: "its own Docker container" };
+  }
+  return { box: "machine", home: `its own ${GUEST_NAMES[nibblet.machine.guest]} virtual machine` };
+}
+
+/** Each guest's browser, how to start it, and how its desktop's apps are found. */
+function guestTools(guest: GuestOs): { browser: string; app: string; apps: string } {
+  switch (guest) {
+    case "windows":
+      return {
+        browser: "Microsoft Edge",
+        app: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        apps: "It's your machine's own Windows desktop, signed in as you. `app_list` may not list every app: start any with `start_session` on the `desktop` tools by its executable (`notepad.exe`, say). Apps run as you, without administrator rights.",
+      };
+    case "macos":
+      return {
+        browser: "Google Chrome",
+        app: "Google Chrome",
+        apps: "It's your machine's own macOS desktop, signed in as you. `app_list` may not list every app: start any with `start_session` on the `desktop` tools by its name (`TextEdit`, say). Apps run as you, without administrator rights.",
+      };
+    case "linux":
+      return {
+        browser: "Chromium",
+        app: "chromium",
+        apps: "Apps run as you, and you can't install system packages: to add one, put it under your home folder (AppImages work) with a desktop entry in `~/.local/share/applications`, and it shows up for both of you.",
+      };
+  }
+}
 
 const DEFAULT_HEARTBEAT = `This is a heartbeat: a regular check-in with no message from the user.
 Look after anything you're responsible for: follow up on open threads, check things you said you'd keep an eye on, and tidy your memory.
@@ -110,20 +144,22 @@ export interface SystemPromptInput {
 export function systemPrompt(input: SystemPromptInput): string {
   const { nibblet } = input;
   const parts: string[] = [];
+  const { box, home } = machineWords(nibblet);
+  const tools = guestTools(nibblet.machine.guest);
   const name = nameInPrompt(nibblet);
   const you = name ? `You are ${name}, ` : "You are ";
 
   parts.push(
     nibblet.plain
-      ? `${you}a long-running personal agent living in its own Docker container on the "${input.serverName}" server. You keep working between messages: a heartbeat and schedules wake you up, and you can spawn sub-agents.`
-      : `${you}a nibblet: a long-running personal agent (drawn as a hamster in the UI) living in its own Docker container on the "${input.serverName}" nibblet server. You keep working between messages: a heartbeat and schedules wake you up, and you can spawn sub-agents.`,
+      ? `${you}a long-running personal agent living in ${home} on the "${input.serverName}" server. You keep working between messages: a heartbeat and schedules wake you up, and you can spawn sub-agents.`
+      : `${you}a nibblet: a long-running personal agent (drawn as a hamster in the UI) living in ${home} on the "${input.serverName}" nibblet server. You keep working between messages: a heartbeat and schedules wake you up, and you can spawn sub-agents.`,
   );
 
   if (input.parent) {
     const parent = nameInPrompt(input.parent);
     const [of, its, to] = parent ? [parent, `${parent}'s`, parent] : ["another agent", "its", "it"];
     parts.push(
-      `You are a sub-agent of ${of}. You run in ${its} container, beside it: you see the same files, installed tools, running servers and desktop apps (your working folder is the same as its), but you have your own browser. Do the task you were given, then finish with a clear, self-contained final answer: it is sent back to ${to} as your result.`,
+      `You are a sub-agent of ${of}. You run in ${its} ${box}, beside it: you see the same files, installed tools, running servers and desktop apps (your working folder is the same as its), but you have your own browser. Do the task you were given, then finish with a clear, self-contained final answer: it is sent back to ${to} as your result.`,
     );
   }
 
@@ -147,17 +183,17 @@ export function systemPrompt(input: SystemPromptInput): string {
     "Use `schedule_create` for anything at a set time, and heartbeats (`heartbeat_set`) for regular check-ins on things you're looking after. Keep as many heartbeats as you need, each with its own interval, hours and checklist, and remove ones that are no longer useful. Don't promise to do something later without scheduling it or setting a heartbeat.",
     `For work that splits into independent pieces, \`spawn_subagent\` starts a child ${nibblet.plain ? "agent" : "nibblet"}; its answer comes back to you as a message.`,
     "Files the user attaches are saved under `uploads/` in your working directory. To give the user a file (a report, an export, an image you made), call `share_file` with its path; it appears in the chat for them to open or download, so don't paste its contents too.",
-    "For anything that has to keep running after a command returns (a dev server, a game server, a watcher), start it with `task_start` rather than `&`, `nohup` or a shell tool's background mode, and check on it with `task_output`. Tasks end when your container restarts, so start the ones that should still be up again when you wake. The user can open a terminal in your container and run things there too: don't stop or restart processes you didn't start unless they ask.",
+    `For anything that has to keep running after a command returns (a dev server, a game server, a watcher), start it with \`task_start\` rather than \`&\`, \`nohup\` or a shell tool's background mode, and check on it with \`task_output\`. Tasks end when your ${box} restarts, so start the ones that should still be up again when you wake. The user can open a terminal in your ${box} and run things there too: don't stop or restart processes you didn't start unless they ask.`,
     `On heartbeat, scheduled and sub-agent result turns, if there's nothing worth telling the user, reply with exactly ${QUIET_REPLY}. Never reply ${QUIET_REPLY} to a message from the user.`,
   ];
   if (nibblet.browser) {
     rules.push(
-      "You have a Chromium browser through the `computer` tools (OpenComputerUse), shared with the user: they can watch it and take control. Use it for anything on the web: browsing, reading pages, filling forms, taking screenshots. Don't run your own headless browser (chromium, Playwright, Puppeteer and the like) from the shell instead, since the user can't see that; `curl` is fine for plain downloads and APIs. `list_sessions` first, and if none is open, `start_session` with app `chromium` (pass the URL as an argument). If the user is using it, wait rather than fighting over the mouse.",
+      `You have a ${tools.browser} browser through the \`computer\` tools (OpenComputerUse), shared with the user: they can watch it and take control. Use it for anything on the web: browsing, reading pages, filling forms, taking screenshots. Don't run your own headless browser (chromium, Playwright, Puppeteer and the like) from the shell instead, since the user can't see that; \`curl\` is fine for plain downloads and APIs. \`list_sessions\` first, and if none is open, \`start_session\` with app \`${tools.app}\` (pass the URL as an argument). If the user is using it, wait rather than fighting over the mouse.`,
     );
   }
   if (input.desktop) {
     rules.push(
-      "Your container also has a desktop for other apps, shared with the user the same way: they see every app open on it, whoever opened it, and can open apps there themselves. `app_list` says what's installed and `app_launch` opens one, giving you a session id for the `desktop` tools (the same tools as `computer`, for these apps); `list_sessions` on `desktop` shows what's open, the user's included. Keep to the browser for the web. Apps run as you, and you can't install system packages: to add one, put it under your home folder (AppImages work) with a desktop entry in `~/.local/share/applications`, and it shows up for both of you. Close what you opened with `end_session` when you're done with it, unless the user wants it kept.",
+      `Your ${box} also has a desktop for other apps, shared with the user the same way: they see every app open on it, whoever opened it, and can open apps there themselves. \`app_list\` says what's installed and \`app_launch\` opens one, giving you a session id for the \`desktop\` tools (the same tools as \`computer\`, for these apps); \`list_sessions\` on \`desktop\` shows what's open, the user's included. Keep to the browser for the web. ${tools.apps} Close what you opened with \`end_session\` when you're done with it, unless the user wants it kept.`,
     );
   }
   parts.push(`## How you work\n\n${rules.map((r) => `- ${r}`).join("\n")}`);
@@ -192,7 +228,7 @@ export function systemPrompt(input: SystemPromptInput): string {
   if (spending) parts.push(spending);
 
   if (input.tailnet) {
-    parts.push(tailnetSection(input.tailnet.node, input.tailnet.ports));
+    parts.push(tailnetSection(input.tailnet.node, input.tailnet.ports, box));
   }
 
   if (input.memories.length > 0) {
@@ -274,14 +310,14 @@ export function locationAnswer(location: NibbletLocation, now: Date, stale?: str
   };
 }
 
-function tailnetSection(node: TailnetNode, ports: readonly number[]): string {
+function tailnetSection(node: TailnetNode, ports: readonly number[], box: string): string {
   const name = node.dnsName ?? node.ips[0] ?? "your machine";
   const where = [node.dnsName, ...node.ips].filter(Boolean).join(", ");
   const shared =
     ports.length > 0
-      ? `The user's other machines can reach servers you run on ${ports.length === 1 ? "port" : "ports"} ${ports.join(", ")} at ${name} (for example \`http://${name}:${ports[0]}\`), and nothing else in your container. Listen on \`0.0.0.0\` or \`127.0.0.1\`, and give the user that address rather than \`localhost\`. To share another port, the user adds it in your settings.`
-      : "Nothing in your container is reachable from the tailnet: if the user wants to open something you run from their other machines, they add its port in your settings.";
-  return `## Tailscale\n\nYour container is a machine on the user's tailnet${node.tailnet ? ` (${node.tailnet})` : ""}: ${where}. ${shared}\n\nTo reach machines on the tailnet, go through Tailscale's proxy at \`127.0.0.1:${TAILSCALE_PROXY_PORT}\`, which speaks HTTP and SOCKS5 and resolves tailnet names: \`curl -x http://127.0.0.1:${TAILSCALE_PROXY_PORT} http://some-machine:8080\`, \`ALL_PROXY=socks5h://127.0.0.1:${TAILSCALE_PROXY_PORT}\` for tools that take it, or for SSH \`-o ProxyCommand='nc -X 5 -x 127.0.0.1:${TAILSCALE_PROXY_PORT} %h %p'\`. Without it, tailnet names don't resolve and tailnet addresses aren't routed. The \`tailscale\` command isn't yours to use.`;
+      ? `The user's other machines can reach servers you run on ${ports.length === 1 ? "port" : "ports"} ${ports.join(", ")} at ${name} (for example \`http://${name}:${ports[0]}\`), and nothing else in your ${box}. Listen on \`0.0.0.0\` or \`127.0.0.1\`, and give the user that address rather than \`localhost\`. To share another port, the user adds it in your settings.`
+      : `Nothing in your ${box} is reachable from the tailnet: if the user wants to open something you run from their other machines, they add its port in your settings.`;
+  return `## Tailscale\n\nYour ${box} is a machine on the user's tailnet${node.tailnet ? ` (${node.tailnet})` : ""}: ${where}. ${shared}\n\nTo reach machines on the tailnet, go through Tailscale's proxy at \`127.0.0.1:${TAILSCALE_PROXY_PORT}\`, which speaks HTTP and SOCKS5 and resolves tailnet names: \`curl -x http://127.0.0.1:${TAILSCALE_PROXY_PORT} http://some-machine:8080\`, \`ALL_PROXY=socks5h://127.0.0.1:${TAILSCALE_PROXY_PORT}\` for tools that take it, or for SSH \`-o ProxyCommand='nc -X 5 -x 127.0.0.1:${TAILSCALE_PROXY_PORT} %h %p'\`. Without it, tailnet names don't resolve and tailnet addresses aren't routed. The \`tailscale\` command isn't yours to use.`;
 }
 
 /** What it may spend and how, when it has limits and a bank to spend them at. */

@@ -313,6 +313,23 @@ describe("systemPrompt", () => {
     expect(prompt).toContain("~/.local/share/applications");
   });
 
+  it("names its machine, and its guest's browser and apps", () => {
+    const now = new Date("2026-10-13T12:00:00Z");
+    const base = { serverName: "home", memories: [], history: null, parent: null, now };
+    const container = systemPrompt({ ...base, nibblet, desktop: true });
+    expect(container).toContain("its own Docker container");
+    expect(container).toContain("app `chromium`");
+
+    const windows: Nibblet = { ...nibblet, machine: { backend: "hyperv", guest: "windows" } };
+    const vm = systemPrompt({ ...base, nibblet: windows, desktop: true });
+    expect(vm).toContain("its own Windows virtual machine");
+    expect(vm).toContain("Microsoft Edge");
+    expect(vm).toContain("msedge.exe");
+    expect(vm).toContain("signed in as you");
+    expect(vm).not.toContain("container");
+    expect(vm).not.toContain("AppImages");
+  });
+
   it("tells it where it is on the tailnet, what's shared, and how to reach out", () => {
     const base = { nibblet, serverName: "home", memories: [], history: null, parent: null };
     const now = new Date("2026-10-13T12:00:00Z");

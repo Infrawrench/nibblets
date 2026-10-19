@@ -28,6 +28,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
 import { GUARD_ONLY_ENV, WindowsProductKey } from "@nibblet/protocol";
+import { startDesktop } from "./desktop.ts";
 import { platformHere } from "./entry/index.ts";
 import { pick } from "./entry/shared.ts";
 
@@ -79,6 +80,7 @@ async function startPair(pair: Pair, onStop: () => Promise<void> = async () => {
       ]),
       ...pair.env,
       ...pair.guardEnv,
+      ...ocuEnv(),
       HOME: pair.guardHome,
       USER: "guard",
       ...(pair.runtimeDir ? { XDG_RUNTIME_DIR: pair.runtimeDir } : {}),
@@ -133,17 +135,37 @@ async function startPair(pair: Pair, onStop: () => Promise<void> = async () => {
   process.on("SIGINT", () => stop(0));
 }
 
+/** How the guard (and the desktop) start OpenComputerUse, where the platform says. */
+function ocuEnv(): Record<string, string> {
+  if (!platform.ocu) return {};
+  return { OCU_CMD: platform.ocu.command, OCU_CMD_ARGS: JSON.stringify(platform.ocu.args) };
+}
+
 async function main(): Promise<void> {
   const cleanUp = await platform.prepare(log);
+  // Where the desktop has to be started in the signed-in session, the entry
+  // does it, and the runner joins it, as a sub-agent would.
+  const token = process.env.NIBBLET_DESKTOP_TOKEN ?? "";
+  const joins = platform.ocu !== undefined && token !== "";
+  const desktop = joins
+    ? await startDesktop(token, path.join(HOME, "work"), (level, message) =>
+        log(`${level}: ${message}`),
+      )
+    : null;
+  if (joins && !desktop) log("the desktop didn't start; there are no desktop apps");
   await startPair(
     {
       guardHome: GUARD_HOME,
       env: {},
       guardEnv: {},
-      runnerEnv: {},
+      runnerEnv: joins ? { NIBBLET_DESKTOP_JOIN: "1" } : {},
       runtimeDir: platform.runtimeDir(null),
     },
-    cleanUp,
+    // It's this process's child, which nothing else would end.
+    async () => {
+      desktop?.stop();
+      await cleanUp();
+    },
   );
 }
 

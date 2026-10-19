@@ -49,6 +49,12 @@ export interface EntryPlatform {
   archiveHome(): Promise<void>;
   /** Empties the home folder and unpacks one from stdin over it. */
   restoreHome(): Promise<void>;
+  /**
+   * How OpenComputerUse is started where it has to be put in the signed-in
+   * session (Windows): this command, with these arguments before its own.
+   * The entry then starts the desktop itself, for the runner to join.
+   */
+  readonly ocu?: { command: string; args: readonly string[] };
   /** Signs out of the tailnet, where the platform has Tailscale. */
   leaveTailnet?(): Promise<void>;
   /**
