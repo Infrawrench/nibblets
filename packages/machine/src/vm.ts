@@ -615,8 +615,9 @@ export class VirtualMachines implements MachinePlugin {
    * job alone (the nibblet isn't started) and shut down again.
    */
   private async withGuest(id: string, job: (link: GuestLink) => Promise<void>): Promise<void> {
-    if (this.boots.has(id)) return job(await this.link(id));
+    // Its lock, even on a VM that's running: a stop or start mustn't shut it down mid-job.
     await this.exclusive(id, async () => {
+      if (this.boots.has(id)) return job(await this.link(id));
       const vm = await this.vm(id);
       if (!vm) throw new Error("It hasn't had a virtual machine yet");
       if (vm.running) return job(await this.link(id));
