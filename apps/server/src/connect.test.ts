@@ -252,4 +252,28 @@ describe("Connect heartbeats", () => {
     await vi.advanceTimersByTimeAsync(HEARTBEAT_EVERY_MS);
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+
+  it("reports a managed tunnel within 5 s of it coming up", async () => {
+    settings.set("connect", {
+      ...saved,
+      tunnel: { token: "tunnel-token", hostname: "server.tunnel.example" },
+    });
+    const pending = Promise.withResolvers<TunnelStatus>();
+    let up = false;
+    configure.mockReturnValueOnce(pending.promise);
+    deps.tunnel.current = () =>
+      up
+        ? { mode: "token", state: "up", url: "https://server.tunnel.example", detail: null }
+        : { mode: "token", state: "starting", url: null, detail: null };
+    const tunnelRoutes = () =>
+      fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).routes.tunnel);
+    const restoring = connect.restore();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(tunnelRoutes()).toEqual([null]);
+    up = true;
+    pending.resolve(tunnelStatus);
+    await restoring;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(tunnelRoutes()).toEqual([null, "https://server.tunnel.example"]);
+  });
 });

@@ -413,7 +413,7 @@ export class Connect {
       this.lastError = err instanceof Error ? err.message : String(err);
     }
     if (this.generation !== generation) return;
-    // A quick tunnel takes a few seconds to get its address; report it promptly.
-    this.scheduleBeat(this.routes.tunnel || link.tunnel ? HEARTBEAT_EVERY_MS : 5000, generation);
+    // Either tunnel kind takes a few seconds to come up; report its address promptly.
+    this.scheduleBeat(this.routes.tunnel ? HEARTBEAT_EVERY_MS : 5000, generation);
   }
 }
