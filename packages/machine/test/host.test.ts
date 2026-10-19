@@ -143,6 +143,10 @@ describe("what Windows says while its image is made", () => {
     expect(BOOTSTRAP_PS1.indexOf("IMAGE_STATE_COMPLETE")).toBeLessThan(
       BOOTSTRAP_PS1.indexOf(INSTALL_DONE),
     );
+    // On disk first, in case Windows starts again rather than shutting down.
+    expect(BOOTSTRAP_PS1.indexOf("Write-VolumeCache -DriveLetter C")).toBeLessThan(
+      BOOTSTRAP_PS1.indexOf(`Say '${INSTALL_DONE}'`),
+    );
     // Before it shuts down, so a hypervisor hears it.
     expect(BOOTSTRAP_PS1.indexOf(INSTALL_DONE)).toBeLessThan(
       BOOTSTRAP_PS1.indexOf("Stop-Computer"),

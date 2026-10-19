@@ -346,6 +346,10 @@ if (Test-Path "$root\\preparing") {
     Policy $edge UserDataDir 'C:\\Users\\nibblet\\.browser' String
   }
   Remove-Item -Force "$root\\preparing"
+  # On disk before it says so: should Windows start again rather than shut down
+  # (as it has on KVM after Visual C++'s runtime went in), the image is still whole.
+  foreach ($hive in 'SOFTWARE', 'SYSTEM') { [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($hive).Flush() }
+  Write-VolumeCache -DriveLetter C
   Say '${INSTALL_DONE}'
   Stop-Transcript | Out-Null
   Stop-Computer -Force

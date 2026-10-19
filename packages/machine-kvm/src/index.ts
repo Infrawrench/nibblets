@@ -59,6 +59,8 @@ const INSTALL_QUIET_MINUTES = 15;
  * more just to copy Windows.
  */
 const INSTALL_FIRST_WORD_MINUTES = 30;
+/** How long Windows has to stop once its install is done, before it's asked, and then made. */
+const DONE_GRACE_MS = 3 * 60_000;
 
 const x86 = process.arch !== "arm64";
 
@@ -408,6 +410,8 @@ export class Kvm implements HypervisorPlugin {
     let last: string | null = null;
     let lastAt = Date.now();
     let heard = 0;
+    /** When it said it was done: it's flushed its disk by then, and only has to stop. */
+    let doneAt: number | null = null;
     try {
       for (let tick = 0; pid && alive(pid); tick++) {
         await sleep(15_000);
@@ -417,6 +421,19 @@ export class Kvm implements HypervisorPlugin {
         if (sayings.length > heard) lastAt = Date.now();
         heard = sayings.length;
         last = sayings.at(-1) ?? null;
+        if (doneAt === null && sayings.includes(INSTALL_DONE)) doneAt = Date.now();
+        if (doneAt !== null) {
+          // Windows has started again rather than shut down, as it has after
+          // Visual C++'s runtime went in: asked to stop, then made to.
+          const waited = Date.now() - doneAt;
+          if (waited > DONE_GRACE_MS * 2) {
+            ctx.log("Windows didn't stop after its install was done; turning it off");
+            process.kill(pid, "SIGKILL");
+          } else if (waited > DONE_GRACE_MS) {
+            await qmp(control.qmp, [{ execute: "system_powerdown" }]).catch(() => undefined);
+          }
+          continue;
+        }
         // Before it says anything, setup's own screen being up is all it says.
         if (last === null && (await lit())) lastAt = Date.now();
         const quiet =
@@ -448,7 +465,7 @@ export class Kvm implements HypervisorPlugin {
         job.progress(null, `${last ?? "Installing Windows"} (${minutes} minutes so far)`);
       }
       last = installSaid(await tailFile(said));
-      if (last !== INSTALL_DONE) {
+      if (doneAt === null && last !== INSTALL_DONE) {
         throw new Error(
           `Windows' installer stopped before it was done: ${last ? `it last said "${last}"` : "its setup never got as far as Nibblets'"}. Its screen is in ${screen}`,
         );

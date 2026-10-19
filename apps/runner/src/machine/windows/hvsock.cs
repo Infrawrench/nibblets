@@ -1,9 +1,11 @@
 // nibblet-hvsock.exe: the agent's port on Hyper-V, a Hyper-V socket, relayed
 // over this process's stdio for the guest agent, since Node can't open one.
-// It listens for good and takes the host's connections one at a time, so to
-// the agent it's a serial line: one stream, whoever's on the other end, and
-// what's written with no one there goes nowhere. Compiled in the guest by
-// its bootstrap.
+// It listens for good, and the host's newest connection is the one: a
+// connection the host has given up on can look open from here for a long
+// while, and waiting it out would leave the host's next one unheard. So
+// to the agent it's a serial line: one stream, whoever's on the other end,
+// and what's written with no one there goes nowhere. Compiled in the guest
+// by its bootstrap.
 //
 // Only the host is let in: it listens for the parent partition alone, and
 // turns away a connection from inside this VM, so nothing here can pose as
@@ -86,16 +88,44 @@ public static class NibbletHvSock
         Environment.Exit(0);
     }
 
+    // What the host sends on conn, to the agent, for as long as it's the host's newest.
+    static void FromHost(Socket conn, Stream stdout)
+    {
+        var buffer = new byte[65536];
+        string why = "the host closed it";
+        try
+        {
+            int n;
+            while ((n = conn.Receive(buffer)) > 0)
+            {
+                // Under the lock, so an old connection can't write once a new one has taken over.
+                lock (Gate)
+                {
+                    if (current != conn) { why = "the host connected again"; break; }
+                    stdout.Write(buffer, 0, n);
+                    stdout.Flush();
+                }
+            }
+        }
+        catch (SocketException e) { why = e.Message; }
+        catch (ObjectDisposedException) { why = "the host connected again"; }
+        lock (Gate)
+        {
+            if (current == conn) current = null;
+        }
+        conn.Close();
+        Console.Error.WriteLine("nibblet-hvsock: a connection from the host ended: " + why);
+    }
+
     public static int Main(string[] args)
     {
         var listener = new Socket(HyperVEndPoint.HyperV, SocketType.Stream, (ProtocolType)1);
         listener.Bind(new HyperVEndPoint(Parent, new Guid(args[0])));
-        listener.Listen(1);
+        listener.Listen(4);
         Console.Error.WriteLine("nibblet-hvsock: listening for the host");
         Stream stdout = Console.OpenStandardOutput();
         var toHost = new Thread(ToHost) { IsBackground = true };
         toHost.Start();
-        var buffer = new byte[65536];
         while (true)
         {
             Socket conn = listener.Accept();
@@ -106,26 +136,19 @@ public static class NibbletHvSock
                 conn.Close();
                 continue;
             }
-            Console.Error.WriteLine("nibblet-hvsock: the host connected");
-            lock (Gate) current = conn;
-            string why = "the host closed it";
-            try
-            {
-                int n;
-                while ((n = conn.Receive(buffer)) > 0)
-                {
-                    stdout.Write(buffer, 0, n);
-                    stdout.Flush();
-                }
-            }
-            catch (SocketException e) { why = e.Message; }
-            catch (ObjectDisposedException) { why = "it was closed here"; }
-            Console.Error.WriteLine("nibblet-hvsock: the host's connection ended: " + why);
+            Socket old;
             lock (Gate)
             {
-                if (current == conn) current = null;
+                old = current;
+                current = conn;
             }
-            conn.Close();
+            Console.Error.WriteLine("nibblet-hvsock: the host connected");
+            if (old != null)
+            {
+                try { old.Shutdown(SocketShutdown.Both); } catch (SocketException) { } catch (ObjectDisposedException) { }
+            }
+            var reader = new Thread(() => FromHost(conn, stdout)) { IsBackground = true };
+            reader.Start();
         }
     }
 }
