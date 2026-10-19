@@ -1,5 +1,6 @@
 import {
   authTokens,
+  cards,
   items,
   memories,
   nibblets,
@@ -17,6 +18,7 @@ import {
   ToolRules,
   randomHamsterLook,
   RpcError,
+  type Card,
   type CreateNibblet,
   type Heartbeat,
   type Memory,
@@ -33,6 +35,7 @@ import type { Embedder } from "./embeddings.ts";
 
 type NibbletRow = typeof nibblets.$inferSelect;
 type ScheduleRow = typeof schedules.$inferSelect;
+export type CardRow = typeof cards.$inferSelect;
 
 export function newId(prefix: string): string {
   return `${prefix}_${randomBytes(9).toString("base64url")}`;
@@ -101,6 +104,7 @@ export function toNibblet(row: NibbletRow): Nibblet {
       ? { ...row.tailscale, authKey: row.tailscale.authKey ? MASKED : "" }
       : null,
     tailnetNode: row.tailnetNode,
+    spendingLimits: row.spendingLimits,
     statusText: row.statusText,
     statusEmoji: row.statusEmoji,
     statusUpdatedAt: iso(row.statusUpdatedAt),
@@ -108,6 +112,24 @@ export function toNibblet(row: NibbletRow): Nibblet {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     lastActivityAt: iso(row.lastActivityAt),
+  };
+}
+
+export function toCard(row: CardRow): Card {
+  return {
+    id: row.id,
+    nibbletId: row.nibbletId,
+    provider: row.provider,
+    asset: { code: row.asset, decimals: row.decimals },
+    kind: row.kind,
+    limit: row.limitMinor,
+    spent: row.spentMinor,
+    purpose: row.purpose,
+    display: row.display,
+    state: row.state,
+    closedBy: row.closedBy,
+    createdAt: row.createdAt.toISOString(),
+    closedAt: iso(row.closedAt),
   };
 }
 
@@ -401,6 +423,41 @@ export class Store {
   async listSchedules(nibbletId?: string): Promise<ScheduleRow[]> {
     const q = this.db.select().from(schedules);
     return nibbletId ? q.where(eq(schedules.nibbletId, nibbletId)) : q;
+  }
+
+  async createCard(input: Omit<typeof cards.$inferInsert, "createdAt">): Promise<CardRow> {
+    const [row] = await this.db.insert(cards).values(input).returning();
+    if (!row) throw new Error("insert returned nothing");
+    return row;
+  }
+
+  async cardRow(id: string): Promise<CardRow> {
+    const [row] = await this.db.select().from(cards).where(eq(cards.id, id));
+    if (!row) throw new RpcError("not_found", `No card ${id}`);
+    return row;
+  }
+
+  /** A nibblet's cards, newest first. */
+  async cardsOf(nibbletId: string): Promise<CardRow[]> {
+    return this.db
+      .select()
+      .from(cards)
+      .where(eq(cards.nibbletId, nibbletId))
+      .orderBy(desc(cards.createdAt));
+  }
+
+  /** Every card that's still open, on any nibblet. */
+  async openCards(): Promise<CardRow[]> {
+    return this.db.select().from(cards).where(eq(cards.state, "open"));
+  }
+
+  async updateCard(
+    id: string,
+    patch: Partial<Omit<typeof cards.$inferInsert, "id" | "createdAt">>,
+  ): Promise<CardRow> {
+    const [row] = await this.db.update(cards).set(patch).where(eq(cards.id, id)).returning();
+    if (!row) throw new RpcError("not_found", `No card ${id}`);
+    return row;
   }
 
   async scheduleRow(id: string): Promise<ScheduleRow> {

@@ -29,6 +29,7 @@ const nibblet = (id: string, parentId: string | null, active: string): Nibblet =
   toolApprovals: [],
   tailscale: null,
   tailnetNode: null,
+  spendingLimits: [],
   statusText: null,
   statusEmoji: null,
   statusUpdatedAt: null,

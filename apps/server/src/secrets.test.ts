@@ -56,6 +56,7 @@ describe("toNibblet", () => {
       toolApprovals: [],
       tailscale: { authKey: "tskey-auth-secret", hostname: "", ports: [3000] },
       tailnetNode: null,
+      spendingLimits: [],
       statusText: null,
       statusEmoji: null,
       statusUpdatedAt: null,

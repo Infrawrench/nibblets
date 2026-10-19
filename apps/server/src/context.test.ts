@@ -35,6 +35,7 @@ const nibblet: Nibblet = {
   toolApprovals: [],
   tailscale: null,
   tailnetNode: null,
+  spendingLimits: [],
   statusText: "Watching the deploy",
   statusEmoji: null,
   statusUpdatedAt: null,
