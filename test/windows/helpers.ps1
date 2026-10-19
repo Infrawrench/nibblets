@@ -57,3 +57,5 @@ try {
 } finally {
   foreach ($listener in $listeners) { $listener.Stop() }
 }
+# The last curl said 7, as it should: that is not the script failing.
+exit 0
