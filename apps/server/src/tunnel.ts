@@ -7,8 +7,8 @@ import type { Store } from "./store.ts";
 export const TUNNEL_IMAGE = "cloudflare/cloudflared:2026.10.0";
 const NAME = "nibblet-tunnel";
 const QUICK_URL = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/g;
-// Poll fast only while waiting for a quick URL; back off once up or failing.
-const RETRY_MS = 1000;
+// Poll fast while waiting for a quick URL, slowing towards the error retry if it never comes.
+const STARTING_POLL_MS = 1000;
 const HEALTHY_POLL_MS = 15_000;
 const ERROR_RETRY_MS = 5000;
 const DOCKER_TIMEOUT_MS = 30_000;
@@ -26,6 +26,7 @@ export class Tunnel {
   private applied: string | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private pending = Promise.resolve();
+  private startingPollMs = STARTING_POLL_MS;
   private quickUrl: { container: string; startedAt: string; url: string } | undefined;
   private readonly docker: Orchestrator;
   private readonly store: Store;
@@ -59,6 +60,7 @@ export class Tunnel {
     if (this.stopped) return this.status;
     const generation = ++this.generation;
     clearTimeout(this.timer);
+    this.startingPollMs = STARTING_POLL_MS;
     const applied = JSON.stringify(config);
     // Reconfiguring a healthy tunnel with the same config must not drop publicUrl() to the local URL.
     const unchanged = this.status.state === "up" && applied === this.applied;
@@ -192,12 +194,13 @@ export class Tunnel {
       };
     } finally {
       if (this.active(generation) && (config.mode !== "off" || this.status.state === "error")) {
-        const delay =
-          this.status.state === "up"
-            ? HEALTHY_POLL_MS
-            : this.status.state === "error"
-              ? ERROR_RETRY_MS
-              : RETRY_MS;
+        let delay = this.status.state === "up" ? HEALTHY_POLL_MS : ERROR_RETRY_MS;
+        if (this.status.state === "starting") {
+          delay = this.startingPollMs;
+          this.startingPollMs = Math.min(this.startingPollMs * 2, ERROR_RETRY_MS);
+        } else {
+          this.startingPollMs = STARTING_POLL_MS;
+        }
         this.timer = setTimeout(() => {
           void this.enqueue(() => this.reconcile(config, generation));
         }, delay);

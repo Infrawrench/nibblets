@@ -66,7 +66,7 @@ describe("Tunnel recovery", () => {
     await tunnel.configure({ mode: "quick" });
     await vi.advanceTimersByTimeAsync(65_000);
     container.logs.mockResolvedValue(Buffer.from("https://late.trycloudflare.com"));
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(5000);
     expect(tunnel.current()).toMatchObject({ state: "up", url: "https://late.trycloudflare.com" });
     expect(container.remove).not.toHaveBeenCalled();
     expect(docker.createContainer).not.toHaveBeenCalled();
@@ -125,13 +125,21 @@ describe("Tunnel recovery", () => {
     expect(container.inspect).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps polling every second while a quick URL has not appeared", async () => {
+  it("backs off from 1 s to 5 s while a quick URL has not appeared", async () => {
     const { tunnel, container } = setup();
     await tunnel.configure({ mode: "quick" });
     expect(tunnel.current().state).toBe("starting");
     expect(container.inspect).toHaveBeenCalledTimes(1);
+    for (const [polls, wait] of [1000, 2000, 4000, 5000, 5000].entries()) {
+      await vi.advanceTimersByTimeAsync(wait - 1);
+      expect(container.inspect).toHaveBeenCalledTimes(polls + 1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(container.inspect).toHaveBeenCalledTimes(polls + 2);
+    }
+    await tunnel.configure({ mode: "quick" });
+    const reconfigured = container.inspect.mock.calls.length;
     await vi.advanceTimersByTimeAsync(1000);
-    expect(container.inspect).toHaveBeenCalledTimes(2);
+    expect(container.inspect).toHaveBeenCalledTimes(reconfigured + 1);
   });
 
   it.each(["inspect", "pull", "start"] as const)(
