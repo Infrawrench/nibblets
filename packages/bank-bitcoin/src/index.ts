@@ -113,8 +113,12 @@ export class Esplora {
       signal: AbortSignal.timeout(30_000),
     });
     const text = (await res.text()).trim();
-    if (!res.ok)
+    // Only a refusal means it went nowhere; a server error could come after
+    // it was relayed, so the server is left to look for what was made.
+    if (res.status >= 400 && res.status < 500) {
       throw new BankError(`The Bitcoin network refused the payment: ${text || res.status}`);
+    }
+    if (!res.ok) throw new Error(`Esplora said ${res.status} to a broadcast: ${text}`);
     return text;
   }
 

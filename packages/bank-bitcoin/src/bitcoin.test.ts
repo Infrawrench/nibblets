@@ -23,6 +23,8 @@ interface Coin {
  */
 function fakeChain() {
   const coins: Coin[] = [];
+  /** How to answer the next broadcast instead, and whether it went out first, as a flaky gateway's can. */
+  let failNext: { status: number; relayed: boolean } | null = null;
   const broadcasts: Transaction[] = [];
   const scriptOf = (address: string) =>
     hex.encode(OutScript.encode(Address(regtest).decode(address)));
@@ -38,6 +40,9 @@ function fakeChain() {
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const path = new URL(String(input)).pathname.replace(/^\/api/, "");
     if (path === "/tx" && init?.method === "POST") {
+      const fail = failNext;
+      failNext = null;
+      if (fail && !fail.relayed) return new Response("rejected", { status: fail.status });
       const tx = Transaction.fromRaw(hex.decode(String(init.body)));
       for (let i = 0; i < tx.inputsLength; i++) {
         const input = tx.getInput(i);
@@ -57,6 +62,7 @@ function fakeChain() {
         });
       }
       broadcasts.push(tx);
+      if (fail) return new Response("Bad Gateway", { status: fail.status });
       return new Response(tx.id);
     }
     if (path === "/fee-estimates") return json({ "1": 20.5, "3": 10.2, "6": 5 });
@@ -80,7 +86,15 @@ function fakeChain() {
     }
     return new Response("not found", { status: 404 });
   };
-  return { fetch, coins, broadcasts, fund };
+  return {
+    fetch,
+    coins,
+    broadcasts,
+    fund,
+    failNextBroadcast: (status: number, relayed: boolean) => {
+      failNext = { status, relayed };
+    },
+  };
 }
 
 function setUp() {
@@ -209,6 +223,19 @@ describe("bitcoin", () => {
     const { plugin } = setUp();
     const err = await plugin.issue({ ...request, limit: 2_000_000n }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(BankError);
+  });
+
+  it("only takes a refused broadcast as nothing made", async () => {
+    // A gateway error after the transaction went out leaves it unclear, so
+    // the server keeps the card and looks for it, rather than forgetting it.
+    const { chain, plugin } = setUp();
+    chain.failNextBroadcast(502, true);
+    const unclear = plugin.issue(request);
+    await expect(unclear).rejects.toThrow(/502/);
+    await expect(unclear).rejects.not.toBeInstanceOf(BankError);
+    expect(chain.broadcasts).toHaveLength(1);
+    chain.failNextBroadcast(400, false);
+    await expect(plugin.issue({ ...request, cardId: "card_2" })).rejects.toBeInstanceOf(BankError);
   });
 
   it("turns on from its settings, and refuses wrong ones", () => {
