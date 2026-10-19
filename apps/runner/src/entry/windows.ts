@@ -71,15 +71,20 @@ export function rangesExcept(cidr: string, except: string | null): string[] {
   ];
 }
 
-/** icacls's arguments to make a folder `who`'s alone (and SYSTEM's, which runs everything). */
-export function aclArgs(dir: string, who: Who | "downloads"): string[] {
+/**
+ * icacls's arguments to make a folder `who`'s alone (and SYSTEM's, which
+ * runs everything). The agent's user is given by its SID: by name,
+ * "nibblet" can be the computer, where that's its name too.
+ */
+export function aclArgs(dir: string, who: Who | "downloads", agentSid: string): string[] {
+  const agent = `*${agentSid}`;
   const grants =
     who === "guard"
       ? [`${SYSTEM}:(OI)(CI)F`, `${ADMINISTRATORS}:(OI)(CI)F`]
       : who === "agent"
-        ? [`${SYSTEM}:(OI)(CI)F`, "nibblet:(OI)(CI)M"]
+        ? [`${SYSTEM}:(OI)(CI)F`, `${agent}:(OI)(CI)M`]
         : // The browser's downloads: the guard's to write, the agent's to read.
-          [`${SYSTEM}:(OI)(CI)F`, "nibblet:(OI)(CI)RX"];
+          [`${SYSTEM}:(OI)(CI)F`, `${agent}:(OI)(CI)RX`];
   return [dir, "/inheritance:r", "/grant:r", ...grants, "/Q"];
 }
 
@@ -133,9 +138,20 @@ foreach ($r in $p.ranges) {
   }
 }
 
+/** The agent's user's SID, once it's made. */
+let agentSid: Promise<string> | null = null;
+function agentUser(): Promise<string> {
+  agentSid ??= ps("(Get-LocalUser -Name 'nibblet').SID.Value").then((out) => {
+    const sid = out.trim();
+    if (!/^S-1-5-21-[\d-]+$/.test(sid)) throw new Error(`the nibblet user's SID isn't one: ${sid}`);
+    return sid;
+  });
+  return agentSid;
+}
+
 async function ownedDir(dir: string, who: Who | "downloads"): Promise<void> {
   await mkdir(dir, { recursive: true });
-  await run("icacls", aclArgs(dir, who));
+  await run("icacls", aclArgs(dir, who, await agentUser()));
 }
 
 async function folders(): Promise<void> {

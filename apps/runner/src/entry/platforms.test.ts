@@ -21,8 +21,10 @@ describe("Windows Firewall's ranges", () => {
 });
 
 describe("Windows' folders", () => {
+  const SID = "S-1-5-21-1111111111-2222222222-3333333333-1001";
+
   it("are the guard's, and SYSTEM's and Administrators', alone", () => {
-    expect(aclArgs("C:\\Users\\nibblet\\.guard", "guard")).toEqual([
+    expect(aclArgs("C:\\Users\\nibblet\\.guard", "guard", SID)).toEqual([
       "C:\\Users\\nibblet\\.guard",
       "/inheritance:r",
       "/grant:r",
@@ -33,8 +35,12 @@ describe("Windows' folders", () => {
   });
 
   it("let the agent only read the browser's downloads", () => {
-    expect(aclArgs("D", "downloads")).toContain("nibblet:(OI)(CI)RX");
-    expect(aclArgs("D", "agent")).toContain("nibblet:(OI)(CI)M");
+    expect(aclArgs("D", "downloads", SID)).toContain(`*${SID}:(OI)(CI)RX`);
+    expect(aclArgs("D", "agent", SID)).toContain(`*${SID}:(OI)(CI)M`);
+  });
+
+  it("name the agent's user by its SID, never a name the computer may share", () => {
+    expect(aclArgs("D", "agent", SID).join(" ")).not.toMatch(/\bnibblet:/);
   });
 });
 

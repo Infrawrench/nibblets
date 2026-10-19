@@ -117,7 +117,7 @@ ${bypass}
   <settings pass="specialize">
 ${component(
   "Microsoft-Windows-Shell-Setup",
-  `      <ComputerName>nibblet</ComputerName>
+  `      <ComputerName>nibblet-vm</ComputerName>
       <TimeZone>UTC</TimeZone>`,
 )}
 ${component(
