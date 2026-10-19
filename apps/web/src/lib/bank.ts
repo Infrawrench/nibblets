@@ -7,6 +7,7 @@ import {
   type BankField,
   type BankKind,
   type BankSettings,
+  type BankSetup,
   type Card,
   type SpendingLimit,
 } from "@nibblet/protocol";
@@ -96,37 +97,64 @@ export function describeCard(card: Card): string {
 export type BankDraft = Record<string, string>;
 
 /** Whether a field already has a secret saved, which the form never sees. */
-export function secretSaved(kind: BankKind, field: BankField): boolean {
-  return field.secret && kind.settings[field.key] === MASKED;
+export function secretSaved(settings: BankSettings, field: BankField): boolean {
+  return field.secret && settings[field.key] === MASKED;
 }
 
-export function bankDraftOf(kind: BankKind): BankDraft {
+/** The form for a bank on this plugin with these settings ({} for a new one). */
+export function bankDraftOf(kind: BankKind, settings: BankSettings): BankDraft {
   return Object.fromEntries(
-    kind.fields.map((f) => [f.key, secretSaved(kind, f) ? "" : (kind.settings[f.key] ?? "")]),
+    kind.fields.map((f) => [f.key, secretSaved(settings, f) ? "" : (settings[f.key] ?? "")]),
   );
 }
 
 /** What to send the server: a secret left empty, but saved, is sent as `MASKED` to keep it. */
-export function bankSettingsOf(kind: BankKind, draft: BankDraft): BankSettings {
+export function bankSettingsOf(
+  kind: BankKind,
+  settings: BankSettings,
+  draft: BankDraft,
+): BankSettings {
   return Object.fromEntries(
     kind.fields.map((f) => {
       const value = draft[f.key]?.trim() ?? "";
-      return [f.key, value === "" && secretSaved(kind, f) ? MASKED : value];
+      return [f.key, value === "" && secretSaved(settings, f) ? MASKED : value];
     }),
   );
 }
 
 /** The first required field that's neither typed nor saved. */
-export function missingField(kind: BankKind, draft: BankDraft): BankField | null {
+export function missingField(
+  kind: BankKind,
+  settings: BankSettings,
+  draft: BankDraft,
+): BankField | null {
   return (
-    kind.fields.find((f) => f.required && !draft[f.key]?.trim() && !secretSaved(kind, f)) ?? null
+    kind.fields.find((f) => f.required && !draft[f.key]?.trim() && !secretSaved(settings, f)) ??
+    null
   );
 }
 
-/** Whether the form says anything different from what's saved. */
-export function bankDraftChanged(kind: BankKind, draft: BankDraft): boolean {
-  const saved = bankDraftOf(kind);
+/** Whether the form says anything different from these settings. */
+export function bankDraftChanged(
+  kind: BankKind,
+  settings: BankSettings,
+  draft: BankDraft,
+): boolean {
+  const saved = bankDraftOf(kind, settings);
   return kind.fields.some((f) => (draft[f.key]?.trim() ?? "") !== saved[f.key]);
+}
+
+/**
+ * Whether a bank on this plugin needs a name: one can go without, and the
+ * rest need one to tell them apart.
+ */
+export function needsName(banks: readonly BankSetup[], kind: string, id: string | null): boolean {
+  return banks.some((b) => b.kind === kind && b.id !== id && !b.name);
+}
+
+/** "Travel (Slash)", or just "Slash". */
+export function bankTitle(name: string, kindName: string): string {
+  return name ? `${name} (${kindName})` : kindName;
 }
 
 /** A fresh private key: 32 random bytes as hex, which every chain's plugin takes. */

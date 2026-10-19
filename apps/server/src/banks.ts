@@ -4,20 +4,23 @@ import {
   loadBankPlugins,
   maskSettings,
   mergeSettings,
-  resolveSettings,
+  newBankId,
+  resolveBanks,
   type BankDeps,
   type BankPlugin,
   type BankPluginFactory,
   type BankSettingValues,
+  type ResolvedBank,
+  type SavedBank,
 } from "@nibblet/bank";
 import { bitcoin } from "@nibblet/bank-bitcoin";
 import { ethereum } from "@nibblet/bank-ethereum";
 import { slash } from "@nibblet/bank-slash";
 import {
+  BankName,
   BankProviderId,
   BankSettings,
   RpcError,
-  type BankKind,
   type BankStatus,
 } from "@nibblet/protocol";
 import { z } from "zod";
@@ -25,16 +28,18 @@ import type { Bank } from "./bank.ts";
 import type { CardRow, Store } from "./store.ts";
 
 /**
- * Every bank plugin the server knows. Each is set up in Settings, which
- * keeps its settings in the database, or else from the server's environment
- * (variables named like its fields; see `docker/compose.yaml`), and stays
- * off otherwise.
+ * Every bank plugin the server knows. Banks are set up with them in
+ * Settings, which keeps their settings in the database; there can be
+ * several on one plugin (two Slash accounts, say). A plugin with no bank
+ * saved under its own id can also have one from the server's environment
+ * (variables named like its fields; see `docker/compose.yaml`).
  */
 export const BANK_PLUGINS: readonly BankPluginFactory[] = [slash, bitcoin, ethereum];
 
 const SETTING = "banks";
-const Saved = z.record(BankProviderId, BankSettings);
-type Saved = z.infer<typeof Saved>;
+const Saved = z.array(
+  z.object({ id: BankProviderId, kind: BankProviderId, name: BankName, settings: BankSettings }),
+);
 
 export interface BanksDeps {
   store: Pick<Store, "getSetting" | "setSetting"> & {
@@ -45,6 +50,14 @@ export interface BanksDeps {
   factories?: readonly BankPluginFactory[];
   plugin?: BankDeps;
   log?(message: string): void;
+}
+
+export interface BankChange {
+  /** Null to set a new bank up. */
+  id: string | null;
+  kind: string;
+  name: string;
+  settings: BankSettings;
 }
 
 /**
@@ -70,88 +83,124 @@ export class Banks {
 
   /** Loads every bank as it's set up now into the `Bank`. */
   async load(): Promise<void> {
-    const saved = await this.saved();
-    const settings = new Map(
-      this.factories.map((f) => [f.id, resolveSettings(f, saved[f.id], this.deps.env).settings]),
-    );
-    const { plugins, errors } = loadBankPlugins(this.factories, settings, this.plugin);
+    const { plugins, errors } = loadBankPlugins(this.factories, await this.banks(), this.plugin);
     for (const plugin of plugins.values()) console.log(`bank: ${plugin.label} is set up`);
     for (const [id, problem] of errors) this.log(`${id} isn't set up: ${problem}`);
     this.deps.bank.use(plugins, errors);
   }
 
   async status(): Promise<BankStatus> {
-    const [health, kinds] = await Promise.all([this.deps.bank.status(), this.kinds()]);
-    return { ...health, kinds };
+    const [health, banks, live] = await Promise.all([
+      this.deps.bank.status(),
+      this.banks(),
+      this.deps.store.liveCards(),
+    ]);
+    return {
+      ...health,
+      kinds: this.factories.map((f) => ({
+        id: f.id,
+        name: f.name,
+        about: f.about,
+        instrument: f.instrument,
+        fields: [...f.fields],
+      })),
+      banks: banks.map((b) => ({
+        id: b.id,
+        kind: b.kind,
+        name: b.name,
+        source: b.source,
+        // A bank whose plugin has gone shows no settings, rather than its secrets.
+        settings: maskSettings(
+          this.factories.find((f) => f.id === b.kind)?.fields ?? [],
+          b.settings,
+        ),
+        liveCards: live.filter((c) => c.provider === b.id).length,
+      })),
+    };
   }
 
   /** Checks the settings with the provider, saves them, and loads the bank with them. */
-  configure(id: string, input: BankSettings): Promise<BankStatus> {
+  configure(change: BankChange): Promise<BankStatus> {
     return this.serially(async () => {
-      const factory = this.factory(id);
-      const saved = await this.saved();
-      const current = resolveSettings(factory, saved[id], this.deps.env).settings;
-      const next = mergeSettings(factory.fields, input, current);
+      const factory = this.factory(change.kind);
+      const banks = await this.banks();
+      const existing = change.id === null ? null : this.bank(banks, change.id);
+      if (existing && existing.kind !== factory.id) {
+        throw new RpcError("bad_request", `${change.id} isn't a ${factory.name} bank`);
+      }
+      const name = change.name.trim();
+      const others = banks.filter((b) => b.kind === factory.id && b.id !== existing?.id);
+      // One bank on a plugin can go without a name; the rest need one to tell them apart.
+      if (!name && others.some((b) => !b.name)) {
+        throw new RpcError(
+          "bad_request",
+          `Give it a name, to tell it from your other ${factory.name} bank${others.length === 1 ? "" : "s"}`,
+        );
+      }
+      if (name && others.some((b) => b.name.toLowerCase() === name.toLowerCase())) {
+        throw new RpcError("conflict", `There's already a ${factory.name} bank called ${name}`);
+      }
+      const current = existing?.settings ?? {};
+      const next = mergeSettings(factory.fields, change.settings, current);
       const missing = factory.fields.find((f) => f.required && !next[f.key]);
       if (missing) throw new RpcError("bad_request", `${missing.label} is needed`);
-      const live = await this.liveCards(id);
-      const locked = changedLockedFields(factory.fields, current, next);
-      if (live > 0 && locked.length > 0) {
-        throw new RpcError(
-          "conflict",
-          `${locked.map((f) => f.label).join(" and ")} can't change while ${factory.name} has ${openCards(live)}: kill them first.`,
-        );
+      if (existing) {
+        const live = await this.liveCards(existing.id);
+        const locked = changedLockedFields(factory.fields, current, next);
+        if (live > 0 && locked.length > 0) {
+          throw new RpcError(
+            "conflict",
+            `${locked.map((f) => f.label).join(" and ")} can't change while ${title(existing, factory)} has ${openCards(live)}: kill them first.`,
+          );
+        }
       }
       const plugin = this.build(factory, next);
       try {
         await plugin.check();
       } catch (err) {
         if (err instanceof BankError) throw new RpcError("bad_request", err.message);
-        this.log(`checking ${id}: ${err instanceof Error ? err.message : String(err)}`);
+        this.log(`checking ${factory.id}: ${err instanceof Error ? err.message : String(err)}`);
         throw new RpcError(
           "unavailable",
           `${factory.name} didn't answer; the server's log has why`,
         );
       }
-      await this.deps.store.setSetting(SETTING, { ...saved, [id]: next });
+      const id = existing?.id ?? newBankId(factory.id, name, new Set(banks.map((b) => b.id)));
+      const saved: SavedBank = { id, kind: factory.id, name, settings: next };
+      const list = await this.saved();
+      const at = list.findIndex((b) => b.id === id);
+      if (at >= 0) list[at] = saved;
+      else list.push(saved);
+      await this.deps.store.setSetting(SETTING, list);
       await this.load();
       return this.status();
     });
   }
 
-  /** Forgets a bank's saved settings, unless it has cards that still need it to close. */
+  /** Forgets a saved bank, unless it has cards that still need it to close. */
   remove(id: string): Promise<BankStatus> {
     return this.serially(async () => {
-      const factory = this.factory(id);
+      const bank = this.bank(await this.banks(), id);
+      const factory = this.factory(bank.kind);
+      if (bank.source === "env") {
+        throw new RpcError(
+          "conflict",
+          `${title(bank, factory)} is set up from the server's environment: take its variables out of the server's .env to remove it.`,
+        );
+      }
       const live = await this.liveCards(id);
       if (live > 0) {
         throw new RpcError(
           "conflict",
-          `${factory.name} has ${openCards(live)}, and closing them needs it: kill them first.`,
+          `${title(bank, factory)} has ${openCards(live)}, and closing them needs it: kill them first.`,
         );
       }
-      const saved = await this.saved();
-      delete saved[id];
-      await this.deps.store.setSetting(SETTING, saved);
+      await this.deps.store.setSetting(
+        SETTING,
+        (await this.saved()).filter((b) => b.id !== id),
+      );
       await this.load();
       return this.status();
-    });
-  }
-
-  private async kinds(): Promise<BankKind[]> {
-    const [saved, live] = await Promise.all([this.saved(), this.deps.store.liveCards()]);
-    return this.factories.map((f) => {
-      const { source, settings } = resolveSettings(f, saved[f.id], this.deps.env);
-      return {
-        id: f.id,
-        name: f.name,
-        about: f.about,
-        instrument: f.instrument,
-        fields: [...f.fields],
-        source,
-        settings: maskSettings(f.fields, settings),
-        liveCards: live.filter((c) => c.provider === f.id).length,
-      };
     });
   }
 
@@ -166,14 +215,24 @@ export class Banks {
     return plugin;
   }
 
-  private factory(id: string): BankPluginFactory {
-    const factory = this.factories.find((f) => f.id === id);
-    if (!factory) throw new RpcError("not_found", `No bank called ${id}`);
+  private factory(kind: string): BankPluginFactory {
+    const factory = this.factories.find((f) => f.id === kind);
+    if (!factory) throw new RpcError("not_found", `No bank plugin called ${kind}`);
     return factory;
   }
 
-  private saved(): Promise<Saved> {
-    return this.deps.store.getSetting(SETTING, (v) => Saved.parse(v), {});
+  private bank(banks: readonly ResolvedBank[], id: string): ResolvedBank {
+    const bank = banks.find((b) => b.id === id);
+    if (!bank) throw new RpcError("not_found", `No bank called ${id}`);
+    return bank;
+  }
+
+  private async banks(): Promise<ResolvedBank[]> {
+    return resolveBanks(this.factories, await this.saved(), this.deps.env);
+  }
+
+  private saved(): Promise<SavedBank[]> {
+    return this.deps.store.getSetting(SETTING, (v) => Saved.parse(v), []);
   }
 
   private async liveCards(id: string): Promise<number> {
@@ -185,6 +244,11 @@ export class Banks {
     this.queue = next.catch(() => undefined);
     return next;
   }
+}
+
+/** "Travel (Slash)", or just "Slash". */
+function title(bank: { name: string }, factory: BankPluginFactory): string {
+  return bank.name ? `${bank.name} (${factory.name})` : factory.name;
 }
 
 function openCards(n: number): string {

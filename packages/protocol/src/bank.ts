@@ -12,7 +12,10 @@ import { z } from "zod";
 
 const Timestamp = z.iso.datetime();
 
-/** A bank plugin's id, e.g. `lithic`, `bitcoin`, `ethereum`. */
+/**
+ * A bank's id, e.g. `slash` or `slash-travel`: the first bank set up with a
+ * plugin has the plugin's own id (`slash`, `bitcoin`, `ethereum`).
+ */
 export const BankProviderId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/);
 export type BankProviderId = z.infer<typeof BankProviderId>;
 
@@ -150,7 +153,7 @@ export type CardFile = z.infer<typeof CardFile>;
 export const BankInstrument = z.enum(["card", "wallet"]);
 export type BankInstrument = z.infer<typeof BankInstrument>;
 
-/** One bank plugin the server has set up, for Settings. */
+/** One bank the server has set up, for Settings. */
 export const BankProvider = z.object({
   id: BankProviderId,
   label: z.string(),
@@ -191,7 +194,7 @@ export type BankField = z.infer<typeof BankField>;
 export const BankSettings = z.record(z.string(), z.string().max(4000));
 export type BankSettings = z.infer<typeof BankSettings>;
 
-/** A bank plugin the server knows, set up or not, with what it takes to set it up. */
+/** A bank plugin the server knows, and what it takes to set a bank up with it. */
 export const BankKind = z.object({
   id: BankProviderId,
   /** "Bitcoin", without the network a set-up one's label has. */
@@ -199,21 +202,36 @@ export const BankKind = z.object({
   about: z.string(),
   instrument: BankInstrument,
   fields: z.array(BankField),
-  /** Where its settings come from: saved in Settings, the server's environment, or nowhere yet. */
-  source: z.enum(["saved", "env"]).nullable(),
+});
+export type BankKind = z.infer<typeof BankKind>;
+
+/** What a person calls a bank, to tell it from others on the same plugin: "Travel". */
+export const BankName = z.string().trim().max(40);
+
+/** One bank set up with a plugin; there can be several on one. */
+export const BankSetup = z.object({
+  id: BankProviderId,
+  /** The plugin it's set up with. */
+  kind: BankProviderId,
+  /** Empty when it's the only one, or wasn't given one. */
+  name: BankName,
+  /** Saved in Settings, or read from the server's environment. */
+  source: z.enum(["saved", "env"]),
   /** Its settings as they stand, secrets as `MASKED`. */
   settings: BankSettings,
   /** Its cards that aren't closed, which hold its locked fields and keep it from being removed. */
   liveCards: z.int().min(0),
 });
-export type BankKind = z.infer<typeof BankKind>;
+export type BankSetup = z.infer<typeof BankSetup>;
 
 export const BankStatus = z.object({
   providers: z.array(BankProvider),
   /** Plugins whose settings are there but wrong, with why, so they aren't silently missing. */
   problems: z.array(z.object({ id: BankProviderId, detail: z.string() })),
-  /** Every bank plugin the server knows, for setting them up. */
+  /** Every bank plugin the server knows, for setting banks up with. */
   kinds: z.array(BankKind),
+  /** Every bank set up, working or not; `providers` has how each is doing. */
+  banks: z.array(BankSetup),
 });
 export type BankStatus = z.infer<typeof BankStatus>;
 

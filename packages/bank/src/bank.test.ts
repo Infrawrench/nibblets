@@ -13,7 +13,8 @@ import {
   mergeSettings,
   periodStart,
   requireSetting,
-  resolveSettings,
+  newBankId,
+  resolveBanks,
   oneAtATime,
   walletSpent,
   type BankPlugin,
@@ -157,7 +158,7 @@ describe("wallet keys", () => {
   });
 });
 
-describe("loading plugins", () => {
+describe("loading banks", () => {
   const key = defineField("FAKE_KEY", "Key", { required: true, secret: true });
   const other = defineField("BROKEN_OTHER", "Other thing", { required: true });
   const configured = defineBankFactory({
@@ -177,41 +178,72 @@ describe("loading plugins", () => {
     fromSettings: (settings) =>
       settings.BROKEN_KEY ? fakePlugin(requireSetting(settings, other)) : null,
   });
+  const bank = (id: string, kind: string, settings: Record<string, string>, name = "") => ({
+    id,
+    kind,
+    name,
+    settings,
+  });
 
   it("loads what's set up, skips what isn't, and reports what's wrong", () => {
     const { plugins, errors } = loadBankPlugins(
       [configured, broken],
-      new Map([
-        ["fake", { FAKE_KEY: "x" }],
-        ["broken", { BROKEN_KEY: "y" }],
-      ]),
+      [
+        bank("fake", "fake", { FAKE_KEY: "x" }),
+        bank("broken", "broken", { BROKEN_KEY: "y" }),
+        bank("half", "fake", {}),
+        bank("gone", "lithic", { KEY: "z" }),
+      ],
       deps,
     );
     expect([...plugins.keys()]).toEqual(["fake"]);
     expect(errors.get("broken")).toBe("Other thing is needed");
-    expect(loadBankPlugins([configured], new Map(), deps).plugins.size).toBe(0);
+    expect(errors.get("gone")).toBe("there's no bank plugin called lithic");
   });
 
-  it("refuses two plugins with one id", () => {
-    expect(() => loadBankPlugins([configured, configured], new Map(), deps)).toThrow(
-      /Two bank plugins/,
+  it("loads several banks on one plugin, each under its own id and name", () => {
+    const { plugins } = loadBankPlugins(
+      [configured],
+      [
+        bank("fake", "fake", { FAKE_KEY: "x" }),
+        bank("fake-travel", "fake", { FAKE_KEY: "y" }, "Travel"),
+      ],
+      deps,
     );
+    expect([...plugins.values()].map((p) => [p.id, p.label])).toEqual([
+      ["fake", "fake"],
+      ["fake-travel", "Travel · fake"],
+    ]);
   });
 
-  it("take saved settings over the environment's, and only their own fields from it", () => {
+  it("refuses two plugins, or two banks, with one id", () => {
+    expect(() => loadBankPlugins([configured, configured], [], deps)).toThrow(/Two bank plugins/);
+    const twice = bank("fake", "fake", { FAKE_KEY: "x" });
+    expect(() => loadBankPlugins([configured], [twice, twice], deps)).toThrow(/Two banks/);
+  });
+
+  it("take a bank from the environment under the plugin's id, unless one's saved there", () => {
     const env = { FAKE_KEY: "from-env", PATH: "/bin" };
-    expect(resolveSettings(configured, undefined, env)).toEqual({
-      source: "env",
-      settings: { FAKE_KEY: "from-env" },
-    });
-    expect(resolveSettings(configured, { FAKE_KEY: "saved" }, env)).toEqual({
-      source: "saved",
-      settings: { FAKE_KEY: "saved" },
-    });
-    expect(resolveSettings(configured, undefined, { FAKE_KEY: "  " })).toEqual({
-      source: null,
-      settings: {},
-    });
+    expect(resolveBanks([configured], [], env)).toEqual([
+      { id: "fake", kind: "fake", name: "", settings: { FAKE_KEY: "from-env" }, source: "env" },
+    ]);
+    const saved = [bank("fake", "fake", { FAKE_KEY: "saved" })];
+    expect(resolveBanks([configured], saved, env)).toEqual([{ ...saved[0], source: "saved" }]);
+    // A second saved bank leaves the plugin's id, and so the environment's, alone.
+    const other = [bank("fake-travel", "fake", { FAKE_KEY: "saved" }, "Travel")];
+    expect(resolveBanks([configured], other, env).map((b) => [b.id, b.source])).toEqual([
+      ["fake-travel", "saved"],
+      ["fake", "env"],
+    ]);
+    expect(resolveBanks([configured], [], { FAKE_KEY: "  " })).toEqual([]);
+  });
+
+  it("give the first bank on a plugin its id, and later ones their names", () => {
+    expect(newBankId("slash", "Travel", new Set())).toBe("slash");
+    expect(newBankId("slash", "Travel & Ops!", new Set(["slash"]))).toBe("slash-travel-ops");
+    expect(newBankId("slash", "Travel", new Set(["slash", "slash-travel"]))).toBe("slash-travel-2");
+    expect(newBankId("slash", "", new Set(["slash"]))).toBe("slash-2");
+    expect(newBankId("slash", "x".repeat(80), new Set(["slash"]))).toMatch(/^slash-x{29}$/);
   });
 });
 

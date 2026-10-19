@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { MASKED, type BankField, type BankKind } from "@nibblet/protocol";
+import { MASKED, type BankField, type BankKind, type BankSetup } from "@nibblet/protocol";
 import {
   bankAssets,
   bankDraftChanged,
   bankDraftOf,
   bankSettingsOf,
+  bankTitle,
   draftOf,
   limitsOf,
   missingField,
   money,
+  needsName,
   newPrivateKey,
 } from "./bank.ts";
 
@@ -70,47 +72,68 @@ const field = (key: string, more: Partial<BankField> = {}): BankField => ({
   ...more,
 });
 
-const kind = (settings: Record<string, string>): BankKind => ({
+const kind: BankKind = {
   id: "fake",
   name: "Fake",
   about: "",
   instrument: "wallet",
   fields: [field("KEY", { secret: true, required: true }), field("NETWORK", { required: true })],
-  source: Object.keys(settings).length ? "saved" : null,
-  settings,
+};
+
+const setup = (id: string, name: string, kind = "fake"): BankSetup => ({
+  id,
+  kind,
+  name,
+  source: "saved",
+  settings: {},
   liveCards: 0,
 });
 
 describe("bank settings forms", () => {
   it("start with what's saved, but never a secret", () => {
-    expect(bankDraftOf(kind({ KEY: MASKED, NETWORK: "signet" }))).toEqual({
+    expect(bankDraftOf(kind, { KEY: MASKED, NETWORK: "signet" })).toEqual({
       KEY: "",
       NETWORK: "signet",
     });
-    expect(bankDraftOf(kind({}))).toEqual({ KEY: "", NETWORK: "" });
+    expect(bankDraftOf(kind, {})).toEqual({ KEY: "", NETWORK: "" });
   });
 
   it("keep a saved secret that isn't retyped", () => {
-    const saved = kind({ KEY: MASKED, NETWORK: "signet" });
-    expect(bankSettingsOf(saved, { KEY: "", NETWORK: "mainnet" })).toEqual({
+    const saved = { KEY: MASKED, NETWORK: "signet" };
+    expect(bankSettingsOf(kind, saved, { KEY: "", NETWORK: "mainnet" })).toEqual({
       KEY: MASKED,
       NETWORK: "mainnet",
     });
-    expect(bankSettingsOf(saved, { KEY: " new ", NETWORK: "signet" })).toEqual({
+    expect(bankSettingsOf(kind, saved, { KEY: " new ", NETWORK: "signet" })).toEqual({
       KEY: "new",
+      NETWORK: "signet",
+    });
+    // A new bank has nothing saved to keep.
+    expect(bankSettingsOf(kind, {}, { KEY: "", NETWORK: "signet" })).toEqual({
+      KEY: "",
       NETWORK: "signet",
     });
   });
 
   it("say what's still needed, counting saved secrets as there", () => {
-    expect(missingField(kind({}), { KEY: "k", NETWORK: "" })?.key).toBe("NETWORK");
-    expect(missingField(kind({ KEY: MASKED }), { KEY: "", NETWORK: "signet" })).toBeNull();
+    expect(missingField(kind, {}, { KEY: "k", NETWORK: "" })?.key).toBe("NETWORK");
+    expect(missingField(kind, { KEY: MASKED }, { KEY: "", NETWORK: "signet" })).toBeNull();
   });
 
   it("know when something's changed", () => {
-    const saved = kind({ KEY: MASKED, NETWORK: "signet" });
-    expect(bankDraftChanged(saved, { KEY: "", NETWORK: "signet" })).toBe(false);
-    expect(bankDraftChanged(saved, { KEY: "x", NETWORK: "signet" })).toBe(true);
+    const saved = { KEY: MASKED, NETWORK: "signet" };
+    expect(bankDraftChanged(kind, saved, { KEY: "", NETWORK: "signet" })).toBe(false);
+    expect(bankDraftChanged(kind, saved, { KEY: "x", NETWORK: "signet" })).toBe(true);
+  });
+
+  it("want a name once a bank on the plugin goes without one", () => {
+    expect(needsName([], "fake", null)).toBe(false);
+    expect(needsName([setup("fake", "")], "fake", null)).toBe(true);
+    expect(needsName([setup("fake", "")], "fake", "fake")).toBe(false);
+    expect(needsName([setup("fake", "Ops")], "fake", null)).toBe(false);
+    expect(needsName([setup("other", "", "other")], "fake", null)).toBe(false);
+    expect(bankTitle("Travel", "Slash")).toBe("Travel (Slash)");
+    expect(bankTitle("", "Slash")).toBe("Slash");
   });
 
   it("make 32-byte keys, a new one each time", () => {

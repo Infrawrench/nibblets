@@ -276,7 +276,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       cards: ({ nibbletId }) => s.bank.cards(nibbletId),
       allowances: ({ nibbletId }) => s.bank.allowances(nibbletId),
       kill: ({ id }) => s.bank.kill(id, "user"),
-      configure: ({ id, settings }) => s.banks.configure(id, settings),
+      configure: (change) => s.banks.configure(change),
       remove: ({ id }) => s.banks.remove(id),
     },
     snapshots: {

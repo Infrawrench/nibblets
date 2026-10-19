@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { SpendingPeriod, type BankKind, type Card, type Nibblet } from "@nibblet/protocol";
+import {
+  SpendingPeriod,
+  type BankInstrument,
+  type BankKind,
+  type BankSetup,
+  type Card,
+  type Nibblet,
+} from "@nibblet/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import {
   bankAssets,
+  bankTitle,
   describeCard,
   draftOf,
   limitsOf,
@@ -127,7 +135,12 @@ export function NibbletSpending({
           {error ? <span className="text-xs text-danger">{error}</span> : null}
         </div>
       ) : null}
-      <CardList connection={connection} cards={cards.data ?? []} kinds={status.data?.kinds ?? []} />
+      <CardList
+        connection={connection}
+        cards={cards.data ?? []}
+        kinds={status.data?.kinds ?? []}
+        banks={status.data?.banks ?? []}
+      />
     </>
   );
 }
@@ -136,10 +149,12 @@ function CardList({
   connection,
   cards,
   kinds,
+  banks,
 }: {
   connection: ServerConnection;
   cards: Card[];
   kinds: readonly BankKind[];
+  banks: readonly BankSetup[];
 }) {
   const [showClosed, setShowClosed] = useState(false);
   const open = cards.filter((c) => c.state !== "closed");
@@ -148,7 +163,12 @@ function CardList({
   return (
     <div className="flex flex-col gap-1.5">
       {open.map((card) => (
-        <CardRow key={card.id} connection={connection} card={card} kind={kindOf(kinds, card)} />
+        <CardRow
+          key={card.id}
+          connection={connection}
+          card={card}
+          bank={bankOf(kinds, banks, card)}
+        />
       ))}
       {open.length === 0 ? <p className="text-xs text-faint">No open cards.</p> : null}
       {closed.length > 0 ? (
@@ -162,7 +182,12 @@ function CardList({
       ) : null}
       {showClosed
         ? closed.map((card) => (
-            <CardRow key={card.id} connection={connection} card={card} kind={kindOf(kinds, card)} />
+            <CardRow
+              key={card.id}
+              connection={connection}
+              card={card}
+              bank={bankOf(kinds, banks, card)}
+            />
           ))
         : null}
     </div>
@@ -176,8 +201,22 @@ const closedByLabel: Record<NonNullable<Card["closedBy"]>, string> = {
   server: "closed: it couldn't reach the container",
 };
 
-function kindOf(kinds: readonly BankKind[], card: Card): BankKind | null {
-  return kinds.find((k) => k.id === card.provider) ?? null;
+interface CardBank {
+  title: string;
+  instrument: BankInstrument;
+}
+
+/** How a card's bank is shown; null if the server no longer knows it. */
+function bankOf(
+  kinds: readonly BankKind[],
+  banks: readonly BankSetup[],
+  card: Card,
+): CardBank | null {
+  const bank = banks.find((b) => b.id === card.provider);
+  const kind = kinds.find((k) => k.id === (bank?.kind ?? card.provider));
+  return kind
+    ? { title: bankTitle(bank?.name ?? "", kind.name), instrument: kind.instrument }
+    : null;
 }
 
 /** What a card that isn't closed is doing, and since when. */
@@ -191,14 +230,13 @@ function liveLabel(card: Card, bank: string): string {
 function CardRow({
   connection,
   card,
-  kind,
+  bank: cardBank,
 }: {
   connection: ServerConnection;
   card: Card;
-  /** Its bank's plugin, which says what it is; null if the server no longer knows it. */
-  kind: BankKind | null;
+  bank: CardBank | null;
 }) {
-  const bank = kind?.name ?? card.provider;
+  const bank = cardBank?.title ?? card.provider;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const kill = async () => {
@@ -212,7 +250,7 @@ function CardRow({
       setBusy(false);
     }
   };
-  const Icon = instrumentIcons[kind?.instrument ?? "card"];
+  const Icon = instrumentIcons[cardBank?.instrument ?? "card"];
   return (
     <div className="flex items-start gap-2.5 rounded-md border border-line bg-surface px-2.5 py-2">
       <Icon

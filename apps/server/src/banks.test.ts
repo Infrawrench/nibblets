@@ -89,81 +89,140 @@ function setUp(env: Record<string, string> = {}) {
   return { banks, settings, live, loaded, logs };
 }
 
+/** A change to the fake bank: a new one, unless `id` says which. */
+const change = (settings: Record<string, string>, more: { id?: string; name?: string } = {}) => ({
+  id: more.id ?? null,
+  kind: "fake",
+  name: more.name ?? "",
+  settings,
+});
+
 describe("setting banks up", () => {
   it("saves settings the provider takes, and loads the bank with them", async () => {
     const { banks, settings, loaded } = setUp();
     await banks.load();
     expect(loaded).toEqual([[]]);
-    const status = await banks.configure("fake", { FAKE_KEY: "k1", FAKE_ACCOUNT: "acc" });
-    expect(settings.get("banks")).toEqual({ fake: { FAKE_KEY: "k1", FAKE_ACCOUNT: "acc" } });
+    const status = await banks.configure(change({ FAKE_KEY: "k1", FAKE_ACCOUNT: "acc" }));
+    expect(settings.get("banks")).toEqual([
+      { id: "fake", kind: "fake", name: "", settings: { FAKE_KEY: "k1", FAKE_ACCOUNT: "acc" } },
+    ]);
     expect(loaded.at(-1)).toEqual(["fake"]);
     expect(status.providers.map((p) => p.label)).toEqual(["Fake (acc)"]);
-    expect(status.kinds).toEqual([
-      expect.objectContaining({
+    expect(status.kinds.map((k) => k.id)).toEqual(["fake"]);
+    expect(status.banks).toEqual([
+      {
         id: "fake",
-        name: "Fake",
+        kind: "fake",
+        name: "",
         source: "saved",
         settings: { FAKE_KEY: MASKED, FAKE_ACCOUNT: "acc" },
         liveCards: 0,
-      }),
+      },
     ]);
   });
 
   it("keeps a secret sent back masked", async () => {
     const { banks, settings } = setUp();
-    await banks.configure("fake", { FAKE_KEY: "k1" });
-    await banks.configure("fake", { FAKE_KEY: MASKED, FAKE_ACCOUNT: "acc" });
-    expect(settings.get("banks")).toEqual({ fake: { FAKE_KEY: "k1", FAKE_ACCOUNT: "acc" } });
+    await banks.configure(change({ FAKE_KEY: "k1" }));
+    await banks.configure(change({ FAKE_KEY: MASKED, FAKE_ACCOUNT: "acc" }, { id: "fake" }));
+    expect(settings.get("banks")).toEqual([
+      { id: "fake", kind: "fake", name: "", settings: { FAKE_KEY: "k1", FAKE_ACCOUNT: "acc" } },
+    ]);
+  });
+
+  it("sets up several banks on one plugin, each with a name and its own id", async () => {
+    const { banks, loaded } = setUp();
+    await banks.configure(change({ FAKE_KEY: "k1" }));
+    await expect(banks.configure(change({ FAKE_KEY: "k2" }))).rejects.toThrow(
+      "Give it a name, to tell it from your other Fake bank",
+    );
+    await banks.configure(change({ FAKE_KEY: "k2" }, { name: "Travel" }));
+    await expect(banks.configure(change({ FAKE_KEY: "k3" }, { name: "travel" }))).rejects.toThrow(
+      "There's already a Fake bank called travel",
+    );
+    const status = await banks.configure(change({ FAKE_KEY: "k3" }, { name: "Ops" }));
+    expect(status.banks.map((b) => [b.id, b.name])).toEqual([
+      ["fake", ""],
+      ["fake-travel", "Travel"],
+      ["fake-ops", "Ops"],
+    ]);
+    expect(loaded.at(-1)).toEqual(["fake", "fake-travel", "fake-ops"]);
+    // Renaming keeps its id, which its cards point at.
+    const renamed = await banks.configure(
+      change({ FAKE_KEY: MASKED }, { id: "fake-travel", name: "Holidays" }),
+    );
+    expect(renamed.banks.map((b) => [b.id, b.name])).toContainEqual(["fake-travel", "Holidays"]);
   });
 
   it("saves nothing the provider refuses, saying why", async () => {
     const { banks, settings, logs } = setUp();
-    await expect(banks.configure("fake", { FAKE_KEY: "" })).rejects.toThrow("API key is needed");
-    await expect(banks.configure("fake", { FAKE_KEY: "short" })).rejects.toThrow(
+    await expect(banks.configure(change({ FAKE_KEY: "" }))).rejects.toThrow("API key is needed");
+    await expect(banks.configure(change({ FAKE_KEY: "short" }))).rejects.toThrow(
       "API key is too short",
     );
-    await expect(banks.configure("fake", { FAKE_KEY: "wrong" })).rejects.toThrow(
+    await expect(banks.configure(change({ FAKE_KEY: "wrong" }))).rejects.toThrow(
       "Fake: Invalid API key",
     );
     // Anything but a BankError could carry a credential, so it's only logged.
-    const down = banks.configure("fake", { FAKE_KEY: "down" });
+    const down = banks.configure(change({ FAKE_KEY: "down" }));
     await expect(down).rejects.toThrow("Fake didn't answer; the server's log has why");
     expect(logs.join("\n")).toContain("key=down");
-    await expect(banks.configure("nope", {})).rejects.toThrow("No bank called nope");
+    await expect(banks.configure({ ...change({}), kind: "nope" })).rejects.toThrow(
+      "No bank plugin called nope",
+    );
+    await expect(banks.configure(change({ FAKE_KEY: "k" }, { id: "nope" }))).rejects.toThrow(
+      "No bank called nope",
+    );
     expect(settings.has("banks")).toBe(false);
   });
 
   it("won't change what open cards depend on, or remove a bank they need", async () => {
     const { banks, live, settings } = setUp();
-    await banks.configure("fake", { FAKE_KEY: "k1", FAKE_ACCOUNT: "acc" });
-    live.push({ provider: "fake" }, { provider: "other" });
+    await banks.configure(change({ FAKE_KEY: "k1", FAKE_ACCOUNT: "acc" }));
+    await banks.configure(change({ FAKE_KEY: "k2" }, { name: "Travel" }));
+    live.push({ provider: "fake-travel" }, { provider: "other" });
     await expect(
-      banks.configure("fake", { FAKE_KEY: MASKED, FAKE_ACCOUNT: "acc2" }),
-    ).rejects.toThrow(
-      "Account can't change while Fake has a card that isn't closed: kill them first.",
+      banks.configure(
+        change({ FAKE_KEY: MASKED, FAKE_ACCOUNT: "x" }, { id: "fake-travel", name: "Travel" }),
+      ),
+    ).rejects.toThrow("Account can't change while Travel (Fake) has a card that isn't closed");
+    // Its other fields still can, and the bank without cards can change anything.
+    await banks.configure(change({ FAKE_KEY: "k3" }, { id: "fake-travel", name: "Travel" }));
+    await banks.configure(change({ FAKE_KEY: MASKED, FAKE_ACCOUNT: "y" }, { id: "fake" }));
+    await expect(banks.remove("fake-travel")).rejects.toThrow(
+      "Travel (Fake) has a card that isn't closed, and closing them needs it",
     );
-    // Fields that aren't locked still can.
-    await banks.configure("fake", { FAKE_KEY: "k2", FAKE_ACCOUNT: "acc" });
-    await expect(banks.remove("fake")).rejects.toThrow(
-      "Fake has a card that isn't closed, and closing them needs it",
-    );
-    live.length = 0;
     await banks.remove("fake");
-    expect(settings.get("banks")).toEqual({});
+    live.length = 0;
+    await banks.remove("fake-travel");
+    expect(settings.get("banks")).toEqual([]);
   });
 
   it("falls back to the environment, and lets Settings take over from it", async () => {
     const { banks, loaded } = setUp({ FAKE_KEY: "from-env" });
     await banks.load();
     expect(loaded).toEqual([["fake"]]);
-    expect((await banks.status()).kinds[0]).toMatchObject({
+    expect((await banks.status()).banks[0]).toMatchObject({
+      id: "fake",
       source: "env",
       settings: { FAKE_KEY: MASKED },
     });
-    // Saving keeps the environment's key when it's sent back masked.
-    await banks.configure("fake", { FAKE_KEY: MASKED, FAKE_ACCOUNT: "acc" });
-    expect((await banks.status()).kinds[0]).toMatchObject({ source: "saved" });
+    await expect(banks.remove("fake")).rejects.toThrow(/server's environment/);
+    // A second bank needs a name, and leaves the environment's in place.
+    await banks.configure(change({ FAKE_KEY: "k2" }, { name: "Travel" }));
+    expect((await banks.status()).banks.map((b) => [b.id, b.source])).toEqual([
+      ["fake-travel", "saved"],
+      ["fake", "env"],
+    ]);
+    // Saving the environment's keeps its key when it's sent back masked, and takes it over.
+    await banks.configure(change({ FAKE_KEY: MASKED, FAKE_ACCOUNT: "acc" }, { id: "fake" }));
+    expect((await banks.status()).banks.find((b) => b.id === "fake")).toMatchObject({
+      source: "saved",
+      settings: { FAKE_KEY: MASKED, FAKE_ACCOUNT: "acc" },
+    });
     await banks.remove("fake");
-    expect((await banks.status()).kinds[0]).toMatchObject({ source: "env" });
+    expect((await banks.status()).banks.find((b) => b.id === "fake")).toMatchObject({
+      source: "env",
+    });
   });
 });

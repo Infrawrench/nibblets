@@ -293,7 +293,7 @@ export function createMockServer(): ServerConnection {
   });
   const treasuryHint =
     "The private key of the wallet cards are funded from. Make a new one and keep a copy somewhere safe: it's the only way to the treasury's coins.";
-  const bankKinds: Omit<BankKind, "source" | "settings" | "liveCards">[] = [
+  const bankKinds: BankKind[] = [
     {
       id: "slash",
       name: "Slash",
@@ -383,48 +383,59 @@ export function createMockServer(): ServerConnection {
       ],
     },
   ];
-  const bankSettings = new Map<string, BankSettings>([
-    ["slash", { SLASH_API_KEY: "mock-slash-key", SLASH_ACCOUNT_ID: "acc_8f3k2m" }],
-    ["bitcoin", { BITCOIN_NETWORK: "signet", BITCOIN_TREASURY_KEY: "mock-treasury-key" }],
-  ]);
-  /** Treasuries start with what's in them; a freshly set-up one is empty. */
+  const mockBanks: { id: string; kind: string; name: string; settings: BankSettings }[] = [
+    {
+      id: "slash",
+      kind: "slash",
+      name: "",
+      settings: { SLASH_API_KEY: "mock-slash-key", SLASH_ACCOUNT_ID: "acc_8f3k2m" },
+    },
+    {
+      id: "bitcoin",
+      kind: "bitcoin",
+      name: "",
+      settings: { BITCOIN_NETWORK: "signet", BITCOIN_TREASURY_KEY: "mock-treasury-key" },
+    },
+  ];
+  /** What's in each to start with; a Slash account set up later has a little, a new treasury nothing. */
   const bankBalances = new Map([
     ["slash", "248650"],
     ["bitcoin", "4180000"],
   ]);
-  const bankProvider = (id: string, settings: BankSettings): BankProvider => {
-    const base = { state: "ready" as const, detail: null };
-    if (id === "slash") {
+  const bankProvider = (bank: (typeof mockBanks)[number]): BankProvider => {
+    const { id, settings } = bank;
+    const named = (label: string) => (bank.name ? `${bank.name} · ${label}` : label);
+    const base = { id, state: "ready" as const, detail: null };
+    if (bank.kind === "slash") {
       return {
         ...base,
-        id,
-        label: "Slash",
+        label: named("Slash"),
         asset: usd,
         instrument: "card",
-        balance: settings.SLASH_ACCOUNT_ID ? (bankBalances.get(id) ?? "0") : null,
+        balance: settings.SLASH_ACCOUNT_ID ? (bankBalances.get(id) ?? "125000") : null,
         fundAt: null,
       };
     }
-    if (id === "bitcoin") {
+    if (bank.kind === "bitcoin") {
       const network = settings.BITCOIN_NETWORK ?? "signet";
       return {
         ...base,
-        id,
-        label: network === "mainnet" ? "Bitcoin" : `Bitcoin (${network})`,
+        label: named(network === "mainnet" ? "Bitcoin" : `Bitcoin (${network})`),
         asset: btc,
         instrument: "wallet",
         balance: bankBalances.get(id) ?? "0",
         fundAt:
-          network === "mainnet"
-            ? "bc1q7cyrfmck2ffu2ud3rn5l5a8yv6f0chkp0zpemf"
-            : "tb1q7cyrfmck2ffu2ud3rn5l5a8yv6f0chkp9ydvzd",
+          id === "bitcoin"
+            ? "tb1q7cyrfmck2ffu2ud3rn5l5a8yv6f0chkp9ydvzd"
+            : network === "mainnet"
+              ? "bc1qg5ng2mns0ugrwa4yhqekz7nlvtcfa2fjvp4w8a"
+              : "tb1qg5ng2mns0ugrwa4yhqekz7nlvtcfa2fjjxw5n6",
       };
     }
     const asset = settings.ETHEREUM_ASSET ?? "ETH";
     return {
       ...base,
-      id,
-      label: asset === "ETH" ? "Ethereum" : `Ethereum (${asset})`,
+      label: named(asset === "ETH" ? "Ethereum" : `Ethereum (${asset})`),
       asset: { code: asset, decimals: 18 },
       instrument: "wallet",
       balance: bankBalances.get(id) ?? "0",
@@ -434,20 +445,23 @@ export function createMockServer(): ServerConnection {
   const liveCardsAt = (id: string) =>
     cards.filter((c) => c.provider === id && c.state !== "closed").length;
   const bankStatus = () => ({
-    providers: [...bankSettings].map(([id, settings]) => bankProvider(id, settings)),
+    providers: mockBanks.map(bankProvider),
     problems: [],
-    kinds: bankKinds.map((kind) => {
-      const settings = bankSettings.get(kind.id);
+    kinds: bankKinds,
+    banks: mockBanks.map((bank) => {
+      const fields = bankKinds.find((k) => k.id === bank.kind)?.fields ?? [];
       return {
-        ...kind,
-        source: settings ? ("saved" as const) : null,
+        id: bank.id,
+        kind: bank.kind,
+        name: bank.name,
+        source: "saved" as const,
         settings: Object.fromEntries(
-          Object.entries(settings ?? {}).map(([key, value]) => [
+          Object.entries(bank.settings).map(([key, value]) => [
             key,
-            kind.fields.find((f) => f.key === key)?.secret ? MASKED : value,
+            fields.find((f) => f.key === key)?.secret ? MASKED : value,
           ]),
         ),
-        liveCards: liveCardsAt(kind.id),
+        liveCards: liveCardsAt(bank.id),
       };
     }),
   });
@@ -1230,10 +1244,24 @@ export function createMockServer(): ServerConnection {
       },
       // Checked as a real server would, with the provider faked: Slash
       // refuses the key `wrong`.
-      configure: async ({ id, settings: input }) => {
-        const kind = bankKinds.find((k) => k.id === id);
-        if (!kind) throw new RpcError("not_found", `No bank called ${id}`);
-        const current = bankSettings.get(id) ?? {};
+      configure: async ({ id, kind: kindId, name: rawName, settings: input }) => {
+        const kind = bankKinds.find((k) => k.id === kindId);
+        if (!kind) throw new RpcError("not_found", `No bank plugin called ${kindId}`);
+        const existing = id === null ? null : mockBanks.find((b) => b.id === id);
+        if (existing === undefined) throw new RpcError("not_found", `No bank called ${id}`);
+        const name = rawName.trim();
+        const title = name ? `${name} (${kind.name})` : kind.name;
+        const others = mockBanks.filter((b) => b.kind === kind.id && b.id !== existing?.id);
+        if (!name && others.some((b) => !b.name)) {
+          throw new RpcError(
+            "bad_request",
+            `Give it a name, to tell it from your other ${kind.name} bank${others.length === 1 ? "" : "s"}`,
+          );
+        }
+        if (name && others.some((b) => b.name.toLowerCase() === name.toLowerCase())) {
+          throw new RpcError("conflict", `There's already a ${kind.name} bank called ${name}`);
+        }
+        const current = existing?.settings ?? {};
         const next: BankSettings = {};
         for (const f of kind.fields) {
           const sent = input[f.key]?.trim() ?? "";
@@ -1245,38 +1273,55 @@ export function createMockServer(): ServerConnection {
         const locked = kind.fields.filter(
           (f) => f.lockedByCards && (current[f.key] ?? "") !== (next[f.key] ?? ""),
         );
-        if (locked.length > 0 && liveCardsAt(id) > 0) {
+        if (existing && locked.length > 0 && liveCardsAt(existing.id) > 0) {
           throw new RpcError(
             "conflict",
-            `${locked.map((f) => f.label).join(" and ")} can't change while ${kind.name} has cards that aren't closed: kill them first.`,
+            `${locked.map((f) => f.label).join(" and ")} can't change while ${title} has cards that aren't closed: kill them first.`,
           );
         }
         await pause(900);
-        if (next.SLASH_API_KEY === "wrong")
+        if (next.SLASH_API_KEY === "wrong") {
           throw new RpcError("bad_request", "Slash: Invalid API key");
-        const key = next.BITCOIN_TREASURY_KEY ?? next.ETHEREUM_TREASURY_KEY;
-        if (key && key !== (current.BITCOIN_TREASURY_KEY ?? current.ETHEREUM_TREASURY_KEY)) {
-          if (!/^(0x)?[0-9a-f]{64}$/i.test(key)) {
-            throw new RpcError("bad_request", "Treasury key isn't a hex private key");
-          }
-          // A new treasury starts empty.
-          bankBalances.delete(id);
         }
-        bankSettings.set(id, next);
+        const key = next.BITCOIN_TREASURY_KEY ?? next.ETHEREUM_TREASURY_KEY;
+        const changedKey =
+          key !== undefined &&
+          key !== (current.BITCOIN_TREASURY_KEY ?? current.ETHEREUM_TREASURY_KEY);
+        if (changedKey && !/^(0x)?[0-9a-f]{64}$/i.test(key)) {
+          throw new RpcError("bad_request", "Treasury key isn't a hex private key");
+        }
+        if (existing) {
+          if (changedKey) bankBalances.delete(existing.id);
+          existing.name = name;
+          existing.settings = next;
+        } else {
+          // As the server does: the plugin's own id first, then one from the name.
+          const taken = new Set(mockBanks.map((b) => b.id));
+          const slug = name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, "");
+          const stem = slug ? `${kind.id}-${slug}` : kind.id;
+          let newId = taken.has(kind.id) ? stem : kind.id;
+          for (let n = 2; taken.has(newId); n++) newId = `${stem}-${n}`;
+          mockBanks.push({ id: newId, kind: kind.id, name, settings: next });
+        }
         push({ type: "bank_changed" });
         return bankStatus();
       },
       remove: async ({ id }) => {
-        const kind = bankKinds.find((k) => k.id === id);
-        if (!kind) throw new RpcError("not_found", `No bank called ${id}`);
+        const at = mockBanks.findIndex((b) => b.id === id);
+        const bank = mockBanks[at];
+        if (!bank) throw new RpcError("not_found", `No bank called ${id}`);
+        const kindName = bankKinds.find((k) => k.id === bank.kind)?.name ?? bank.kind;
         const live = liveCardsAt(id);
         if (live > 0) {
           throw new RpcError(
             "conflict",
-            `${kind.name} has ${live === 1 ? "a card that isn't closed" : `${live} cards that aren't closed`}, and closing them needs it: kill them first.`,
+            `${bank.name ? `${bank.name} (${kindName})` : kindName} has ${live === 1 ? "a card that isn't closed" : `${live} cards that aren't closed`}, and closing them needs it: kill them first.`,
           );
         }
-        bankSettings.delete(id);
+        mockBanks.splice(at, 1);
         push({ type: "bank_changed" });
         return bankStatus();
       },
