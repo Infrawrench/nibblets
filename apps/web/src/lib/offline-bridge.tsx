@@ -4,7 +4,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useServers, keys } from "./servers.tsx";
 import { useOffline } from "./offline-context.tsx";
 import { conversationKey, saveConversation } from "./offline-data.ts";
-import { drainHead } from "./offline-outbox.ts";
+import { drainHead, type DrainWake } from "./offline-outbox.ts";
+import type { ServerConnection } from "./connection.ts";
 
 export function OfflineBridge() {
   const servers = useServers();
@@ -13,10 +14,23 @@ export function OfflineBridge() {
   latest.current = offline;
   const qc = useQueryClient();
   const previousQueued = useRef(new Map<string, string>());
+  const observedOpen = useRef(new WeakSet<ServerConnection>());
+  const retryWakes = useRef(new WeakMap<ServerConnection, Map<string, "idle" | "reconnect">>());
   useEffect(() => {
     let alive = true;
     const active = new Set<string>();
-    const reconnected = new Set<string>();
+    if (!offline.vault?.unlocked) {
+      retryWakes.current = new WeakMap();
+      observedOpen.current = new WeakSet();
+    }
+    const wakesFor = (connection: ServerConnection) => {
+      let wakes = retryWakes.current.get(connection);
+      if (!wakes) {
+        wakes = new Map();
+        retryWakes.current.set(connection, wakes);
+      }
+      return wakes;
+    };
     const wakePending = new Set<string>();
     const snapshot = async (server: string, id: string) => {
       const current = latest.current;
@@ -42,12 +56,13 @@ export function OfflineBridge() {
         );
       });
     };
-    const drain = async (server: string, id: string, reconnect: boolean) => {
+    const drain = async (server: string, id: string) => {
       const current = latest.current;
       const vault = current.vault;
       const connection = servers.byId(server);
       const key = conversationKey(server, id);
       if (!vault?.unlocked || !connection) return;
+      const retryWake = wakesFor(connection);
       if (active.has(key)) {
         wakePending.add(key);
         return;
@@ -59,11 +74,11 @@ export function OfflineBridge() {
           vault,
           connection,
           id,
-          reconnect || reconnected.has(key),
+          retryWake.get(key) ?? "queue",
           () => alive,
           current.mutate,
           () => {
-            reconnected.delete(key);
+            retryWake.delete(key);
           },
         );
         if (progressed) await qc.invalidateQueries({ queryKey: keys.thread(server, id) });
@@ -72,17 +87,24 @@ export function OfflineBridge() {
         const wake = wakePending.delete(key);
         if ((progressed || wake) && alive && vault.unlocked)
           queueMicrotask(() => {
-            void drain(server, id, false).catch(latest.current.report);
+            void drain(server, id).catch(latest.current.report);
           });
       }
     };
-    const run = (server: string, reconnect: boolean) => {
+    const run = (server: string, wake: DrainWake, conversation?: string) => {
+      const connection = servers.byId(server);
+      if (!connection) return;
+      const retryWake = wakesFor(connection);
       const pending = latest.current.payload.outbox.filter(
-        (m) => m.server === server && (m.state === "queued" || m.state === "uncertain"),
+        (m) =>
+          m.server === server &&
+          (!conversation || m.conversation === conversation) &&
+          (m.state === "queued" || m.state === "uncertain"),
       );
       for (const id of new Set(pending.map((m) => m.conversation))) {
-        if (reconnect) reconnected.add(conversationKey(server, id));
-        void drain(server, id, reconnect).catch(latest.current.report);
+        const key = conversationKey(server, id);
+        if (wake !== "queue" && retryWake.get(key) !== "reconnect") retryWake.set(key, wake);
+        void drain(server, id).catch(latest.current.report);
       }
     };
     const offQuery = qc.getQueryCache().subscribe((event) => {
@@ -98,19 +120,29 @@ export function OfflineBridge() {
     });
     const cleanups = servers.all.flatMap((connection) => [
       connection.live.onState((state) => {
-        if (state === "open") run(connection.id, true);
+        if (state !== "open") observedOpen.current.delete(connection);
+        if (
+          state === "open" &&
+          latest.current.vault?.unlocked &&
+          !observedOpen.current.has(connection)
+        ) {
+          observedOpen.current.add(connection);
+          run(connection.id, "reconnect");
+        }
       }),
-      connection.live.onReconnect(() => run(connection.id, true)),
+      connection.live.onReconnect(() => run(connection.id, "reconnect")),
       connection.live.subscribe((message) => {
         if (message.type === "nibblet" && message.nibblet.status !== "working")
-          run(connection.id, false);
+          run(connection.id, "idle", message.nibblet.id);
+        if (message.type === "snapshots_changed" && message.activity === null)
+          run(connection.id, "idle", message.nibbletId);
       }),
     ]);
     const outboxChanged = () => {
-      for (const connection of servers.all) run(connection.id, false);
+      for (const connection of servers.all) run(connection.id, "queue");
     };
     window.addEventListener("nibblets-outbox-changed", outboxChanged);
-    for (const connection of servers.all) run(connection.id, false);
+    for (const connection of servers.all) run(connection.id, "queue");
     for (const [key] of qc.getQueriesData({ queryKey: ["thread"] })) {
       if (typeof key[1] === "string" && typeof key[2] === "string")
         void snapshot(key[1], key[2]).catch(latest.current.report);

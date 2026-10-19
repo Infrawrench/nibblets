@@ -4,19 +4,23 @@ import { RouteChangedError } from "./connection.ts";
 import type { OfflineVault } from "./offline-vault.ts";
 import type { OfflinePayload } from "./offline-data.ts";
 
+export type DrainWake = "queue" | "idle" | "reconnect";
+
 export async function drainHead(
   vault: OfflineVault,
   connection: ServerConnection,
   id: string,
-  reconnect: boolean,
+  wake: DrainWake,
   alive: () => boolean,
   mutate: (fn: (data: OfflinePayload) => OfflinePayload) => Promise<OfflinePayload>,
   onAttempt?: () => void,
 ): Promise<boolean> {
   if (!navigator.locks) throw new Error("Web Locks are required to send queued messages safely.");
+  let sending = false;
   const client = connection.pinClient(() => {
     if (!alive() || !vault.unlocked)
       throw new Error("Queued sending stopped because offline messages were locked.");
+    if (sending) onAttempt?.();
   });
   return navigator.locks.request(
     `nibblets-outbox:${vault.id}:${JSON.stringify([connection.id, id])}`,
@@ -29,7 +33,13 @@ export async function drainHead(
           m.conversation === id &&
           (m.state === "queued" || m.state === "uncertain"),
       );
-      if (!head || (head.attempted && (!head.retrySafe || !reconnect))) return false;
+      if (
+        !head ||
+        (head.attempted &&
+          (!head.retrySafe ||
+            (head.state === "uncertain" ? wake !== "reconnect" : wake === "queue")))
+      )
+        return false;
       const [info, nibblets] = await Promise.all([
         client.system.info({}),
         client.nibblets.list({}),
@@ -63,8 +73,8 @@ export async function drainHead(
         ),
       }));
       if (!alive() || !vault.unlocked) return false;
-      onAttempt?.();
       try {
+        sending = true;
         const result = await client.nibblets.send({
           id,
           text: head.text,
@@ -119,7 +129,9 @@ export async function drainHead(
                       failure.code === "not_found" ||
                       failure.code === "conflict"
                         ? "rejected"
-                        : "uncertain",
+                        : failure.code === "unavailable"
+                          ? "queued"
+                          : "uncertain",
                     retrySafe: failure.code !== "unauthorized",
                     detail: failure.message,
                   }
