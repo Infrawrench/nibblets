@@ -13,7 +13,7 @@ import {
   type Nibblet,
   type SpendingLimit,
 } from "@nibblet/protocol";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Bank, type BankStore } from "./bank.ts";
 import type { CardRow } from "./store.ts";
 
@@ -483,5 +483,25 @@ describe("Bank", () => {
     expect(later.enabled).toBe(true);
     expect(later.providers().map((p) => p.id)).toEqual(["fake"]);
     expect(published).toEqual([{ type: "bank_changed" }]);
+  });
+
+  it("starts checking cards once a bank's set up, if there was none when it started", async () => {
+    const single = (await request("5.00", "single_use")).card;
+    const c = issuer.cards.get("tok_1");
+    if (c) c.spent = 100n;
+    const later = new Bank({
+      store,
+      plugins: new Map(),
+      files: { put: async () => "", remove: async () => {} },
+      publish: () => {},
+      log: () => {},
+      now: () => clock,
+    });
+    later.start();
+    later.use(new Map([["fake", issuer.plugin()]]), new Map());
+    await vi.waitFor(async () =>
+      expect(await store.cardRow(single.id)).toMatchObject({ state: "closed" }),
+    );
+    later.stop();
   });
 });

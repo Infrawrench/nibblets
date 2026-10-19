@@ -21,6 +21,12 @@ export function BankSection({ connection }: { connection: ServerConnection }) {
   });
   /** A bank's id to edit it, null to add one, undefined when the dialog's closed. */
   const [dialog, setDialog] = useState<string | null | undefined>(undefined);
+  // Card events don't refetch this (it asks every provider for its balance),
+  // so the open cards that lock a bank's fields are fetched fresh for the form.
+  const open = (id: string | null) => {
+    setDialog(id);
+    void status.refetch();
+  };
   const kinds = status.data?.kinds ?? [];
   const setUp = kinds.filter((k) => k.source !== null);
   const addable = kinds.some((k) => k.source === null);
@@ -29,7 +35,7 @@ export function BankSection({ connection }: { connection: ServerConnection }) {
       <SectionHeading
         action={
           addable ? (
-            <Button size="sm" variant="ghost" onClick={() => setDialog(null)}>
+            <Button size="sm" variant="ghost" onClick={() => open(null)}>
               <Plus />
               Add a bank
             </Button>
@@ -49,7 +55,7 @@ export function BankSection({ connection }: { connection: ServerConnection }) {
           kind={kind}
           provider={status.data?.providers.find((p) => p.id === kind.id) ?? null}
           problem={status.data?.problems.find((p) => p.id === kind.id)?.detail ?? null}
-          onEdit={() => setDialog(kind.id)}
+          onEdit={() => open(kind.id)}
         />
       ))}
       <BankDialog

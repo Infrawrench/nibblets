@@ -75,6 +75,8 @@ export class Bank {
   /** Where each open card's file is in its container, as its runner last said. */
   private readonly paths = new Map<string, string>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** Whether the server has asked it to keep cards in step, so a bank set up later starts it. */
+  private running = false;
   private syncing: Promise<void> | null = null;
   private plugins: ReadonlyMap<BankProviderId, BankPlugin>;
   private errors: ReadonlyMap<BankProviderId, string>;
@@ -95,6 +97,7 @@ export class Bank {
   ) {
     this.plugins = plugins;
     this.errors = errors;
+    if (this.running) this.startTimer();
     this.deps.publish({ type: "bank_changed" });
   }
 
@@ -357,15 +360,22 @@ export class Bank {
   }
 
   start(): void {
+    this.running = true;
+    this.startTimer();
+  }
+
+  stop(): void {
+    this.running = false;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+  }
+
+  /** Checks cards every minute from the first bank on; with none, there's nothing to check. */
+  private startTimer(): void {
     if (this.timer || !this.enabled) return;
     this.timer = setInterval(() => void this.sync(), SYNC_EVERY_MS);
     this.timer.unref?.();
     void this.sync();
-  }
-
-  stop(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
   }
 
   private async syncOnce(): Promise<void> {
