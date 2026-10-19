@@ -173,7 +173,12 @@ export class Connect {
     const link = this.link;
     this.stop();
     const generation = this.generation;
-    await this.dropPending();
+    try {
+      await this.dropPending();
+    } catch (err) {
+      if (this.generation === generation && this.link) this.scheduleBeat(0, generation);
+      throw err;
+    }
     if (this.generation !== generation) return this.status();
     if (link) {
       // Best effort: the central side also forgets servers that stop beating.

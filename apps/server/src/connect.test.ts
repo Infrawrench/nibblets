@@ -106,6 +106,24 @@ describe("Connect heartbeats", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps a still-linked server beating when unlink fails to drop the pending setting", async () => {
+    await connect.restore();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const failure = new Error("database unavailable");
+    vi.mocked(deps.store.deleteSetting).mockImplementation(async (key) => {
+      if (key === "connect.pending") throw failure;
+      settings.delete(key);
+    });
+    await expect(connect.unlink()).rejects.toBe(failure);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[1]![0]).toBe("https://old.example/v1/servers/server-1/heartbeat");
+    expect(connect.status().state).toBe("linked");
+    await vi.advanceTimersByTimeAsync(HEARTBEAT_EVERY_MS);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
   it("retries persisting a canonical URL after a failed setting write", async () => {
     vi.mocked(deps.store.setSetting).mockRejectedValueOnce(new Error("database unavailable"));
     fetcher.mockImplementation(async () => response("https://new.example"));
