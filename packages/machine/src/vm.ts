@@ -637,35 +637,44 @@ export class VirtualMachines implements MachinePlugin {
 
   async archiveHome(id: string, out: Writable): Promise<void> {
     // The caller ends `out`; the link ends what it's given.
-    const stalled = new AbortController();
-    const pass = metered(
-      (m) => this.log(`[${id}] archiving its home: ${m}`),
-      () => stalled.abort(new Error(STALLED)),
-    );
-    pass.pipe(out, { end: false });
-    // Cut off, its channel's destroyed with an error: that's a failed snapshot, not a short one.
-    const drained = new Promise<void>((resolve, reject) => {
-      pass.once("end", resolve);
-      pass.once("error", reject);
+    await this.withGuest(id, async (link) => {
+      // Metered from here: a VM booted for the job takes a while to answer.
+      const stalled = new AbortController();
+      const pass = metered(
+        (m) => this.log(`[${id}] archiving its home: ${m}`),
+        () => stalled.abort(new Error(STALLED)),
+      );
+      pass.pipe(out, { end: false });
+      // Cut off, its channel's destroyed with an error: that's a failed snapshot, not a short one.
+      const drained = new Promise<void>((resolve, reject) => {
+        pass.once("end", resolve);
+        pass.once("error", reject);
+      });
+      drained.catch(() => undefined);
+      await link.runToEnd({ command: "archive-home", stdout: pass }, 60 * 60_000, stalled.signal);
+      await drained;
     });
-    drained.catch(() => undefined);
-    await this.withGuest(id, (link) =>
-      link.runToEnd({ command: "archive-home", stdout: pass }, 60 * 60_000, stalled.signal),
-    );
-    await drained;
   }
 
   async restoreHome(id: string, archive: Readable): Promise<void> {
-    const stalled = new AbortController();
-    const sent = metered(
-      (m) => this.log(`[${id}] restoring its home: ${m}`),
-      () => stalled.abort(new Error(STALLED)),
-    );
-    // Its archive failing fails what the guest is sent, so the job ends.
-    pipeline(archive, sent, () => {});
-    await this.withGuest(id, (link) =>
-      link.runToEnd({ command: "restore-home", stdin: sent }, 60 * 60_000, stalled.signal),
-    );
+    try {
+      await this.withGuest(id, (link) => {
+        // Metered from here: a VM booted for the job takes a while to answer.
+        const stalled = new AbortController();
+        const sent = metered(
+          (m) => this.log(`[${id}] restoring its home: ${m}`),
+          () => stalled.abort(new Error(STALLED)),
+        );
+        // Given up on, the job says so, through `stalled`: the meter's own error is no one's.
+        sent.on("error", () => {});
+        // Its archive failing fails what the guest is sent, so the job ends.
+        pipeline(archive, sent, () => {});
+        return link.runToEnd({ command: "restore-home", stdin: sent }, 60 * 60_000, stalled.signal);
+      });
+    } finally {
+      // Not read, if the VM never answered.
+      archive.destroy();
+    }
   }
 
   async applyResources(id: string, resources: Resources): Promise<void> {

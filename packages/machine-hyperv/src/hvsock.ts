@@ -10,13 +10,16 @@ const run = promisify(execFile);
 
 /**
  * nibblet-hvsock.exe: a Hyper-V socket to a VM's guest agent, relayed over
- * stdio for the bridge, since Node can't open one. It says "connected" on
- * stderr once it is, or why not and exits; then it ends when either side
- * does. Built from here with .NET Framework's own compiler, which every
+ * stdio for the bridge, since Node can't open one. It says CONNECTED on
+ * stderr, a line of its own, once it is, or why not and exits; then it
+ * ends when either side does, saying which. Built from here with .NET Framework's own compiler, which every
  * Windows has, the first time it's needed.
  *
  *   nibblet-hvsock.exe <VM id> <service id>
  */
+/** What the helper says, on a line of its own, once it's connected. */
+const CONNECTED = "nibblet-hvsock: connected";
+
 export const HVSOCK_CS = `using System;
 using System.IO;
 using System.Net;
@@ -66,9 +69,10 @@ public class HyperVEndPoint : EndPoint
 
 public static class NibbletHvSock
 {
-    static void Pump(Stream from, Stream to)
+    static void Pump(Stream from, Stream to, string ended)
     {
         var buffer = new byte[65536];
+        string why = ended;
         try
         {
             int n;
@@ -78,8 +82,9 @@ public static class NibbletHvSock
                 to.Flush();
             }
         }
-        catch (IOException) { }
-        catch (ObjectDisposedException) { }
+        catch (IOException e) { why = e.Message; }
+        catch (ObjectDisposedException) { why = "it was closed"; }
+        Console.Error.WriteLine("nibblet-hvsock: " + why);
         Environment.Exit(0);
     }
 
@@ -96,13 +101,13 @@ public static class NibbletHvSock
             Console.Error.WriteLine("nibblet-hvsock: " + e.Message);
             return 1;
         }
-        Console.Error.WriteLine("connected");
+        Console.Error.WriteLine("${CONNECTED}");
         var stream = new NetworkStream(socket, true);
         Stream stdin = Console.OpenStandardInput();
         Stream stdout = Console.OpenStandardOutput();
-        var fromGuest = new Thread(() => Pump(stream, stdout)) { IsBackground = true };
+        var fromGuest = new Thread(() => Pump(stream, stdout, "the guest closed it")) { IsBackground = true };
         fromGuest.Start();
-        Pump(stdin, stream);
+        Pump(stdin, stream, "the bridge closed it");
         return 0;
     }
 }
@@ -152,6 +157,13 @@ export function connectHvSock(helper: string, vmId: string, serviceId: string): 
     });
     let said = "";
     let open = false;
+    // Its last words, for why the port closed.
+    const why = () =>
+      said
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l && l !== CONNECTED)
+        .at(-1);
     const stream = new Duplex({
       read() {
         child.stdout.resume();
@@ -175,16 +187,18 @@ export function connectHvSock(helper: string, vmId: string, serviceId: string): 
     child.stdout.once("end", () => stream.push(null));
     child.stdin.on("error", () => {});
     child.stderr.on("data", (chunk: Buffer) => {
-      said += chunk.toString("utf8");
-      if (!open && said.includes("connected")) {
+      said = (said + chunk.toString("utf8")).slice(-4000);
+      // Its own line: a failure's message can have "connected" in it.
+      if (!open && said.split(/\r?\n/).some((l) => l.trim() === CONNECTED)) {
         open = true;
         resolve(stream);
       }
     });
     child.once("error", (err) => (open ? stream.destroy(err) : reject(err)));
-    child.once("exit", (code) => {
-      if (!open) reject(new Error(said.trim() || `nibblet-hvsock exited ${code ?? "?"}`));
-      else stream.destroy();
+    // "close", not "exit": by then it has said all it will.
+    child.once("close", (code) => {
+      if (!open) reject(new Error(why() ?? `nibblet-hvsock exited ${code ?? "?"}`));
+      else stream.destroy(new Error(why() ?? `nibblet-hvsock exited ${code ?? "?"}`));
     });
   });
 }
