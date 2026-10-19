@@ -13,7 +13,7 @@ import { join } from "node:path";
  * servers. Give the nibblet server the same token as HOST_MCP_TOKEN.
  *
  *   node packages/host-mcp/src/cli.ts --port 8789 --token <token> [--host <addr>] [--repo <dir>]
- *     [--machines <dir>]
+ *     [--machines <dir>] [--hyperv-switch <name>]
  *
  * With --repo (the checkout install.sh made), the server can ask it to
  * install a new release there. It runs nibblets' virtual machines (KVM on
@@ -30,6 +30,8 @@ const { values } = parseArgs({
     host: { type: "string", default: "127.0.0.1" },
     token: { type: "string", default: process.env.HOST_MCP_TOKEN ?? "" },
     repo: { type: "string" },
+    // Windows Server has no Default Switch: VMs go out through this one instead.
+    "hyperv-switch": { type: "string" },
     machines: {
       type: "string",
       default: join(
@@ -53,7 +55,13 @@ const bridge = await startHostMcpBridge({
   log: (m) => console.log(m),
   ...(values.repo ? { updater: gitUpdater(values.repo, runOnHost) } : {}),
   ...(values.machines
-    ? { machines: await hostMachines({ dir: values.machines, log: (m) => console.log(m) }) }
+    ? {
+        machines: await hostMachines({
+          dir: values.machines,
+          ...(values["hyperv-switch"] ? { hypervSwitch: values["hyperv-switch"] } : {}),
+          log: (m) => console.log(m),
+        }),
+      }
     : {}),
 });
 console.log(`host MCP bridge on ${values.host}:${bridge.port}`);

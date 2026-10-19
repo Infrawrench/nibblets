@@ -96,6 +96,14 @@ describe.skipIf(missing !== null)(title, () => {
     ...(process.env.NIBBLET_TEST_MACHINES_DIR
       ? { machinesDir: process.env.NIBBLET_TEST_MACHINES_DIR }
       : {}),
+    // Hyper-V on Windows Server, with Docker in WSL rather than Docker Desktop.
+    dockerInWsl: process.env.NIBBLET_TEST_DOCKER_IN_WSL === "1",
+    ...(process.env.NIBBLET_TEST_HOST_FROM_DOCKER
+      ? { hostFromDocker: process.env.NIBBLET_TEST_HOST_FROM_DOCKER }
+      : {}),
+    ...(process.env.NIBBLET_TEST_HYPERV_SWITCH
+      ? { hypervSwitch: process.env.NIBBLET_TEST_HYPERV_SWITCH }
+      : {}),
     log: process.env.NIBBLET_TEST_VERBOSE ? (line) => console.log(line) : undefined,
   });
   /** A runner of another stack's, which this one's server must leave alone. */

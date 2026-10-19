@@ -21,8 +21,12 @@ import { installWindows } from "./windows.ts";
 const SYSTEM_GB = 32;
 const HOME_GB = 64;
 
-/** The switch every Windows with Hyper-V has, which NATs its VMs out to the host's network. */
-const SWITCH = "Default Switch";
+/**
+ * The switch its VMs go out through, unless it's told another: the one every
+ * Windows 10 and 11 with Hyper-V has, which NATs them out to the host's
+ * network. Windows Server has none, so there it's one of the host's own.
+ */
+export const DEFAULT_SWITCH = "Default Switch";
 
 const vmName = (id: string) => `nibblet-${id}`;
 
@@ -41,8 +45,8 @@ if (-not $cmd) { @{ ok = $false; detail = 'Hyper-V isn''t turned on (Windows Fea
 try { $host_ = Get-VMHost } catch {
   @{ ok = $false; detail = 'You need to be in the Hyper-V Administrators group to run VMs' } | ConvertTo-Json -Compress; exit
 }
-$switch = Get-VMSwitch -Name '${SWITCH}' -ErrorAction SilentlyContinue
-if (-not $switch) { @{ ok = $false; detail = 'There''s no Default Switch for VMs to reach the internet through' } | ConvertTo-Json -Compress; exit }
+$switch = Get-VMSwitch -Name $p.switch -ErrorAction SilentlyContinue
+if (-not $switch) { @{ ok = $false; detail = "There's no Hyper-V switch called '$($p.switch)' for VMs to reach the internet through" } | ConvertTo-Json -Compress; exit }
 @{ ok = $true; cpus = $host_.LogicalProcessorCount; memoryMb = [int]($host_.MemoryCapacity / 1MB) } | ConvertTo-Json -Compress
 `;
 const Detect = z.union([
@@ -125,15 +129,17 @@ export class HyperV implements HypervisorPlugin {
   readonly name = meta.name;
   readonly diskFormat: "vhdx" = "vhdx";
   private readonly ps: PowerShell;
+  private readonly switchName: string;
 
-  constructor(opts: { powershell?: PowerShell } = {}) {
+  constructor(opts: { powershell?: PowerShell; switch?: string } = {}) {
     this.ps = opts.powershell ?? powershell;
+    this.switchName = opts.switch ?? DEFAULT_SWITCH;
   }
 
   async detect(_ctx: HostContext) {
     if (process.platform !== "win32")
       return { available: false, detail: "Only on Windows", guests: [] };
-    const found = await psJson(this.ps, Detect, DETECT, {});
+    const found = await psJson(this.ps, Detect, DETECT, { switch: this.switchName });
     if (!found.ok) return { available: false, detail: found.detail, guests: [] };
     const guests: GuestOs[] = ["linux", "windows"];
     return { available: true, detail: null, guests };
@@ -145,7 +151,7 @@ export class HyperV implements HypervisorPlugin {
 
   async prepareImage(_ctx: HostContext, guest: GuestOs, job: ImageJob): Promise<void> {
     if (guest !== "windows") throw new Error(`Hyper-V doesn't make ${guest} images itself`);
-    await installWindows(this.ps, job, SWITCH);
+    await installWindows(this.ps, job, this.switchName);
   }
 
   async start(_ctx: HostContext, vm: VmSpec): Promise<void> {
@@ -168,7 +174,7 @@ export class HyperV implements HypervisorPlugin {
       homeGb: HOME_GB,
       cpus: vm.cpus,
       memoryMb: vm.memoryMb,
-      switch: SWITCH,
+      switch: this.switchName,
       agent: agentPipe(vm.id),
       console: consolePipe(vm.id),
     });

@@ -32,7 +32,26 @@ export interface StackOptions {
   dockerSocket: string;
   /** Where the bridge keeps VMs and images, kept afterwards; a folder of the stack's own if not given. */
   machinesDir?: string;
+  /**
+   * The engine is in WSL, which sees this computer's drives as /mnt/<letter>:
+   * folders it mounts are given that way. For Hyper-V without Docker Desktop.
+   */
+  dockerInWsl?: boolean;
+  /**
+   * Where containers reach this computer, where `host-gateway` isn't it (an
+   * engine in WSL): the bridge then listens on every address, at that one.
+   */
+  hostFromDocker?: string;
+  /** The Hyper-V switch VMs go out through, where there's no Default Switch. */
+  hypervSwitch?: string;
   log?: (line: string) => void;
+}
+
+/** A folder of this computer's, as an engine in WSL sees it: D:\a\b is /mnt/d/a/b. */
+export function wslPath(path: string): string {
+  return path
+    .replace(/^([A-Za-z]):[\\/]/, (_, drive: string) => `/mnt/${drive.toLowerCase()}/`)
+    .replace(/\\/g, "/");
 }
 
 const secret = () => randomBytes(24).toString("hex");
@@ -119,7 +138,8 @@ export class TestStack {
     let hostMcp = { url: "", token: "" };
     if (this.opts.bridge) {
       const token = secret();
-      const host = await bridgeHost();
+      const fromDocker = this.opts.hostFromDocker;
+      const host = fromDocker ? "0.0.0.0" : await bridgeHost();
       this.bridge = await startHostMcpBridge({
         port: 0,
         host,
@@ -134,12 +154,19 @@ export class TestStack {
           ...(process.env.NIBBLET_TEST_APPLE_HELPER
             ? { appleHelper: process.env.NIBBLET_TEST_APPLE_HELPER }
             : {}),
+          ...(this.opts.hypervSwitch ? { hypervSwitch: this.opts.hypervSwitch } : {}),
           log: (m) => this.log(`bridge: ${m}`),
         }),
         log: (m) => this.log(`bridge: ${m}`),
       });
-      hostMcp = { url: `http://host.docker.internal:${this.bridge.port}`, token };
-      this.bridgeAddress = { url: `http://${host}:${this.bridge.port}`, token };
+      hostMcp = {
+        url: `http://${fromDocker ?? "host.docker.internal"}:${this.bridge.port}`,
+        token,
+      };
+      this.bridgeAddress = {
+        url: `http://${fromDocker ? "127.0.0.1" : host}:${this.bridge.port}`,
+        token,
+      };
     }
     const runners = `${this.project}-runners`;
     const definition = {
@@ -164,7 +191,7 @@ export class TestStack {
         credproxy: {
           image: "docker.io/library/node:24-trixie-slim",
           command: ["node", "/fake/fake-anthropic.ts", "8787"],
-          volumes: [`${here}:/fake:ro`],
+          volumes: [`${this.opts.dockerInWsl ? wslPath(here) : here}:/fake:ro`],
           ports: [`127.0.0.1:${this.fakePort}:8787`],
           networks: ["main", "runners"],
         },
@@ -199,7 +226,9 @@ export class TestStack {
                   : "linux",
           },
           // Only with a bridge to reach: older Podman doesn't know host-gateway.
-          ...(this.opts.bridge ? { extra_hosts: ["host.docker.internal:host-gateway"] } : {}),
+          ...(this.opts.bridge && !this.opts.hostFromDocker
+            ? { extra_hosts: ["host.docker.internal:host-gateway"] }
+            : {}),
           ports: [`127.0.0.1:${this.port}:8420`],
           volumes: [`${this.opts.dockerSocket}:/var/run/docker.sock`],
           networks: ["main", "runners"],

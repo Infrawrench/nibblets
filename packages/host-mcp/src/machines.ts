@@ -14,6 +14,8 @@ export interface HostMachinesConfig {
   docker?: string | null;
   /** Apple's VM helper, built and signed (the desktop app ships one); built here otherwise. */
   appleHelper?: string;
+  /** The Hyper-V switch VMs go out through: the Default Switch, unless there isn't one (Windows Server). */
+  hypervSwitch?: string;
   /** The nibblet server and the credential proxy, as this host reaches them. */
   server?: string;
   credproxy?: string;
@@ -22,13 +24,13 @@ export interface HostMachinesConfig {
 
 /** The hypervisor plugin for this OS: there's one of each, and only one fits. */
 export function hypervisorsHere(
-  config: Pick<HostMachinesConfig, "appleHelper">,
+  config: Pick<HostMachinesConfig, "appleHelper" | "hypervSwitch">,
 ): HypervisorPlugin[] {
   switch (process.platform) {
     case "darwin":
       return [new AppleVirtualization(config.appleHelper ? { helper: config.appleHelper } : {})];
     case "win32":
-      return [new HyperV()];
+      return [new HyperV(config.hypervSwitch ? { switch: config.hypervSwitch } : {})];
     case "linux":
       return [new Kvm()];
     default:

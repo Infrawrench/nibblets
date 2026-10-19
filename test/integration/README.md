@@ -49,7 +49,14 @@ For Podman, point `DOCKER_HOST` at its socket and set
 `NIBBLET_TEST_MACHINES_DIR` keeps the VMs and images there afterwards (with,
 for Windows on KVM, its installer's last screen).
 
-CI runs Linux in Docker, Podman and KVM on every push, and Windows on KVM
-in the Machines workflow (for changes to machines, weekly, or by hand,
-downloading the ISO the `WINDOWS_ISO_URL` secret names). Hosted runners
-have neither Hyper-V nor Apple Virtualization, so those run here.
+On Windows Server, which has no Default Switch, name Hyper-V's switch with
+`NIBBLET_TEST_HYPERV_SWITCH`. Without Docker Desktop, Docker can run in WSL
+2: set `DOCKER_HOST` to it, `NIBBLET_TEST_DOCKER_IN_WSL=1` (so the folders
+it mounts are given as `/mnt/<drive>/…`), and `NIBBLET_TEST_HOST_FROM_DOCKER`
+to the address its containers reach Windows at.
+
+CI runs Linux in Docker, Podman and KVM on every push. The Machines workflow
+(for changes to machines, weekly, or by hand) runs Windows on KVM, and Linux
+and Windows on Hyper-V, on `windows-2025`, which runs Hyper-V and WSL 2
+nested; Windows guests install from the ISO the `WINDOWS_ISO_URL` secret
+names. Hosted runners can't run Apple Virtualization, so that runs here.

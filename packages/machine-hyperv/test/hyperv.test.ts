@@ -72,4 +72,21 @@ describe("Hyper-V", () => {
     });
     await rm(dir, { recursive: true, force: true });
   });
+
+  it("goes out through the switch it's given, where there's no Default Switch", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "hyperv-"));
+    await writeFile(join(dir, "system.vhdx"), "");
+    const { ps, calls } = fake([{ ok: true }]);
+    await new HyperV({ powershell: ps, switch: "nibblets" }).start(ctx, {
+      id: "nib_b",
+      dir,
+      guest: "linux",
+      cpus: 2,
+      memoryMb: 2048,
+      imageDir: "/no-image",
+      fresh: false,
+    });
+    expect(calls[0]?.params).toMatchObject({ switch: "nibblets" });
+    await rm(dir, { recursive: true, force: true });
+  });
 });

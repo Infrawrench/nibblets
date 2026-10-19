@@ -81,6 +81,7 @@ RUN apt-get update \\
  */
 const DISK_SCRIPT = String.raw`set -eu
 format="$1"
+mkdir -p /out
 # On arm64, no SME: M4 Macs have it, and Linux guests that use it under
 # Apple's hypervisor corrupt their own memory.
 case "$(dpkg --print-architecture)" in
@@ -235,6 +236,7 @@ export async function buildLinuxImage(opts: {
   const id = await imageId(cli, opts.runnerImage);
   const tag = `nibblet/runner-vm:${id.replace(/^sha256:/, "").slice(0, 12)}`;
   const name = `nibblet-vm-export-${randomBytes(4).toString("hex")}`;
+  const tools = `nibblet-vm-disk-${randomBytes(4).toString("hex")}`;
   try {
     opts.progress(0.05, "Adding a kernel and systemd to the runner image");
     await buildImage(cli, GUEST_DOCKERFILE, tag, { RUNNER: opts.runnerImage }, (line) => {
@@ -246,16 +248,18 @@ export async function buildLinuxImage(opts: {
     opts.progress(0.55, "Copying the runner image onto a disk");
     await docker(cli, ["create", "--name", name, tag, "true"]);
     const exported = spawn(cli, ["export", name], { stdio: ["ignore", "pipe", "inherit"] });
+    // A raw disk is sparse, which only a mount keeps; a VHDX is compact, so
+    // it's copied out instead, which works with a Docker that can't see this
+    // folder (one in WSL, for Hyper-V), as a mount doesn't.
+    const mounted = opts.format === "raw";
     await docker(
       cli,
       [
         "run",
-        "--rm",
+        ...(mounted ? ["--rm", "-v", `${resolve(opts.dir)}:/out`] : ["--name", tools]),
         "-i",
         "--network",
         "none",
-        "-v",
-        `${resolve(opts.dir)}:/out`,
         TOOLS_IMAGE,
         "sh",
         "-c",
@@ -265,9 +269,14 @@ export async function buildLinuxImage(opts: {
       ],
       { stdin: exported.stdout },
     );
+    if (!mounted) {
+      opts.progress(0.95, "Copying the disk out");
+      await docker(cli, ["cp", `${tools}:/out/${linuxDiskFile(opts.format)}`, opts.dir]);
+    }
     opts.progress(0.99, "Tidying up");
   } finally {
     await docker(cli, ["rm", "-f", name]).catch(() => undefined);
+    await docker(cli, ["rm", "-f", tools]).catch(() => undefined);
     await docker(cli, ["rmi", tag]).catch(() => undefined);
   }
   return id;

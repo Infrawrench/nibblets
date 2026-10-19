@@ -1,9 +1,9 @@
 name: Machines
 
 # The slow integration runs, whose guests are installed from scratch:
-# Windows on KVM here, for changes to machines, weekly, or by hand.
-# Hyper-V and Apple Virtualization aren't on hosted runners;
-# test/integration/README.md says how to run those.
+# Windows on KVM, and Linux and Windows on Hyper-V, for changes to
+# machines, weekly, or by hand. Apple Virtualization isn't on hosted
+# runners; test/integration/README.md says how to run it.
 on:
   workflow_dispatch:
   schedule:
@@ -12,6 +12,8 @@ on:
     paths:
       - "packages/machine/**"
       - "packages/machine-kvm/**"
+      - "packages/machine-hyperv/**"
+      - "packages/host-mcp/**"
       - "packages/protocol/src/guest.ts"
       - "apps/runner/src/entry/**"
       - "apps/runner/src/machine/**"
@@ -85,5 +87,105 @@ jobs:
           name: windows-kvm
           path: |
             ${{ runner.temp }}/machines/**/*.png
+            ${{ runner.temp }}/machines/**/*.log
+          if-no-files-found: ignore
+
+  hyperv:
+    name: Integration (${{ matrix.guest }} on Hyper-V)
+    # Hyper-V runs here, nested, and WSL 2 with it (windows-2022's doesn't).
+    runs-on: windows-2025
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        guest: [linux, windows]
+    env:
+      WINDOWS_ISO_URL: ${{ secrets.WINDOWS_ISO_URL }}
+      DISTRO: Ubuntu-24.04
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Keep line endings as they are
+        # The Linux images are built from this checkout.
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+      - name: A switch for VMs, with NAT and DHCP
+        # Windows Server has no Default Switch. Its containers' NAT goes first:
+        # Windows doesn't always allow two.
+        run: |
+          Get-NetNat | Remove-NetNat -Confirm:$false
+          New-VMSwitch -Name nibblets -SwitchType Internal | Out-Null
+          $adapter = Get-NetAdapter | Where-Object Name -like '*(nibblets)*'
+          New-NetIPAddress -IPAddress 192.168.250.1 -PrefixLength 24 -InterfaceIndex $adapter.ifIndex | Out-Null
+          New-NetNat -Name nibblets -InternalIPInterfaceAddressPrefix 192.168.250.0/24 | Out-Null
+          Install-WindowsFeature DHCP -IncludeManagementTools | Out-Null
+          Add-DhcpServerv4Scope -Name nibblets -StartRange 192.168.250.100 -EndRange 192.168.250.200 -SubnetMask 255.255.255.0
+          Set-DhcpServerv4OptionValue -ScopeId 192.168.250.0 -Router 192.168.250.1 -DnsServer 1.1.1.1, 8.8.8.8 -Force
+          Restart-Service DHCPServer
+          # Containers in WSL reach the bridge on this computer.
+          Set-NetFirewallProfile -All -Enabled False
+      - name: Docker in WSL
+        run: |
+          wsl --set-default-version 2
+          wsl --install -d $env:DISTRO --no-launch --web-download
+          $setup = @'
+          set -e
+          curl -fsSL https://get.docker.com | sh >/dev/null
+          if [ -d /run/systemd/system ]; then
+            mkdir -p /etc/systemd/system/docker.service.d
+            printf '[Service]\nExecStart=\nExecStart=/usr/bin/dockerd -H fd:// -H tcp://0.0.0.0:2375 --containerd=/run/containerd/containerd.sock\n' > /etc/systemd/system/docker.service.d/tcp.conf
+            systemctl daemon-reload
+            systemctl restart docker
+          else
+            nohup dockerd -H unix:///var/run/docker.sock -H tcp://0.0.0.0:2375 >/var/log/dockerd.log 2>&1 &
+          fi
+          for i in $(seq 60); do docker info >/dev/null 2>&1 && break; sleep 1; done
+          docker info --format 'Docker {{.ServerVersion}} on {{.OperatingSystem}}'
+          '@
+          # As a file, which WSL sees under /mnt: no quoting to go wrong on the way.
+          $file = Join-Path $env:RUNNER_TEMP 'docker-in-wsl.sh'
+          [IO.File]::WriteAllText($file, ($setup -replace "`r", ""))
+          $inWsl = ($file -replace '^([A-Za-z]):', { "/mnt/$($_.Groups[1].Value.ToLower())" }) -replace '\\', '/'
+          # WSL stops a distro nobody's using: this keeps it, and Docker, up.
+          Start-Process wsl -ArgumentList '-d', $env:DISTRO, '-u', 'root', '--', 'sleep', 'infinity' -WindowStyle Hidden
+          wsl -d $env:DISTRO -u root -- bash $inWsl
+          if ($LASTEXITCODE -ne 0) { throw "Docker didn't start in WSL" }
+          "DOCKER_HOST=tcp://localhost:2375" >> $env:GITHUB_ENV
+          $gateway = (wsl -d $env:DISTRO -- sh -c "ip route show default | cut -d' ' -f3").Trim()
+          "NIBBLET_TEST_HOST_FROM_DOCKER=$gateway" >> $env:GITHUB_ENV
+      - name: Check Docker
+        run: |
+          docker version --format 'client {{.Client.Version}}, server {{.Server.Version}} ({{.Server.Os}})'
+          docker compose version
+      - name: Build the runner and the server
+        run: |
+          docker build -f docker/runner.Dockerfile -t nibblet/runner:dev .
+          docker build -f docker/server.Dockerfile -t nibblet/server:dev .
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Download Windows
+        if: matrix.guest == 'windows'
+        run: curl.exe -fsSL --retry 5 -o "$env:RUNNER_TEMP\windows.iso" $env:WINDOWS_ISO_URL
+      - run: pnpm test:integration
+        env:
+          NIBBLET_TEST_MACHINE: hyperv
+          NIBBLET_TEST_GUEST: ${{ matrix.guest }}
+          NIBBLET_TEST_WINDOWS_ISO: ${{ matrix.guest == 'windows' && format('{0}\windows.iso', runner.temp) || '' }}
+          NIBBLET_TEST_GUEST_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+          NIBBLET_TEST_MACHINES_DIR: ${{ runner.temp }}\machines
+          NIBBLET_TEST_DOCKER_IN_WSL: "1"
+          NIBBLET_TEST_HYPERV_SWITCH: nibblets
+          NIBBLET_TEST_VERBOSE: "1"
+      - name: Keep logs
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyperv-${{ matrix.guest }}
+          path: |
             ${{ runner.temp }}/machines/**/*.log
           if-no-files-found: ignore
