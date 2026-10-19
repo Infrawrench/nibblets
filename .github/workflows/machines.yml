@@ -91,14 +91,18 @@ jobs:
           if-no-files-found: ignore
 
   hyperv:
-    name: Integration (${{ matrix.guest }} on Hyper-V)
+    name: Integration (${{ matrix.name }} on Hyper-V)
     # Hyper-V runs here, nested, and WSL 2 with it (windows-2022's doesn't).
     runs-on: windows-2025
     timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
-        guest: [linux, windows]
+        include:
+          - guest: linux
+            name: Linux
+          - guest: windows
+            name: Windows
     env:
       WINDOWS_ISO_URL: ${{ secrets.WINDOWS_ISO_URL }}
       DISTRO: Ubuntu-24.04
