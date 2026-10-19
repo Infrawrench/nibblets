@@ -84,6 +84,19 @@ describe("Tunnel recovery", () => {
     expect(container.inspect).toHaveBeenCalledTimes(configured + 1);
   });
 
+  it("keeps reconciling when saving the tunnel settings fails", async () => {
+    const { tunnel, container, store } = setup();
+    const failure = new Error("disk full");
+    store.setSetting.mockRejectedValueOnce(failure);
+    await expect(
+      tunnel.configure({ mode: "token", token: "test", hostname: "example.com" }),
+    ).rejects.toBe(failure);
+    expect(tunnel.current().state).toBe("up");
+    const configured = container.inspect.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(container.inspect.mock.calls.length).toBeGreaterThan(configured);
+  });
+
   it("retries an errored tunnel after 5 s, not 1 s", async () => {
     const { tunnel, container } = setup();
     container.inspect.mockRejectedValueOnce(new Error("offline"));

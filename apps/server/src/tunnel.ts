@@ -60,8 +60,11 @@ export class Tunnel {
     };
     await this.enqueue(async () => {
       if (!this.active(generation)) return;
-      await this.store.setSetting("tunnel", config);
-      await this.reconcile(config, generation);
+      try {
+        await this.store.setSetting("tunnel", config);
+      } finally {
+        await this.reconcile(config, generation);
+      }
     });
     return this.status;
   }
