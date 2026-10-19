@@ -719,7 +719,12 @@ function metered(say: (message: string) => void, stalled: () => void): Transform
     `${(bytes / 1_000_000).toFixed(1)} MB in ${Math.round((Date.now() - started) / 1000)} s`;
   const timer = setInterval(() => {
     say(`${so()} so far`);
-    if (Date.now() - movedAt > STALL_MS) stalled();
+    if (Date.now() - movedAt > STALL_MS) {
+      // Given up on: it says so once, and stops counting.
+      clearInterval(timer);
+      stalled();
+      meter.destroy(new Error(STALLED));
+    }
   }, 30_000);
   timer.unref();
   const meter = new Transform({
