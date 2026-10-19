@@ -9,6 +9,8 @@ import {
   loadBankPlugins,
   periodStart,
   requireEnv,
+  oneAtATime,
+  walletSpent,
   type BankPlugin,
   type BudgetCard,
 } from "./index.ts";
@@ -172,5 +174,29 @@ describe("loading plugins", () => {
 
   it("refuses two plugins with one id", () => {
     expect(() => loadBankPlugins([configured, configured], {}, deps)).toThrow(/Two bank plugins/);
+  });
+});
+
+describe("wallets", () => {
+  it("count nothing spent until the wallet has sent something", () => {
+    expect(walletSpent(1000n, 0n, false)).toBe(0n);
+    expect(walletSpent(1000n, 400n, true)).toBe(600n);
+    expect(walletSpent(1000n, 1500n, true)).toBe(0n);
+  });
+
+  it("run treasury work one piece at a time, even after a failure", async () => {
+    const queue = oneAtATime();
+    const order: string[] = [];
+    const slow = (name: string, ms: number, fail = false) =>
+      queue(async () => {
+        order.push(`${name} start`);
+        await new Promise((r) => setTimeout(r, ms));
+        order.push(`${name} end`);
+        if (fail) throw new Error(name);
+        return name;
+      });
+    const results = await Promise.allSettled([slow("a", 20, true), slow("b", 1), slow("c", 1)]);
+    expect(order).toEqual(["a start", "a end", "b start", "b end", "c start", "c end"]);
+    expect(results.map((r) => r.status)).toEqual(["rejected", "fulfilled", "fulfilled"]);
   });
 });

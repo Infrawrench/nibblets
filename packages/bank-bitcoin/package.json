@@ -1,0 +1,19 @@
+{
+  "name": "@nibblet/bank-bitcoin",
+  "version": "0.3.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@nibblet/bank": "workspace:*",
+    "@nibblet/protocol": "workspace:*",
+    "@scure/base": "^2.4.0",
+    "@scure/btc-signer": "^2.4.1",
+    "zod": "^4.6.7"
+  }
+}

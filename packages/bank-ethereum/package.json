@@ -1,0 +1,18 @@
+{
+  "name": "@nibblet/bank-ethereum",
+  "version": "0.3.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@nibblet/bank": "workspace:*",
+    "@nibblet/protocol": "workspace:*",
+    "viem": "^2.57.7",
+    "zod": "^4.6.7"
+  }
+}
