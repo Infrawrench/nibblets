@@ -40,6 +40,17 @@ export const KimiLogin = z.object({
 });
 export type KimiLogin = z.infer<typeof KimiLogin>;
 
+/**
+ * A harness's borrowed host login, whichever harness it is: the host's config
+ * as text and its one secret (OpenCode's `auth.json`, Kimi's OAuth token).
+ * Sent only over the runner socket; never stored.
+ */
+export const HostLogin = z.object({
+  config: z.string().nullable(),
+  secret: z.string().nullable(),
+});
+export type HostLogin = z.infer<typeof HostLogin>;
+
 export const RunnerConfig = z.object({
   nibbletId: z.string(),
   name: z.string(),
