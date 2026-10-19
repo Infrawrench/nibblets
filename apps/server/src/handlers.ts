@@ -95,6 +95,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
           serverId: s.serverId,
           name: await serverName(store, s.config.NIBBLET_HOST_NAME),
           version: s.version,
+          capabilities: { durableSendV1: true },
           credentials: await credentialStatus(s.config),
           host: await s.conductor.hostCapacity(),
         }),
@@ -183,13 +184,20 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       },
       start: ({ id }) => conductor.start(id),
       stop: ({ id }) => conductor.stop(id),
-      send: async ({ id, text, attachments }) => {
+      send: async ({ id, text, attachments, clientMessageId }) => {
+        if (clientMessageId)
+          return {
+            ok: true as const,
+            receipt: await conductor.send(id, text, attachments, clientMessageId, () =>
+              s.files.attachments(id, attachments),
+            ),
+          };
         const files = await s.files.attachments(id, attachments);
         await conductor.enqueue(id, "user", text, files);
         return ok;
       },
       interrupt: async ({ id }) => {
-        conductor.interrupt(id);
+        await conductor.interrupt(id);
         return ok;
       },
       wake: async ({ id }) => {

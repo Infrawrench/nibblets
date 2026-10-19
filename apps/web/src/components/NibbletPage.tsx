@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { harnesses } from "@nibblet/protocol";
 import { modelLabel, useModels } from "../lib/models.ts";
-import { useNibblets, useServer, useServers, useThread } from "../lib/servers.tsx";
+import { useNibblets, useServer, useServers, useThread, useLiveState } from "../lib/servers.tsx";
 import { runningTurn } from "../lib/thread.ts";
 import { storage } from "../lib/storage.ts";
 import { isPanelTab, onPanelRequest, PANEL_KEY, type PanelTab } from "../lib/panels.ts";
@@ -34,6 +34,7 @@ import { NibbletSettings } from "./panels/NibbletSettings.tsx";
 import { Segmented } from "./ui/Segmented.tsx";
 import { Button } from "./ui/Button.tsx";
 import { MobileBack } from "./MobileBack.tsx";
+import { SavedConversation } from "./OfflineConversation.tsx";
 
 function initialPanel(): PanelTab | null {
   const saved = storage.get(PANEL_KEY);
@@ -42,17 +43,23 @@ function initialPanel(): PanelTab | null {
 
 export function NibbletPage({ server, id }: { server: string; id: string }) {
   const connection = useServer(server);
-  if (!connection) return <Missing text="That server isn't connected." />;
+  if (!connection) return <SavedConversation server={server} id={id} />;
   return <NibbletView connection={connection} id={id} />;
 }
 
 function NibbletView({ connection, id }: { connection: ServerConnection; id: string }) {
+  const live = useLiveState(connection);
   const nibblets = useNibblets(connection);
   const servers = useServers();
   // Which machine it runs on, whenever there's more than one to choose from.
   const systemName =
     servers.systems.length > 1 || servers.central ? servers.system(connection.id)?.name : null;
   const thread = useThread(connection, id);
+  useEffect(() => {
+    if (live !== "closed") return;
+    void nibblets.refetch();
+    void thread.refetch();
+  }, [live]);
   const catalogue = useModels(connection);
   const [panel, setPanelState] = useState<PanelTab | null>(initialPanel);
   const setPanel = (p: PanelTab | null) => {
@@ -64,6 +71,25 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
   useEffect(() => onPanelRequest(setPanelState), []);
 
   const nibblet = nibblets.data?.find((n) => n.id === id);
+  const nonTransportError = [nibblets.error, thread.error].find(
+    (error) => error && !(error instanceof TypeError),
+  );
+  if (nonTransportError) return <Missing text={nonTransportError.message} />;
+  if (
+    (nibblets.isError && nibblets.error instanceof TypeError) ||
+    (thread.isError && thread.error instanceof TypeError)
+  )
+    return <SavedConversation server={connection.id} id={id} />;
+  if (nibblets.isError || thread.isError)
+    return (
+      <Missing
+        text={
+          nibblets.error?.message ??
+          thread.error?.message ??
+          "This conversation could not be loaded."
+        }
+      />
+    );
   if (nibblets.isPending) return <div className="flex-1" />;
   if (!nibblet) return <Missing text="This nibblet has gone." />;
 
@@ -172,7 +198,12 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
             await connection.client.nibblets.resume({ id: nibblet.id });
           }}
         />
-        <Composer connection={connection} nibblet={nibblet} running={running} />
+        <Composer
+          key={`${connection.id}/${nibblet.id}`}
+          connection={connection}
+          nibblet={nibblet}
+          running={running}
+        />
       </div>
       {panel ? (
         // Beside the conversation on a wide screen; over it, full size, on anything narrower.

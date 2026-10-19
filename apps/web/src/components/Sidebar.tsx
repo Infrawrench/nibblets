@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useOffline } from "../lib/offline-context.tsx";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Laptop, LogIn, Plus, Settings } from "lucide-react";
@@ -34,6 +35,7 @@ const statusDot: Record<NibbletStatus, string> = {
 
 export function Sidebar({ className }: { className?: string }) {
   const servers = useServers();
+  const offline = useOffline();
   const navigate = useNavigate();
   const onSettings = useRouterState({ select: (r) => r.location.pathname === "/settings" });
   const [creating, setCreating] = useState(false);
@@ -67,6 +69,36 @@ export function Sidebar({ className }: { className?: string }) {
         </Button>
       </div>
       <nav className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-1.5 py-2">
+        {offline.payload.conversations
+          .filter((saved) => {
+            const index = servers.systems.findIndex((system) => system.id === saved.server);
+            return (
+              index < 0 ||
+              !servers.systems[index]?.connection ||
+              (lists[index]?.isError && lists[index]?.error instanceof TypeError)
+            );
+          })
+          .map((saved) => (
+            <button
+              key={`${saved.server}/${saved.id}`}
+              type="button"
+              onClick={() =>
+                void navigate({
+                  to: "/n/$server/$id",
+                  params: { server: saved.server, id: saved.id },
+                })
+              }
+              className="flex items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-hover"
+            >
+              <Hamster look={saved.look} size={22} status="stopped" />
+              <span className="min-w-0 flex-1 truncate">
+                {saved.name}
+                <span className="block text-2xs text-faint">
+                  {saved.systemName} · Offline saved chat
+                </span>
+              </span>
+            </button>
+          ))}
         {servers.central && servers.systems.length === 0 ? (
           <div className="px-3 py-8 text-center text-xs text-dim">
             No servers yet. Open Settings on a computer running Nibblets and press Connect.
@@ -78,7 +110,7 @@ export function Sidebar({ className }: { className?: string }) {
         {servers.systems.map((system, i) => {
           const c = system.connection;
           const list = lists[i];
-          if (!c || !list?.data) return null;
+          if (!c || !list?.data || list.isError) return null;
           return orderNibblets(list.data).map(({ nibblet, depth }) => (
             <NibbletRow
               key={`${c.id}/${nibblet.id}`}

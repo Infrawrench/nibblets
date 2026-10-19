@@ -21,6 +21,7 @@ export interface ServerConnection {
   /** Empty for the server that served this page; otherwise its current origin. */
   base(): string;
   client: Client<Contract>;
+  pinClient(guard: () => void): Client<Contract>;
   live: LiveFeed;
   /** A WebSocket URL with a fresh ticket, for any of this server's sockets. */
   socketUrl(path: string): Promise<string>;
@@ -35,6 +36,8 @@ export interface ServerConnection {
 
 export type LiveState = "connecting" | "open" | "closed";
 
+export class RouteChangedError extends Error {}
+
 export interface LiveFeed {
   subscribe(listener: (message: LiveMessage) => void): () => void;
   /** Calls `listener` with the current state straight away, then on every change. */
@@ -42,6 +45,12 @@ export interface LiveFeed {
   /** Called after every reconnect, so caches can catch up on what they missed. */
   onReconnect(listener: () => void): () => void;
   close(): void;
+}
+
+export function refetchOnLiveOpen(live: LiveFeed, refetch: () => void): () => void {
+  return live.onState((state) => {
+    if (state === "open") refetch();
+  });
 }
 
 const TicketResponse = z.object({ ticket: z.string() });
@@ -115,6 +124,19 @@ export function createConnection(
     id,
     base,
     client,
+    pinClient: (guard) => {
+      const pinned = base();
+      return createClient(
+        contract,
+        fetchTransport(`${pinned}/api/rpc`, headers, () => {
+          if (base() !== pinned)
+            throw new RouteChangedError(
+              "Host route changed during verification. Queued sending paused.",
+            );
+          guard();
+        }),
+      );
+    },
     live: socketFeed(() => socketUrl("/api/live")),
     socketUrl,
     request,
@@ -248,6 +270,11 @@ export function createMockConnection(transport: Transport, live: LiveFeed): Serv
     id: "local",
     base: () => "",
     client: createClient(contract, transport),
+    pinClient: (guard) =>
+      createClient(contract, (path, input) => {
+        guard();
+        return transport(path, input);
+      }),
     live,
     socketUrl: async () => "mock://",
     request: async () =>

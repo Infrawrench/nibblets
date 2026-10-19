@@ -8,6 +8,8 @@ import { ModelPicker } from "../ModelPicker.tsx";
 import { EffortMenu } from "../EffortMenu.tsx";
 import { cn } from "../../lib/cn.ts";
 import type { ServerConnection } from "../../lib/connection.ts";
+import { canRecall } from "../../lib/offline-data.ts";
+import { QueuedMessages, caretOnFirstVisualLine, useQueuedMessages } from "./QueuedMessages.tsx";
 
 /** The floating message card at the foot of a thread. */
 const touch = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
@@ -23,9 +25,15 @@ export function Composer({
 }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const queue = useQueuedMessages(connection.id, nibblet.id, text, setText);
   const area = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
-  const { attachments, add, remove, clear, dragging } = useAttachments(connection, nibblet.id);
+  const { attachments, add, remove, clear, dragging } = useAttachments(
+    connection,
+    nibblet.id,
+    !sending && !queue.editing,
+  );
   const uploading = attachments.some((a) => a.ref === null && a.error === null);
   const ready = attachments.flatMap((a) => (a.ref ? [a.ref] : []));
   const canSend = (text.trim().length > 0 || ready.length > 0) && !uploading && !sending;
@@ -38,20 +46,24 @@ export function Composer({
   const send = async () => {
     const message = text.trim();
     if (!canSend) return;
-    const files = attachments;
     setSending(true);
-    setText("");
-    clear();
+    setSendError(null);
     if (area.current) area.current.style.height = "auto";
     try {
-      await connection.client.nibblets.send({
-        id: nibblet.id,
-        text: message,
-        attachments: ready.map((r) => r.fileId),
-      });
-    } catch {
-      setText((current) => current || message);
-      for (const f of files) add([f.file]);
+      if (queue.offline.vault?.unlocked) {
+        await queue.send(ready.map((r) => r.fileId));
+      } else {
+        // Without the vault the server queues it, even while the nibblet is working.
+        await connection.client.nibblets.send({
+          id: nibblet.id,
+          text: message,
+          attachments: ready.map((r) => r.fileId),
+        });
+        setText("");
+      }
+      if (!queue.editing) clear();
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : String(error));
     } finally {
       setSending(false);
       area.current?.focus();
@@ -69,7 +81,13 @@ export function Composer({
         </div>
       ) : null}
       <div className="pointer-events-auto mx-auto max-w-[46rem] rounded-3xl border border-black/8 bg-surface/85 shadow-float backdrop-blur-md transition-colors focus-within:border-accent/50 dark:border-white/8 dark:focus-within:border-accent/50">
-        {attachments.length > 0 ? (
+        <QueuedMessages queue={queue} />
+        {sendError ? (
+          <p role="alert" className="px-4 pt-2 text-xs text-danger">
+            {sendError}
+          </p>
+        ) : null}
+        {attachments.length > 0 && !queue.editing ? (
           <div className="flex flex-wrap gap-1.5 px-3 pt-3">
             {attachments.map((a) => (
               <AttachmentChip key={a.key} attachment={a} onRemove={() => remove(a.key)} />
@@ -79,6 +97,7 @@ export function Composer({
         <textarea
           ref={area}
           value={text}
+          disabled={sending}
           rows={1}
           onChange={(e) => {
             setText(e.target.value);
@@ -94,6 +113,18 @@ export function Composer({
             }
           }}
           onKeyDown={(e) => {
+            if (
+              e.key === "ArrowUp" &&
+              canRecall(
+                { ...e, composing: e.nativeEvent.isComposing },
+                e.currentTarget,
+                caretOnFirstVisualLine(e.currentTarget),
+              )
+            ) {
+              e.preventDefault();
+              void queue.recall();
+              return;
+            }
             // On a touchscreen, Return is a new line; the send button sends.
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !touch) {
               e.preventDefault();
@@ -111,6 +142,7 @@ export function Composer({
           <input
             ref={picker}
             type="file"
+            disabled={sending || queue.editing !== null}
             multiple
             hidden
             onChange={(e) => {
@@ -120,6 +152,7 @@ export function Composer({
           />
           <button
             type="button"
+            disabled={sending || queue.editing !== null}
             onClick={() => picker.current?.click()}
             className="flex size-7 items-center justify-center rounded-full text-dim hover:bg-hover hover:text-text"
             aria-label="Attach files"
@@ -160,20 +193,24 @@ export function Composer({
             >
               <Square className="size-3 fill-current" />
             </button>
-          ) : (
-            <button
-              type="button"
-              disabled={!canSend}
-              onClick={() => void send()}
-              className={cn(
-                "flex size-7 items-center justify-center rounded-full bg-accent text-accent-text transition-opacity hover:bg-accent-hover disabled:opacity-30",
-              )}
-              aria-label="Send"
-              title={uploading ? "Waiting for uploads…" : "Send (Enter)"}
-            >
+          ) : null}
+          <button
+            type="button"
+            disabled={!canSend}
+            onClick={() => void send()}
+            className={cn(
+              "flex h-7 shrink-0 items-center justify-center rounded-full bg-accent text-accent-text transition-opacity hover:bg-accent-hover disabled:opacity-30",
+              running || queue.editing ? "px-3" : "w-7",
+            )}
+            aria-label={queue.editing ? "Save queued message" : running ? "Queue send" : "Send"}
+            title={uploading ? "Waiting for uploads…" : "Send (Enter)"}
+          >
+            {running || queue.editing ? (
+              <span className="px-1 text-xs">{queue.editing ? "Save" : "Queue"}</span>
+            ) : (
               <ArrowUp className="size-4" />
-            </button>
-          )}
+            )}
+          </button>
         </div>
       </div>
     </div>
@@ -194,15 +231,18 @@ interface Attachment {
  * Files waiting to go with the next message: each starts uploading as soon
  * as it's added, from the picker, a paste, or a drop anywhere on the page.
  */
-function useAttachments(connection: ServerConnection, nibbletId: string) {
+function useAttachments(connection: ServerConnection, nibbletId: string, enabled: boolean) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragging, setDragging] = useState(false);
   const counter = useRef(0);
+  const acceptsFiles = useRef(enabled);
+  acceptsFiles.current = enabled;
 
   const update = (key: string, patch: Partial<Attachment>) =>
     setAttachments((list) => list.map((a) => (a.key === key ? { ...a, ...patch } : a)));
 
   const add = (files: File[]) => {
+    if (!acceptsFiles.current) return;
     for (const file of files) {
       const key = `a${counter.current++}`;
       const preview = isImage(file.type) ? URL.createObjectURL(file) : null;

@@ -1,4 +1,4 @@
-import { items, memories, nibblets, schedules, type Db } from "@nibblet/db";
+import { clientSubmissions, items, memories, nibblets, schedules, type Db } from "@nibblet/db";
 import {
   Effort,
   HarnessId,
@@ -9,7 +9,7 @@ import {
   ThreadItem,
   ToolRules,
 } from "@nibblet/protocol";
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 
 /**
@@ -166,6 +166,15 @@ const BATCH = 500;
  */
 export async function importState(db: Db, nibbletId: string, state: SnapshotState): Promise<void> {
   await db.transaction(async (tx) => {
+    await tx
+      .update(clientSubmissions)
+      .set({ state: "cancelled" })
+      .where(
+        and(
+          eq(clientSubmissions.nibbletId, nibbletId),
+          inArray(clientSubmissions.state, ["queued", "started"]),
+        ),
+      );
     await tx.delete(items).where(eq(items.nibbletId, nibbletId));
     const ordered = [...state.items].sort((a, b) => a.seq - b.seq);
     for (let i = 0; i < ordered.length; i += BATCH) {

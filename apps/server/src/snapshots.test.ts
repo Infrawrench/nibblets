@@ -10,6 +10,7 @@ import { Bus } from "./bus.ts";
 import { exportState, importState, settle } from "./snapshot-state.ts";
 import { KEEP_BEFORE_RESTORE, Snapshots, type HomeArchiver } from "./snapshots.ts";
 import { Store } from "./store.ts";
+import { lockTestDatabase } from "./test-database.ts";
 
 /**
  * These need a Postgres with pgvector, e.g.
@@ -47,6 +48,7 @@ class FakeHome implements HomeArchiver {
 
 describe.skipIf(!url)("snapshots", () => {
   let db: Db;
+  let unlockDatabase: (() => Promise<void>) | undefined;
   let store: Store;
   let bus: Bus;
   let home: FakeHome;
@@ -60,11 +62,20 @@ describe.skipIf(!url)("snapshots", () => {
 
   beforeAll(async () => {
     db = connect(url ?? "");
+    unlockDatabase = await lockTestDatabase(db);
     await migrateDb(db);
     dataDir = await mkdtemp(join(tmpdir(), "nibblet-snapshots-"));
-  });
+  }, 30_000);
   afterAll(async () => {
-    await rm(dataDir, { recursive: true, force: true });
+    try {
+      if (dataDir) await rm(dataDir, { recursive: true, force: true });
+    } finally {
+      try {
+        await unlockDatabase?.();
+      } finally {
+        await db?.$client.end();
+      }
+    }
   });
 
   beforeEach(async () => {

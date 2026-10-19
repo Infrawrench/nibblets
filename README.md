@@ -33,6 +33,18 @@ docker compose -p nibblet exec server node apps/server/src/cli.ts pair
 
 Open the link it prints. To reach it from anywhere, press Connect in Settings → Remote access and approve the code on [Nibblets Connect](https://app.nibblets.dev), signed in to your account: every server you connect shows up there.
 
+## Chats while a host is offline
+
+Enable offline messages with a recovery passphrase of at least 12 characters, entered twice. Recent conversations you open are then saved encrypted on this device, with up to 20 conversations, 100 user and assistant text messages each, and 10 MiB of history. When a host is unavailable, saved chats show their last sync time and let you queue text messages. Nibblets Connect itself must still be reachable when signing in or opening the app.
+
+Each conversation can hold five waiting messages totalling 128 KiB. While a nibblet is working, **Queue send** adds a message without stopping its current turn, and **Stop** remains separate. Queued messages have Edit and Cancel controls, and pressing Up with the caret on the first visual line recalls the latest message that hasn't been attempted. Saving an edit keeps its place in the queue, while cancelling restores your draft. Messages awaiting a host receipt can't be edited or cancelled locally, and rejected messages stay visible until dismissed.
+
+Keep the app open and offline messages unlocked to send the queue when the host returns. The host must support durable message receipts before queued sends can begin. New files can't upload while the host is offline, and browser, terminal, settings and other host tools require a connection.
+
+After enabling offline messages, enter your recovery passphrase beside **Enable device unlock** to add a passkey on a browser that supports WebAuthn PRF. Chrome chooses the device verification method, which may be a fingerprint, face, PIN or another supported method. Passphrase recovery remains available if device verification is cancelled or unavailable. Keep the recovery passphrase somewhere safe: losing both recovery methods makes the saved data inaccessible.
+
+**Lock offline messages** clears decrypted offline data in every open tab for the same account. Saved history and outgoing messages use encryption at rest in browser storage, and their key stays in memory while unlocked. This protects locked local storage; it doesn't change how the host processes conversations or protect an unlocked app from malicious scripts.
+
 ## How it fits together
 
 See [ARCHITECTURE.md](ARCHITECTURE.md). In short:

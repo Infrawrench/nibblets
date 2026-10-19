@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ClerkProvider, SignIn, useAuth, useSignIn } from "@clerk/react";
 import { Loader2 } from "lucide-react";
 import { defaultHamsterLook } from "@nibblet/protocol";
@@ -15,6 +15,8 @@ import { CentralServers } from "../lib/servers.tsx";
 import { forgetOtherClerkInstance } from "../lib/clerk-instance.ts";
 import { Hamster } from "./hamster/Hamster.tsx";
 import { Button } from "./ui/Button.tsx";
+import { OfflineProvider } from "../lib/offline-context.tsx";
+import { OfflineBridge } from "../lib/offline-bridge.tsx";
 
 /**
  * Nibblets Connect's UI: sign in with Clerk, then every server on the account.
@@ -35,18 +37,28 @@ export function CentralApp({ children }: { children: ReactNode }) {
   forgetOtherClerkInstance(config.data.clerkPublishableKey);
   return (
     <ClerkProvider publishableKey={config.data.clerkPublishableKey}>
-      <ClerkSignedIn>{children}</ClerkSignedIn>
+      <ClerkSignedIn issuer={config.data.clerkPublishableKey}>{children}</ClerkSignedIn>
     </ClerkProvider>
   );
 }
 
 function DevSignedIn({ children }: { children: ReactNode }) {
   const api = useMemo(() => centralApi(async () => null), []);
-  return <CentralServers api={api}>{children}</CentralServers>;
+  const user = useQuery({ queryKey: ["dev", "offline-principal"], queryFn: () => api.servers() });
+  if (!user.data) return <Spinner />;
+  return (
+    <SignedInScope
+      key={user.data.user.id}
+      principal={`dev:${window.location.origin}:${user.data.user.id}`}
+      api={api}
+    >
+      {children}
+    </SignedInScope>
+  );
 }
 
-function ClerkSignedIn({ children }: { children: ReactNode }) {
-  const { isLoaded, isSignedIn, getToken } = useAuth();
+function ClerkSignedIn({ children, issuer }: { children: ReactNode; issuer: string }) {
+  const { isLoaded, isSignedIn, getToken, userId } = useAuth();
   const api = useMemo<CentralApi>(() => centralApi(() => getToken()), [getToken]);
   const ticket = useTicketSignIn(isLoaded && !isSignedIn);
   if (!isLoaded || (ticket === "signing-in" && !isSignedIn)) return <Spinner />;
@@ -80,7 +92,46 @@ function ClerkSignedIn({ children }: { children: ReactNode }) {
       </div>
     );
   }
-  return <CentralServers api={api}>{children}</CentralServers>;
+  if (!userId) return <Spinner />;
+  return (
+    <SignedInScope key={`${issuer}:${userId}`} principal={`clerk:${issuer}:${userId}`} api={api}>
+      {children}
+    </SignedInScope>
+  );
+}
+
+function SignedInScope({
+  principal,
+  api,
+  children,
+}: {
+  principal: string;
+  api: CentralApi;
+  children: ReactNode;
+}) {
+  const [client] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: { queries: { refetchOnWindowFocus: false, staleTime: 10_000 } },
+      }),
+  );
+  useEffect(
+    () => () => {
+      void client.cancelQueries();
+      client.clear();
+    },
+    [client],
+  );
+  return (
+    <QueryClientProvider client={client}>
+      <OfflineProvider principal={principal}>
+        <CentralServers api={api}>
+          <OfflineBridge />
+          {children}
+        </CentralServers>
+      </OfflineProvider>
+    </QueryClientProvider>
+  );
 }
 
 /**

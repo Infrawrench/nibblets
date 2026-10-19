@@ -17,7 +17,10 @@ import {
   DESKTOP_VIEW_PORT,
   VIEW_PORT,
   type McpServerDef,
+  type SendReceipt,
+  type SubmissionState,
 } from "@nibblet/protocol";
+import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { cliLogins } from "./clilogins.ts";
@@ -86,6 +89,103 @@ const SUBAGENT_RESUME_INPUT =
  * runner one at a time, and stores what comes back.
  */
 export class Conductor {
+  private initializing = true;
+  private recovered!: () => void;
+  private readonly recovery = new Promise<void>((resolve) => {
+    this.recovered = resolve;
+  });
+  private initialized!: () => void;
+  private readonly initialization = new Promise<void>((resolve) => {
+    this.initialized = resolve;
+  });
+  /** Per nibblet, the tail of its serialised work; it always settles without rejecting. */
+  private readonly mutations = new Map<string, Promise<void>>();
+  private readonly restoring = new Set<string>();
+
+  async beginRestore(nibbletId: string): Promise<void> {
+    await this.serial(nibbletId, async () => {
+      this.restoring.add(nibbletId);
+    });
+    try {
+      await this.interrupt(nibbletId);
+    } catch (error) {
+      await this.serial(nibbletId, async () => this.endRestore(nibbletId));
+      throw error;
+    }
+  }
+
+  endRestore(nibbletId: string): void {
+    this.restoring.delete(nibbletId);
+  }
+
+  private serial<T>(id: string, run: () => Promise<T>): Promise<T> {
+    const result = (this.mutations.get(id) ?? Promise.resolve()).then(run);
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.mutations.set(id, settled);
+    void settled.then(() => {
+      if (this.mutations.get(id) === settled) this.mutations.delete(id);
+    });
+    return result;
+  }
+
+  async send(
+    nibbletId: string,
+    input: string,
+    attachmentIds: string[],
+    clientMessageId: string,
+    resolveFiles: () => Promise<FileRef[]>,
+  ): Promise<SendReceipt> {
+    if (this.initializing) await this.recovery;
+    const receipt = await this.serial(nibbletId, async () => {
+      const payloadHash = createHash("sha256")
+        .update(JSON.stringify([input, attachmentIds]))
+        .digest("hex");
+      const previous = await this.store.submission(nibbletId, clientMessageId);
+      if (previous) {
+        if (previous.payloadHash !== payloadHash)
+          throw new RpcError("conflict", "This message ID was already used for different content");
+        return { clientMessageId, turnId: previous.turnId, state: previous.state };
+      }
+      if (this.restoring.has(nibbletId))
+        throw new RpcError("unavailable", "A snapshot is being restored");
+      await this.store.getNibblet(nibbletId);
+      const attachments = await resolveFiles();
+      const accepted = await this.store.acceptSubmission(
+        nibbletId,
+        clientMessageId,
+        payloadHash,
+        input,
+        attachments,
+      );
+      this.mergeQueue(nibbletId, [{ turnId: accepted.turnId, source: "user", input, attachments }]);
+      await this.limits.saveTurns(nibbletId, this.queues.get(nibbletId) ?? []);
+      await this.store.updateNibblet(nibbletId, { lastActivityAt: new Date() });
+      return accepted;
+    });
+    if (receipt.state === "queued")
+      void this.wake(nibbletId).catch((err: unknown) =>
+        console.error("couldn't wake queued submission", err),
+      );
+    return receipt;
+  }
+
+  private mergeQueue(nibbletId: string, turns: QueuedTurn[]): void {
+    this.queues.set(nibbletId, [
+      ...new Map(
+        [...(this.queues.get(nibbletId) ?? []), ...turns].map((turn) => [turn.turnId, turn]),
+      ).values(),
+    ]);
+  }
+
+  private async wake(nibbletId: string): Promise<void> {
+    if (this.initializing || this.restoring.has(nibbletId)) return;
+    const nibblet = await this.store.getNibblet(nibbletId);
+    if (nibblet.status === "stopped" || nibblet.status === "error") await this.start(nibbletId);
+    else await this.dispatch(nibbletId);
+  }
   private readonly links = new Map<string, RunnerLink>();
   private readonly queues = new Map<string, QueuedTurn[]>();
   private readonly active = new Map<string, ActiveTurn>();
@@ -133,7 +233,8 @@ export class Conductor {
     this.approvals = new Approvals(store, config.NIBBLET_APPROVAL_TIMEOUT_MINUTES * 60_000);
     this.providerLimits = new ProviderLimits(config);
     this.limits = new LimitWaits(store, {
-      restoreQueue: (nibbletId, turns) => this.queues.set(nibbletId, [...turns]),
+      resumeWait: (nibbletId) => this.resumeNow(nibbletId),
+      restoreQueue: (nibbletId, turns) => this.mergeQueue(nibbletId, turns),
       resume: (nibbletId) => void this.dispatch(nibbletId),
     });
   }
@@ -145,8 +246,38 @@ export class Conductor {
 
   /** Brings the database in line with Docker after a server restart. */
   async reconcile(): Promise<void> {
+    try {
+      await this.reconcileState();
+    } finally {
+      this.recovered();
+      this.initializing = false;
+      this.initialized();
+    }
+    for (const [id, queue] of this.queues) {
+      if (queue.length && !this.paused)
+        void this.wake(id).catch((err: unknown) =>
+          console.error("couldn't recover queued submissions", err),
+        );
+    }
+  }
+
+  private async reconcileState(): Promise<void> {
     await this.approvals.resetStale();
     await this.limits.restore();
+    const resume = await this.store.getSetting(RESUME_SETTING, (v) => Resume.parse(v), {});
+    await this.store.deleteSetting(RESUME_SETTING);
+    for (const [id, { turns }] of Object.entries(resume)) this.mergeQueue(id, turns);
+    for (const { nibbletId, item } of await this.store.queuedSubmissions()) {
+      this.mergeQueue(nibbletId, [
+        {
+          turnId: item.turnId!,
+          source: item.source,
+          input: item.text,
+          attachments: item.attachments,
+        },
+      ]);
+    }
+    this.recovered();
     const containers = await this.docker.runners();
     const all = await this.store.listNibblets();
     // A sub-agent runs in the container of the nibblet at the top of its tree.
@@ -177,8 +308,6 @@ export class Conductor {
     // Running turns live in memory, so the last server lost track of any it
     // left running. A runner that's still up may still be on one: wait for it
     // to say. Otherwise the turn is over, and the nibblet carries on below.
-    const resume = await this.store.getSetting(RESUME_SETTING, (v) => Resume.parse(v), {});
-    await this.store.deleteSetting(RESUME_SETTING);
     const lost: string[] = [];
     for (const { nibbletId, item } of await this.store.runningTurnItems()) {
       const runner = runners.get(nibbletId);
@@ -188,7 +317,7 @@ export class Conductor {
         setTimeout(() => void this.settleOrphan(nibbletId), 2 * 60_000).unref();
       } else {
         await this.closeLostTurn(nibbletId, item);
-        lost.push(nibbletId);
+        if (!(await this.store.submissionForTurn(nibbletId, item.id))) lost.push(nibbletId);
       }
       // Either way, that's what happens to it; nothing else asks it to carry on.
       if (resume[nibbletId]) resume[nibbletId].wasWorking = false;
@@ -250,31 +379,42 @@ export class Conductor {
     nibbletId: string,
     item: Extract<ThreadItem, { type: "turn" }>,
   ): Promise<void> {
-    await this.store.putItem(nibbletId, { ...item, status: "interrupted", endedAt: now() });
+    await this.store.putSubmissionTurn(
+      nibbletId,
+      { ...item, status: "interrupted", endedAt: now() },
+      "interrupted",
+    );
     await this.notice(nibbletId, item.turnId, "info", "Paused while Nibblets restarted");
   }
 
   /** A lost turn its runner isn't on: closed, and the nibblet asked to carry on. */
   private async settleOrphan(nibbletId: string): Promise<void> {
-    const item = this.orphans.get(nibbletId);
-    if (!item) return;
-    this.orphans.delete(nibbletId);
-    await this.closeLostTurn(nibbletId, item);
+    const resume = await this.serial(nibbletId, async () => {
+      const item = this.orphans.get(nibbletId);
+      if (!item) return false;
+      this.orphans.delete(nibbletId);
+      await this.closeLostTurn(nibbletId, item);
+      return !(await this.store.submissionForTurn(nibbletId, item.id));
+    });
+    if (!resume) return;
     await this.enqueue(nibbletId, "system", RESUME_INPUT, [], { first: true }).catch(
       () => undefined,
     );
   }
 
   /** A lost turn its runner is still on (or has just finished): this server takes it over. */
-  private adoptOrphan(nibbletId: string, turnId: string): boolean {
+  private async adoptOrphan(nibbletId: string, turnId: string): Promise<boolean> {
     const item = this.orphans.get(nibbletId);
     if (item?.turnId !== turnId) return false;
     this.orphans.delete(nibbletId);
+    const submission = await this.store.submissionForTurn(nibbletId, turnId);
+    const original = submission ? await this.store.getItem(nibbletId, submission.userItemId) : null;
     this.active.set(nibbletId, {
       turnId,
       source: item.source,
       // Its message isn't to hand; if it has to wait out a limit, it carries on instead.
-      input: RESUME_INPUT,
+      input: original?.type === "user_message" ? original.text : RESUME_INPUT,
+      attachments: original?.type === "user_message" ? original.attachments : undefined,
       startedAt: item.createdAt,
       lastReply: "",
     });
@@ -291,11 +431,13 @@ export class Conductor {
     const saved: Resume = {};
     for (const id of new Set([...this.active.keys(), ...this.queues.keys()])) {
       const wasWorking = this.active.has(id);
+      const clientTurn = this.active.get(id);
+      const durable = clientTurn && (await this.store.submissionForTurn(id, clientTurn.turnId));
       const turns = this.queues.get(id) ?? [];
       if (!wasWorking && turns.length === 0) continue;
-      saved[id] = { wasWorking, turns };
+      saved[id] = { wasWorking: wasWorking && !durable, turns };
       if (wasWorking) {
-        this.interrupt(id);
+        await this.interrupt(id, { preserveQueued: true });
         void this.notice(id, this.activeTurnId(id), "info", "Paused while Nibblets updates");
       }
     }
@@ -321,7 +463,7 @@ export class Conductor {
     for (const [id, { wasWorking, turns }] of Object.entries(saved)) {
       const nibblet = await this.store.getNibblet(id).catch(() => null);
       if (!nibblet) continue;
-      this.queues.set(id, [...turns, ...(this.queues.get(id) ?? [])]);
+      this.mergeQueue(id, turns);
       if (wasWorking) {
         await this.enqueue(id, "system", RESUME_INPUT, [], { first: true }).catch(() => undefined);
       } else {
@@ -527,11 +669,11 @@ export class Conductor {
     const host = await this.hostOf(nibblet).catch(() => null);
     if (host && !(await this.docker.runnerRunning(host).catch(() => false))) {
       // It went down with its parent's container.
-      this.failActive(nibbletId, "interrupted", "Its parent's container stopped");
+      await this.failActive(nibbletId, "interrupted", "Its parent's container stopped");
       await this.store.setStatus(nibbletId, "stopped");
       return;
     }
-    this.failActive(nibbletId, "failed", "It stopped");
+    await this.failActive(nibbletId, "failed", "It stopped");
     const last = tail.trim().split("\n").slice(-3).join(" ");
     await this.store.setStatus(
       nibbletId,
@@ -556,12 +698,19 @@ export class Conductor {
     for (const child of await this.store.children(parentId)) {
       working.push(...(await this.subagentsGone(child.id, reason, opts)));
       const running = child.status !== "stopped" && child.status !== "error";
-      if (!running && !this.links.has(child.id)) continue;
-      if (this.busy(child.id)) working.push(child.id);
+      if (!running && !this.links.has(child.id) && !this.busy(child.id)) continue;
+      const pending = [this.active.get(child.id), ...(this.queues.get(child.id) ?? [])].filter(
+        (turn) => turn !== undefined,
+      );
+      const legacy = await Promise.all(
+        pending.map(async (turn) => !(await this.store.submissionForTurn(child.id, turn.turnId))),
+      );
+      if (legacy.some(Boolean)) working.push(child.id);
+      await this.interrupt(child.id);
       this.subagentRuns.delete(child.id);
       this.views.delete(child.id);
       void this.approvals.cancelAll(child.id, reason);
-      this.failActive(child.id, "interrupted", reason);
+      await this.failActive(child.id, "interrupted", reason);
       this.links.get(child.id)?.close();
       this.links.delete(child.id);
       this.terminals.runnerGone(child.id);
@@ -572,17 +721,18 @@ export class Conductor {
       });
       if (opts.resume) continue;
       this.queues.delete(child.id);
-      const pending = await this.store.runningSubagentItem(parentId, child.id);
-      if (pending)
-        await this.store.putItem(parentId, { ...pending, status: "error", result: reason });
+      const parentItem = await this.store.runningSubagentItem(parentId, child.id);
+      if (parentItem)
+        await this.store.putItem(parentId, { ...parentItem, status: "error", result: reason });
     }
     return working;
   }
 
   async stop(nibbletId: string): Promise<Nibblet> {
+    await this.interrupt(nibbletId);
     await this.approvals.cancelAll(nibbletId, "The nibblet was stopped");
     await this.limits.end(nibbletId, "cancelled");
-    this.failActive(nibbletId, "interrupted", "Stopped");
+    await this.failActive(nibbletId, "interrupted", "Stopped");
     this.links.get(nibbletId)?.close();
     this.links.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
@@ -636,6 +786,21 @@ export class Conductor {
     attachments: FileRef[] = [],
     opts: { first?: boolean } = {},
   ): Promise<string> {
+    if (this.initializing) await this.recovery;
+    return this.serial(nibbletId, () =>
+      this.enqueueLocked(nibbletId, source, input, attachments, opts),
+    );
+  }
+
+  private async enqueueLocked(
+    nibbletId: string,
+    source: TurnSource,
+    input: string,
+    attachments: FileRef[],
+    opts: { first?: boolean },
+  ): Promise<string> {
+    if (this.restoring.has(nibbletId))
+      throw new RpcError("unavailable", "A snapshot is being restored");
     // While waiting out a usage limit, heartbeats and schedules don't pile up.
     if (this.limits.waiting(nibbletId) && (source === "heartbeat" || source === "schedule")) {
       const pending = this.queues.get(nibbletId)?.find((t) => t.source === source);
@@ -710,15 +875,25 @@ export class Conductor {
     return this.active.has(nibbletId) || (this.queues.get(nibbletId)?.length ?? 0) > 0;
   }
 
-  interrupt(nibbletId: string): void {
-    void this.approvals.cancelAll(nibbletId, "The turn was stopped");
-    void this.limits.end(nibbletId, "cancelled");
-    const turn = this.active.get(nibbletId);
-    if (turn) {
-      this.links.get(nibbletId)?.send({ type: "interrupt", turnId: turn.turnId });
-      setTimeout(() => void this.forceStop(nibbletId, turn.turnId), STOP_TIMEOUT_MS).unref();
-    }
-    this.queues.set(nibbletId, []);
+  async interrupt(nibbletId: string, opts: { preserveQueued?: boolean } = {}): Promise<void> {
+    return this.serial(nibbletId, async () => {
+      await this.approvals.cancelAll(nibbletId, "The turn was stopped");
+      await this.limits.end(nibbletId, "cancelled");
+      if (!opts.preserveQueued) await this.store.cancelSubmissions(nibbletId);
+      const orphan = this.orphans.get(nibbletId);
+      if (orphan) {
+        this.orphans.delete(nibbletId);
+        await this.closeLostTurn(nibbletId, orphan);
+      }
+      const turn = this.active.get(nibbletId);
+      if (turn) {
+        if (opts.preserveQueued)
+          await this.store.setSubmissionState(nibbletId, turn.turnId, "interrupted");
+        this.links.get(nibbletId)?.send({ type: "interrupt", turnId: turn.turnId });
+        setTimeout(() => void this.forceStop(nibbletId, turn.turnId), STOP_TIMEOUT_MS).unref();
+      }
+      if (!opts.preserveQueued) this.queues.set(nibbletId, []);
+    });
   }
 
   /**
@@ -727,9 +902,17 @@ export class Conductor {
    * closed here and the container started afresh, which picks up what's queued.
    */
   private async forceStop(nibbletId: string, turnId: string): Promise<void> {
-    if (this.active.get(nibbletId)?.turnId !== turnId) return;
-    console.warn(`[${nibbletId}] turn ${turnId} didn't stop; restarting its container`);
-    this.failActive(nibbletId, "interrupted", "It didn't stop, so its container was restarted");
+    const stopped = await this.serial(nibbletId, async () => {
+      if (this.active.get(nibbletId)?.turnId !== turnId) return false;
+      console.warn(`[${nibbletId}] turn ${turnId} didn't stop; restarting its container`);
+      await this.failActiveLocked(
+        nibbletId,
+        "interrupted",
+        "It didn't stop, so its container was restarted",
+      );
+      return true;
+    });
+    if (!stopped) return;
     await this.start(nibbletId).catch((err: unknown) =>
       console.error(`couldn't restart ${nibbletId}`, err),
     );
@@ -897,7 +1080,7 @@ export class Conductor {
     this.links.delete(nibbletId);
     this.views.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
-    this.failActive(nibbletId, "failed", "Lost touch with its container");
+    await this.failActive(nibbletId, "failed", "Lost touch with its container");
   }
 
   /** Pushes new settings to a running nibblet's runner. */
@@ -907,13 +1090,16 @@ export class Conductor {
   }
 
   async onRunnerMessage(nibbletId: string, message: RunnerToServer): Promise<void> {
+    if (this.initializing) await this.initialization;
     switch (message.type) {
       case "ready": {
         await this.recordView(nibbletId, message.viewPort);
+        await this.serial(nibbletId, async () => {
+          if (message.activeTurnId !== null)
+            await this.adoptOrphan(nibbletId, message.activeTurnId);
+        });
         if (this.orphans.has(nibbletId)) {
-          const adopted =
-            message.activeTurnId !== null && this.adoptOrphan(nibbletId, message.activeTurnId);
-          if (!adopted) await this.settleOrphan(nibbletId);
+          await this.settleOrphan(nibbletId);
         }
         await this.store.setStatus(nibbletId, this.active.has(nibbletId) ? "working" : "idle");
         await this.dispatch(nibbletId);
@@ -937,7 +1123,9 @@ export class Conductor {
       }
       case "turn_end": {
         // A lost turn that finished while the server was away ends normally.
-        this.adoptOrphan(nibbletId, message.turnId);
+        await this.serial(nibbletId, async () => {
+          await this.adoptOrphan(nibbletId, message.turnId);
+        });
         await this.finishTurn(nibbletId, message);
         return;
       }
@@ -976,12 +1164,22 @@ export class Conductor {
   /** "Try now": stop waiting out a usage limit and run what's queued. */
   async resumeNow(nibbletId: string): Promise<void> {
     this.providerLimits.invalidate();
-    await this.limits.end(nibbletId, "resumed");
+    await this.serial(nibbletId, () => this.limits.end(nibbletId, "resumed"));
   }
 
   private async dispatch(nibbletId: string): Promise<void> {
+    return this.serial(nibbletId, () => this.dispatchLocked(nibbletId));
+  }
+
+  private async dispatchLocked(nibbletId: string): Promise<void> {
     const link = this.links.get(nibbletId);
-    if (this.paused) return;
+    if (
+      this.initializing ||
+      this.paused ||
+      this.restoring.has(nibbletId) ||
+      this.orphans.has(nibbletId)
+    )
+      return;
     if (!link || this.active.has(nibbletId) || this.limits.waiting(nibbletId)) return;
     if (!this.queues.get(nibbletId)?.length) return;
     // Don't send work into a subscription that's known to be out of usage.
@@ -994,16 +1192,59 @@ export class Conductor {
       ]);
       return;
     }
-    const next = this.queues.get(nibbletId)?.shift();
+    let next = this.queues.get(nibbletId)?.shift();
+    while (next) {
+      const receipt = await this.store.submissionForTurn(nibbletId, next.turnId);
+      if (!receipt || receipt.state === "queued") break;
+      next = this.queues.get(nibbletId)?.shift();
+    }
     if (!next) return;
 
     const turn: ActiveTurn = { ...next, startedAt: now(), lastReply: "" };
     this.active.set(nibbletId, turn);
-    await this.putTurnItem(nibbletId, turn, "running", false, null);
-    await this.store.setStatus(nibbletId, "working");
+    try {
+      await this.store.putSubmissionTurn(
+        nibbletId,
+        {
+          type: "turn",
+          id: turn.turnId,
+          turnId: turn.turnId,
+          createdAt: turn.startedAt,
+          source: turn.source,
+          status: "running",
+          quiet: false,
+          usage: null,
+          endedAt: null,
+        },
+        "started",
+      );
+      await this.store.setStatus(nibbletId, "working");
+    } catch (error) {
+      const receipt = await this.store.submissionForTurn(nibbletId, turn.turnId);
+      if (receipt?.state === "queued") {
+        this.active.delete(nibbletId);
+        this.queues.get(nibbletId)?.unshift(next);
+        throw error;
+      }
+      await this.failActiveLocked(
+        nibbletId,
+        "interrupted",
+        "Couldn't prepare the turn for dispatch",
+      );
+      return;
+    }
 
     try {
       const system = await this.buildSystem(nibbletId, next.input);
+      if (this.active.get(nibbletId) !== turn) return;
+      if (this.links.get(nibbletId) !== link) {
+        await this.failActiveLocked(
+          nibbletId,
+          "interrupted",
+          "Connection changed before the turn could be sent",
+        );
+        return;
+      }
       link.send({
         type: "turn",
         turnId: next.turnId,
@@ -1059,11 +1300,24 @@ export class Conductor {
     nibbletId: string,
     end: Extract<RunnerToServer, { type: "turn_end" }>,
   ): Promise<void> {
+    return this.serial(nibbletId, () => this.finishTurnLocked(nibbletId, end));
+  }
+
+  private async finishTurnLocked(
+    nibbletId: string,
+    end: Extract<RunnerToServer, { type: "turn_end" }>,
+  ): Promise<void> {
     const turn = this.active.get(nibbletId);
     if (!turn || turn.turnId !== end.turnId) return;
-    this.active.delete(nibbletId);
-
-    if (end.status === "failed" && (await this.waitOutLimit(nibbletId, turn, end.error))) return;
+    const submission = await this.store.submissionForTurn(nibbletId, turn.turnId);
+    if (
+      end.status === "failed" &&
+      submission?.state !== "cancelled" &&
+      (await this.waitOutLimit(nibbletId, turn, end.error))
+    ) {
+      this.active.delete(nibbletId);
+      return;
+    }
 
     const quiet = end.status === "completed" && isQuiet(turn.source, turn.lastReply);
     await this.putTurnItem(nibbletId, turn, end.status, quiet, end.usage);
@@ -1080,8 +1334,11 @@ export class Conductor {
         console.warn("indexing failed", err),
       );
     }
-    await this.reportToParent(nibbletId, turn, end);
-    await this.dispatch(nibbletId);
+    void this.reportToParent(nibbletId, turn, end).catch((err: unknown) =>
+      console.error("couldn't report completed sub-agent", err),
+    );
+    this.active.delete(nibbletId);
+    void this.dispatch(nibbletId);
   }
 
   /**
@@ -1098,9 +1355,14 @@ export class Conductor {
     this.providerLimits.invalidate();
     const limited = provider ? await this.providerLimits.until(provider) : null;
     if (!limited && !looksLikeUsageLimit(error)) return false;
-    await this.putTurnItem(nibbletId, turn, "interrupted", false, null);
+    await this.putTurnItem(nibbletId, turn, "interrupted", false, null, "queued");
     const queue = this.queues.get(nibbletId) ?? [];
-    queue.unshift({ turnId: turn.turnId, source: turn.source, input: turn.input });
+    queue.unshift({
+      turnId: turn.turnId,
+      source: turn.source,
+      input: turn.input,
+      attachments: turn.attachments,
+    });
     this.queues.set(nibbletId, queue);
     await this.limits.start(nibbletId, provider, resumeAt(limited, new Date()), queue);
     return true;
@@ -1147,7 +1409,7 @@ export class Conductor {
     if (!nibblet || nibblet.status === "stopped") return;
     this.links.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
-    this.failActive(nibbletId, "failed", "Its container stopped");
+    await this.failActive(nibbletId, "failed", "Its container stopped");
     await this.subagentsGone(nibbletId, "Its parent's container stopped");
     const logs = await this.docker.runnerLogs(nibbletId, 20);
     const tail = logs.trim().split("\n").slice(-3).join(" ");
@@ -1158,12 +1420,24 @@ export class Conductor {
     });
   }
 
-  private failActive(nibbletId: string, status: "failed" | "interrupted", reason: string): void {
+  private async failActive(
+    nibbletId: string,
+    status: "failed" | "interrupted",
+    reason: string,
+  ): Promise<void> {
+    return this.serial(nibbletId, () => this.failActiveLocked(nibbletId, status, reason));
+  }
+
+  private async failActiveLocked(
+    nibbletId: string,
+    status: "failed" | "interrupted",
+    reason: string,
+  ): Promise<void> {
     const turn = this.active.get(nibbletId);
     if (!turn) return;
     this.active.delete(nibbletId);
-    void this.putTurnItem(nibbletId, turn, status, false, null);
-    void this.notice(nibbletId, turn.turnId, status === "failed" ? "error" : "info", reason);
+    await this.putTurnItem(nibbletId, turn, status, false, null);
+    await this.notice(nibbletId, turn.turnId, status === "failed" ? "error" : "info", reason);
   }
 
   private async putTurnItem(
@@ -1172,18 +1446,27 @@ export class Conductor {
     status: Extract<ThreadItem, { type: "turn" }>["status"],
     quiet: boolean,
     usage: Extract<ThreadItem, { type: "turn" }>["usage"],
+    receiptState: SubmissionState = status === "running"
+      ? "started"
+      : status === "interrupted"
+        ? "interrupted"
+        : "finished",
   ): Promise<void> {
-    await this.store.putItem(nibbletId, {
-      type: "turn",
-      id: turn.turnId,
-      turnId: turn.turnId,
-      createdAt: turn.startedAt,
-      source: turn.source,
-      status,
-      quiet,
-      usage,
-      endedAt: status === "running" ? null : now(),
-    });
+    await this.store.putSubmissionTurn(
+      nibbletId,
+      {
+        type: "turn",
+        id: turn.turnId,
+        turnId: turn.turnId,
+        createdAt: turn.startedAt,
+        source: turn.source,
+        status,
+        quiet,
+        usage,
+        endedAt: status === "running" ? null : now(),
+      },
+      receiptState,
+    );
   }
 
   private async notice(

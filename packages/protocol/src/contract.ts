@@ -16,6 +16,7 @@ import {
   Nibblet,
   Schedule,
   ServerInfo,
+  SendReceipt,
   StoredItem,
   UpdateNibblet,
 } from "./schema.ts";
@@ -44,12 +45,13 @@ export const contract = {
         .object({
           id: z.string(),
           text: z.string(),
+          clientMessageId: z.uuid().optional(),
           attachments: z.array(z.string()).max(20).default([]),
         })
         .refine((m) => m.text.trim().length > 0 || m.attachments.length > 0, {
           message: "Send some text or a file",
         }),
-      Ok,
+      Ok.extend({ receipt: SendReceipt.optional() }),
     ),
     interrupt: procedure(Id, Ok),
     /** Runs the heartbeat now rather than waiting for the next one. */

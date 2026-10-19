@@ -12,6 +12,7 @@ import type {
   NibbletTailscale,
   TailnetNode,
   ThreadItem,
+  SubmissionState,
 } from "@nibblet/protocol";
 import {
   bigint,
@@ -97,6 +98,25 @@ export const items = pgTable(
   (t) => [
     primaryKey({ columns: [t.nibbletId, t.itemId] }),
     index("items_seq_idx").on(t.nibbletId, t.seq),
+  ],
+);
+
+export const clientSubmissions = pgTable(
+  "client_submissions",
+  {
+    nibbletId: text("nibblet_id")
+      .notNull()
+      .references(() => nibblets.id, { onDelete: "cascade" }),
+    clientMessageId: text("client_message_id").notNull(),
+    turnId: text("turn_id").notNull(),
+    userItemId: text("user_item_id").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    state: text("state").$type<SubmissionState>().notNull().default("queued"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.nibbletId, t.clientMessageId] }),
+    index("client_submissions_turn_idx").on(t.nibbletId, t.turnId),
   ],
 );
 
