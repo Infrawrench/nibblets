@@ -13,6 +13,12 @@ const HEALTHY_POLL_MS = 15_000;
 const ERROR_RETRY_MS = 5000;
 const DOCKER_TIMEOUT_MS = 30_000;
 
+/** Docker's logs endpoint takes Unix seconds; without a usable start time, read the whole log. */
+function unixSeconds(timestamp: string): number {
+  const ms = Date.parse(timestamp);
+  return Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : 0;
+}
+
 export class Tunnel {
   private status: TunnelStatus = { mode: "off", state: "off", url: null, detail: null };
   private generation = 0;
@@ -167,7 +173,7 @@ export class Tunnel {
           stdout: true,
           stderr: true,
           tail: 5000,
-          since: info.State.StartedAt,
+          since: unixSeconds(info.State.StartedAt),
           abortSignal: AbortSignal.timeout(DOCKER_TIMEOUT_MS),
         });
         if (!this.active(generation)) return;

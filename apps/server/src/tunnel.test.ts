@@ -163,8 +163,9 @@ describe("Tunnel recovery", () => {
     );
     await tunnel.configure({ mode: "quick" });
     expect(tunnel.current().url).toBe("https://last.trycloudflare.com");
+    // Docker wants Unix seconds; an RFC 3339 time gets an HTTP 500.
     expect(container.logs).toHaveBeenLastCalledWith(
-      expect.objectContaining({ since: info.State.StartedAt }),
+      expect.objectContaining({ since: Date.UTC(2026, 9, 18, 17, 0, 0) / 1000 }),
     );
     container.logs.mockResolvedValue(Buffer.from("normal operation after startup log rollover"));
     await vi.advanceTimersByTimeAsync(15_000);
@@ -173,6 +174,9 @@ describe("Tunnel recovery", () => {
     container.logs.mockResolvedValue(Buffer.from(""));
     await vi.advanceTimersByTimeAsync(15_000);
     expect(tunnel.current()).toMatchObject({ state: "starting", url: null });
+    expect(container.logs).toHaveBeenLastCalledWith(
+      expect.objectContaining({ since: Date.UTC(2026, 9, 18, 17, 1, 0) / 1000 }),
+    );
     container.logs.mockResolvedValue(Buffer.from("https://restart.trycloudflare.com"));
     await vi.advanceTimersByTimeAsync(1000);
     expect(tunnel.current().url).toBe("https://restart.trycloudflare.com");
@@ -181,6 +185,16 @@ describe("Tunnel recovery", () => {
     await vi.advanceTimersByTimeAsync(15_000);
     expect(tunnel.current()).toMatchObject({ state: "starting", url: null });
   });
+
+  it.each(["0001-01-01T00:00:00Z", "", "not a time"])(
+    "reads the whole log when the start time is %j",
+    async (startedAt) => {
+      const { tunnel, container, info } = setup();
+      info.State.StartedAt = startedAt;
+      await tunnel.configure({ mode: "quick" });
+      expect(container.logs).toHaveBeenLastCalledWith(expect.objectContaining({ since: 0 }));
+    },
+  );
 
   it.each(["off", "token", "stop"] as const)(
     "invalidates pending logs immediately on %s",
