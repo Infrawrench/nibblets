@@ -1296,6 +1296,7 @@ export function createMockServer(): ServerConnection {
       },
       start: async ({ id }) => save({ ...get(id), status: "idle", statusDetail: null }),
       stop: async ({ id }) => save({ ...get(id), status: "stopped" }),
+      logs: async ({ id }) => ({ text: `entry: ${get(id).name}'s machine, in the mock\n` }),
       send: async ({ id, text, attachments }) => {
         reply(
           id,

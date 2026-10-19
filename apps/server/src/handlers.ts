@@ -212,6 +212,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       },
       start: ({ id }) => conductor.start(id),
       stop: ({ id }) => conductor.stop(id),
+      logs: async ({ id, lines }) => ({ text: await conductor.logs(id, lines ?? 200) }),
       send: async ({ id, text, attachments }) => {
         const files = await s.files.attachments(id, attachments);
         await conductor.enqueue(id, "user", text, files);

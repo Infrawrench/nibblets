@@ -174,7 +174,16 @@ describe.skipIf(missing !== null)(title, () => {
 
   // A test that failed, however it failed (a timeout too), with what the server said meanwhile.
   afterEach(async (ctx) => {
-    if (ctx.task.result?.state === "fail") console.log(`The server said:\n${await stack.logs()}`);
+    if (ctx.task.result?.state !== "fail") return;
+    console.log(`The server said:\n${await stack.logs()}`);
+    // And what its machine said: its entry, guard and runner, inside it.
+    if (nibblet) {
+      const machine = await stack.client.nibblets.logs({ id: nibblet.id, lines: 300 }).then(
+        (l) => l.text,
+        (err: unknown) => String(err),
+      );
+      console.log(`Its machine said:\n${machine}`);
+    }
   });
 
   afterAll(async () => {

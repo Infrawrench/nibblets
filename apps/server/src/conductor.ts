@@ -1028,6 +1028,12 @@ export class Conductor {
     this.failActive(nibbletId, "failed", "Lost touch with its container");
   }
 
+  /** The end of what a nibblet's machine said (a sub-agent's, of its run in its host's). */
+  async logs(nibbletId: string, lines: number): Promise<string> {
+    const nibblet = await this.store.getNibblet(nibbletId);
+    return this.machineFor(nibblet).logs(nibbletId, lines);
+  }
+
   /** Pushes new settings to a running nibblet's runner. */
   async reconfigure(nibbletId: string): Promise<void> {
     const link = this.links.get(nibbletId);

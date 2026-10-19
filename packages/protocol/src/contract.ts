@@ -48,6 +48,14 @@ export const contract = {
     delete: procedure(Id, Ok),
     start: procedure(Id, Nibblet),
     stop: procedure(Id, Nibblet),
+    /**
+     * The end of what its machine said: its entry's, guard's and runner's
+     * output, for saying why something in it didn't work.
+     */
+    logs: procedure(
+      z.object({ id: z.string(), lines: z.int().min(1).max(2000).default(200) }),
+      z.object({ text: z.string() }),
+    ),
     /** Sends a message. Queued if the nibblet is mid-turn. */
     /** `attachments` are file ids from `POST /api/nibblets/:id/files`. */
     send: procedure(
