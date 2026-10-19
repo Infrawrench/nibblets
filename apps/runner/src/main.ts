@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { McpServerSpec } from "@nibblet/harness";
 import { GATE_PORT, RunnerEnv } from "@nibblet/protocol";
 import { DesktopApps } from "./apps.ts";
+import { CardFiles } from "./cards.ts";
 import type { Computer } from "./computer.ts";
 import { Connection } from "./connection.ts";
 import { DESKTOP_VIEW_URL, joinDesktop, startDesktop } from "./desktop.ts";
@@ -86,6 +87,18 @@ const desktopReady = env.NIBBLET_DESKTOP_TOKEN
     )
   : Promise.resolve();
 
+// Cards the server gives the agent to spend with; see CardFiles.
+const cards = new CardFiles(join(tmpdir(), "nibblet-cards"));
+async function handleCard(requestId: string, work: () => Promise<string | null>): Promise<void> {
+  try {
+    const path = await work();
+    connection?.send({ type: "card_done", requestId, path, error: null });
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    connection?.send({ type: "card_done", requestId, path: null, error });
+  }
+}
+
 const terminals = new Terminals({
   workdir,
   send: (msg) => connection?.send(msg),
@@ -141,6 +154,15 @@ connection = new Connection({
         return;
       case "apps_scan":
         scanApps();
+        return;
+      case "card_put":
+        void handleCard(msg.requestId, () => cards.put(msg.file));
+        return;
+      case "card_remove":
+        void handleCard(msg.requestId, async () => {
+          await cards.remove(msg.cardId);
+          return null;
+        });
         return;
       default:
         runner.handle(msg);

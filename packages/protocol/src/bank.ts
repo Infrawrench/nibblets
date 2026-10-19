@@ -70,8 +70,11 @@ export type CardKind = z.infer<typeof CardKind>;
 export const CardState = z.enum(["pending", "open", "closing", "closed"]);
 export type CardState = z.infer<typeof CardState>;
 
-/** Who closed a card: the nibblet, the person, or the provider (a single-use card that's been used). */
-export const CardClosedBy = z.enum(["nibblet", "user", "provider"]);
+/**
+ * Who closed a card: the nibblet, the person, the provider (a single-use card
+ * that's been used), or the server (one that never reached its container).
+ */
+export const CardClosedBy = z.enum(["nibblet", "user", "provider", "server"]);
 export type CardClosedBy = z.infer<typeof CardClosedBy>;
 
 /** A card as the API and tools show it: nothing here can be spent with. */
@@ -154,8 +157,23 @@ export const BankProvider = z.object({
 });
 export type BankProvider = z.infer<typeof BankProvider>;
 
-export const BankStatus = z.object({ providers: z.array(BankProvider) });
+export const BankStatus = z.object({
+  providers: z.array(BankProvider),
+  /** Plugins whose settings are there but wrong, with why, so they aren't silently missing. */
+  problems: z.array(z.object({ id: BankProviderId, detail: z.string() })),
+});
 export type BankStatus = z.infer<typeof BankStatus>;
+
+/** Where a nibblet stands against its limit in one asset. */
+export const SpendingAllowance = z.object({
+  limit: SpendingLimit,
+  /** Taken by the cards made this period. */
+  used: MinorAmount,
+  remaining: MinorAmount,
+  /** When the period began. */
+  since: Timestamp,
+});
+export type SpendingAllowance = z.infer<typeof SpendingAllowance>;
 
 /** Parses `12.5` into minor units (`1250` for two decimals). Throws on anything else. */
 export function parseAmount(text: string, decimals: number): bigint {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BankStatus, Card, SpendingAllowance } from "./bank.ts";
 import { CliStatuses, HostTools } from "./mcp.ts";
 import { HarnessId, HarnessModels } from "./models.ts";
 import { ConnectStatus, TailscaleStatus } from "./connect.ts";
@@ -166,6 +167,16 @@ export const contract = {
       OnePasswordGrants,
     ),
   },
+  bank: {
+    /** The bank plugins this server has set up, and what each has left to fund cards from. */
+    status: procedure(z.object({}), BankStatus),
+    /** A nibblet's cards, newest first, open and closed. */
+    cards: procedure(z.object({ nibbletId: z.string() }), z.array(Card)),
+    /** Where it stands against each of its spending limits. */
+    allowances: procedure(z.object({ nibbletId: z.string() }), z.array(SpendingAllowance)),
+    /** Kills a card for good. */
+    kill: procedure(Id, Card),
+  },
   snapshots: {
     /** A nibblet's snapshots, newest first, and where it stands among them. */
     list: procedure(z.object({ nibbletId: z.string() }), SnapshotTimeline),
@@ -205,6 +216,8 @@ export const LiveMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("apps"), nibbletId: z.string(), apps: z.array(DesktopApp) }),
   /** The thread was replaced (a snapshot was restored): drop it and fetch again from the start. */
   z.object({ type: z.literal("thread_reset"), nibbletId: z.string() }),
+  /** One of its cards was made, killed, or spent on. */
+  z.object({ type: z.literal("cards_changed"), nibbletId: z.string() }),
   z.object({
     type: z.literal("snapshots_changed"),
     nibbletId: z.string(),
