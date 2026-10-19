@@ -48,7 +48,6 @@ jobs:
       - name: Build the runner and the server
         if: env.WINDOWS_ISO_URL != ''
         run: |
-          $PSNativeCommandUseErrorActionPreference = $true
           docker build -f docker/runner.Dockerfile -t nibblet/runner:dev .
           docker build -f docker/server.Dockerfile -t nibblet/server:dev .
       - uses: pnpm/action-setup@v4
@@ -176,6 +175,7 @@ jobs:
           docker compose version
       - name: Build the runner and the server
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           docker build -f docker/runner.Dockerfile -t nibblet/runner:dev .
           docker build -f docker/server.Dockerfile -t nibblet/server:dev .
       - uses: pnpm/action-setup@v4

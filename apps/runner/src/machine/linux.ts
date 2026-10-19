@@ -200,8 +200,13 @@ export const linux: GuestPlugin = {
         const handle = await open(path, "r+");
         // A tty turns bytes into lines and echoes them back; this one carries
         // frames. Set while it's open here, since a tty no one has open forgets.
+        // A COM port (Hyper-V's) also goes at its baud rate, 9600 unless it's
+        // told otherwise, so it's told the most a UART does; and a line with
+        // no modem on it mustn't take a missing carrier for a hang-up. A
+        // virtio console (Apple's hvc1) has no speed to set.
         if (!path.startsWith("/dev/virtio-ports/")) {
-          await sh("stty", ["-F", path, "raw", "-echo", "-echoe", "-echok", "-echoctl"]);
+          const uart = path.startsWith("/dev/ttyS") ? ["115200", "clocal", "-crtscts"] : [];
+          await sh("stty", ["-F", path, ...uart, "raw", "-echo", "-echoe", "-echok", "-echoctl"]);
         }
         log(`talking to the host on ${path}`);
         return new DeviceStream(handle);
