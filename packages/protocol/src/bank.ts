@@ -40,8 +40,9 @@ export type SpendingPeriod = z.infer<typeof SpendingPeriod>;
 
 /**
  * How much a nibblet may put on cards in one asset per period (UTC). Every
- * card counts for its whole limit while it's open, and for what was spent on
- * it once it's closed, in the period it was made in.
+ * card counts for its whole limit while it's open, whenever it was made, so
+ * cards left open can't pile up past the limit; once it's closed, it counts
+ * for what was spent on it, in the period it was made in.
  */
 export const SpendingLimit = z.object({
   asset: AssetCode,

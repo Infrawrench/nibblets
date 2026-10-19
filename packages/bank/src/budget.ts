@@ -37,7 +37,7 @@ export function cardCost(card: BudgetCard): bigint {
 
 export interface Allowance {
   limit: SpendingLimit;
-  /** Taken by cards made this period. */
+  /** Taken by cards still open, whenever they were made, and by ones closed that were made this period. */
   used: bigint;
   /** Never below zero. */
   remaining: bigint;
@@ -57,7 +57,8 @@ export function allowance(
   const since = periodStart(limit.period, now);
   let used = 0n;
   for (const card of cards) {
-    if (card.asset === asset && card.createdAt >= since) used += cardCost(card);
+    // An open card could still all be spent now, so it counts whenever it was made.
+    if (card.asset === asset && (card.open || card.createdAt >= since)) used += cardCost(card);
   }
   const cap = BigInt(limit.amount);
   return { limit, used, remaining: used >= cap ? 0n : cap - used, since };

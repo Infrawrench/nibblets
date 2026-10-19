@@ -94,13 +94,24 @@ describe("budgets", () => {
     const cards = [
       card({}),
       card({ open: false, spent: 500n }),
-      // Last month's, and another asset's, don't count.
-      card({ createdAt: new Date("2026-09-30T23:59:59Z") }),
+      // Last month's closed card, and another asset's, don't count.
+      card({ open: false, spent: 900n, createdAt: new Date("2026-09-30T23:59:59Z") }),
       card({ asset: "BTC", limit: 999999n }),
     ];
     const left = allowance(limits, cards, "USD", now);
     expect(left?.used).toBe(2500n);
     expect(left?.remaining).toBe(7500n);
+  });
+
+  it("counts a card left open from an earlier period, so they can't pile up", () => {
+    const daily = [{ asset: "USD", amount: "10000", period: "day" as const }];
+    const yesterday = new Date("2026-10-20T09:00:00Z");
+    const cards = [card({ limit: 10000n, createdAt: yesterday })];
+    expect(allowance(daily, cards, "USD", now)?.remaining).toBe(0n);
+    expect(checkCard(daily, cards, "USD", 1n, now).ok).toBe(false);
+    // Once it's killed, yesterday's spending stays in yesterday.
+    const killed = [card({ limit: 10000n, open: false, spent: 3000n, createdAt: yesterday })];
+    expect(allowance(daily, killed, "USD", now)?.remaining).toBe(10000n);
   });
 
   it("allows a card that fits and refuses one that doesn't", () => {
