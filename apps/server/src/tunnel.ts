@@ -19,8 +19,15 @@ function unixSeconds(timestamp: string): number {
   return Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : 0;
 }
 
+/**
+ * Runs cloudflared next to the server so it can be reached from anywhere.
+ * The tunnel points at `server:8420` on the Docker network, so nothing has
+ * to be published on the host. It keeps checking on the container and brings
+ * it back if it stops or disappears.
+ */
 export class Tunnel {
   private status: TunnelStatus = { mode: "off", state: "off", url: null, detail: null };
+  /** Bumped by each configure() and stop(), so older work and timers know to give up. */
   private generation = 0;
   private stopped = false;
   private applied: string | undefined;
@@ -42,6 +49,7 @@ export class Tunnel {
     return this.status;
   }
 
+  /** The address people should use, preferring the tunnel's. */
   publicUrl(): string {
     return this.status.state === "up" && this.status.url
       ? this.status.url
@@ -62,7 +70,8 @@ export class Tunnel {
     clearTimeout(this.timer);
     this.startingPollMs = STARTING_POLL_MS;
     const applied = JSON.stringify(config);
-    // Reconfiguring a healthy tunnel with the same config must not drop publicUrl() to the local URL.
+    // Reconfiguring a healthy tunnel with the same config keeps its status, so
+    // publicUrl() doesn't drop to the local URL while reconcile re-checks it.
     const unchanged = this.status.state === "up" && applied === this.applied;
     this.applied = applied;
     if (!unchanged) {
@@ -90,6 +99,7 @@ export class Tunnel {
     clearTimeout(this.timer);
   }
 
+  /** Whether work started for this generation is still wanted. */
   private active(generation: number): boolean {
     return !this.stopped && generation === this.generation;
   }
@@ -100,6 +110,7 @@ export class Tunnel {
     return next;
   }
 
+  /** cloudflared's arguments for a config. */
   private command(config: Exclude<TunnelConfig, { mode: "off" }>): string[] {
     return config.mode === "quick"
       ? ["tunnel", "--no-autoupdate", "--url", this.config.NIBBLET_INTERNAL_URL]
@@ -117,6 +128,8 @@ export class Tunnel {
         if (!isNotFound(err)) throw err;
       }
       if (!this.active(generation)) return;
+      // Replace the container only when its config differs, so a server restart
+      // keeps a running tunnel, and a quick tunnel its address.
       if (
         info &&
         (config.mode === "off" ||
@@ -164,6 +177,9 @@ export class Tunnel {
           detail: null,
         };
       } else {
+        // Quick tunnels print their random address to the log once they connect.
+        // It stays valid for as long as the same run of the same container, even
+        // after the line has scrolled out of the log.
         const previous = this.quickUrl;
         const sameRun =
           previous?.container === info.Id && previous.startedAt === info.State.StartedAt;
