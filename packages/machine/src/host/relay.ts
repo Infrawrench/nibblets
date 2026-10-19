@@ -113,8 +113,9 @@ export class GuestRelay {
     socket.onClose(() => {
       if (this.server === socket) this.server = null;
     });
-    // So it hears what's running, whether the agent's new or not.
-    this.toGuest({ type: "hello" });
+    // No hello of its own: the link says one as it opens, and the guest
+    // answers each. A second answer, once the link's started a run, reads
+    // as the port starting afresh, and cuts the run off.
   }
 
   close(): void {
