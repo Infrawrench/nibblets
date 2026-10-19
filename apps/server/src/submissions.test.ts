@@ -105,7 +105,7 @@ describe.skipIf(!url)("durable client submissions", () => {
     ).toHaveLength(1);
   });
 
-  it("serializes simultaneous identical IDs and rejects different raw text or attachment order", async () => {
+  it("serialises simultaneous identical IDs and rejects different raw text or attachment order", async () => {
     const key = randomUUID();
     const receipts = await Promise.all(
       Array.from({ length: 5 }, () => conductor.send(id, "hello", ["a", "b"], key, files)),
@@ -536,7 +536,7 @@ describe.skipIf(!url)("durable client submissions", () => {
     expect(await store.submissionForTurn(id, receipt.turnId)).toMatchObject({ state: "finished" });
   });
 
-  it("rolls back receipt state when terminal marker serialization fails inside its transaction", async () => {
+  it("rolls back receipt state when terminal marker serialisation fails inside its transaction", async () => {
     const key = randomUUID();
     const receipt = await conductor.send(id, "transaction rollback", [], key, files);
     await ready();
@@ -546,7 +546,7 @@ describe.skipIf(!url)("durable client submissions", () => {
       { ...item, status: "completed" as const },
       {
         toJSON() {
-          throw new Error("injected marker serialization failure");
+          throw new Error("injected marker serialisation failure");
         },
       },
     );

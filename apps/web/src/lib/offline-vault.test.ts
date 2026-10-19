@@ -160,7 +160,7 @@ describe("encrypted offline vault", () => {
     await expect(other.unlock(passphrase)).rejects.toThrow();
   });
 
-  it("isolates both principal and origin and serializes concurrent tab updates", async () => {
+  it("isolates both principal and origin and serialises concurrent tab updates", async () => {
     const first = await open();
     await first.create(passphrase);
     const second = await open();

@@ -282,7 +282,7 @@ export function CentralServers({ api, children }: { api: CentralApi; children: R
   if (accessFailure && !(accessFailure instanceof TypeError))
     return (
       <div role="alert" className="m-auto p-6 text-sm text-danger">
-        {accessFailure.message || "Nibblets Connect could not authorize this account."}
+        {accessFailure.message || "Nibblets Connect could not authorise this account."}
       </div>
     );
   return (

@@ -105,7 +105,7 @@ describe("offline query lifetime", () => {
     expect(client.getQueryData(["thread", "local", "chat"])).toBeUndefined();
   });
   it.each([false, true])(
-    "blocks cached child pages when central authorization fails (stale data: %s)",
+    "blocks cached child pages when central authorisation fails (stale data: %s)",
     async (stale) => {
       const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
       if (stale)

@@ -377,7 +377,7 @@ describe("mounted outbox availability", () => {
       await f.close();
     }
   });
-  it("preserves retry permission when a provider rebind aborts awaited send authorization", async () => {
+  it("preserves retry permission when a provider rebind aborts awaited send authorisation", async () => {
     const f = await fixture();
     const info = await f.connection.client.system.info({});
     let entered!: () => void;

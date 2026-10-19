@@ -123,7 +123,7 @@ describe("durable encrypted outbox", () => {
     );
     connection.live.close();
   });
-  it("rejects route changes during asynchronous authorization before transmitting", async () => {
+  it("rejects route changes during asynchronous authorisation before transmitting", async () => {
     let route = "https://host-a.example";
     let authorize!: (token: string) => void;
     const token = new Promise<string>((resolve) => {
@@ -169,7 +169,7 @@ describe("durable encrypted outbox", () => {
     await drainHead(vault, connection, "chat", "idle", () => true, mutate);
     expect(send.mock.calls.map((call) => call[0].clientMessageId)).toEqual(["first", "first"]);
   });
-  it("checks the lock at the fetch boundary after asynchronous authorization", async () => {
+  it("checks the lock at the fetch boundary after asynchronous authorisation", async () => {
     let authorize!: (token: string) => void;
     const token = new Promise<string>((resolve) => {
       authorize = resolve;
@@ -193,7 +193,7 @@ describe("durable encrypted outbox", () => {
     );
     connection.live.close();
   });
-  it("retains ambiguous server errors and pauses authorization errors at the FIFO head", async () => {
+  it("retains ambiguous server errors and pauses authorisation errors at the FIFO head", async () => {
     const connection = await host();
     const send = vi
       .spyOn(connection.client.nibblets, "send")
@@ -311,7 +311,7 @@ describe("durable encrypted outbox", () => {
       detail: "interrupted",
     });
   });
-  it("serializes two tabs and waits for the thread edit lock", async () => {
+  it("serialises two tabs and waits for the thread edit lock", async () => {
     const connection = await host();
     const send = vi.spyOn(connection.client.nibblets, "send").mockResolvedValue({
       ok: true,
