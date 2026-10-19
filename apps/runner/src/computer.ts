@@ -22,7 +22,7 @@
  * Overrides: `OCU_CMD` (default `opencomputeruse`), `OCU_CMD_ARGS` (a JSON
  * array of arguments before its own, for a command that starts it: on
  * Windows, runas into the signed-in session), `OCU_ARGS` (space separated),
- * `OCU_MCP_URL`.
+ * `OCU_MCP_URL`. The first two can be given as `via` instead.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -79,6 +79,21 @@ export interface ComputerOptions {
   args?: string[];
   /** Whether the harness should run OCU over stdio when `serve` doesn't come up, rather than none. */
   stdio?: boolean;
+  /** What starts it, with the arguments before its own, rather than `OCU_CMD` and `OCU_CMD_ARGS`. */
+  via?: OcuCommand;
+}
+
+export interface OcuCommand {
+  command: string;
+  args: readonly string[];
+}
+
+/** What starts OpenComputerUse, from `OCU_CMD` and `OCU_CMD_ARGS`. */
+export function ocuCommand(env: NodeJS.ProcessEnv = process.env): OcuCommand {
+  return {
+    command: env.OCU_CMD ?? "opencomputeruse",
+    args: env.OCU_CMD_ARGS ? z.array(z.string()).parse(JSON.parse(env.OCU_CMD_ARGS)) : [],
+  };
 }
 
 /**
@@ -104,10 +119,7 @@ export async function startComputer(
   opts: ComputerOptions = {},
 ): Promise<Computer | null> {
   const token = opts.token ?? randomBytes(24).toString("base64url");
-  const command = process.env.OCU_CMD ?? "opencomputeruse";
-  const lead = process.env.OCU_CMD_ARGS
-    ? z.array(z.string()).parse(JSON.parse(process.env.OCU_CMD_ARGS))
-    : [];
+  const { command, args: lead } = opts.via ?? ocuCommand();
   const args = [
     ...lead,
     ...(opts.args ?? process.env.OCU_ARGS?.split(" ").filter(Boolean) ?? serveArgs(ports)),
@@ -121,7 +133,7 @@ export async function startComputer(
           mcp: {
             type: "stdio",
             command,
-            args: ["mcp", "--view-listen", `0.0.0.0:${ports.view}`],
+            args: [...lead, "mcp", "--view-listen", `0.0.0.0:${ports.view}`],
             env: { OCU_LINUX_DISPLAY: "wayland", OCU_VIEW_TOKEN: viewToken },
           },
           stop() {},

@@ -262,6 +262,15 @@ if ($have.Trim() -ne $want) {
   }
   # What drives its browser and desktop. There's no build for ARM.
   if ($arch -eq 'x64') {
+    # It needs Visual C++'s runtime, which Windows doesn't come with.
+    Say "Installing Visual C++'s runtime"
+    Get-Download 'https://aka.ms/vs/17/release/vc_redist.x64.exe' "$root\\vc_redist.exe"
+    $signed = Get-AuthenticodeSignature "$root\\vc_redist.exe"
+    if ($signed.Status -ne 'Valid' -or $signed.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') { throw "Visual C++'s runtime wasn't signed by Microsoft" }
+    $redist = Start-Process -FilePath "$root\\vc_redist.exe" -ArgumentList '/install', '/quiet', '/norestart' -Wait -PassThru
+    # 1638: a newer one's there already; 3010: installed, wanting the restart the image gets anyway.
+    if ($redist.ExitCode -notin 0, 1638, 3010) { throw "Installing Visual C++'s runtime failed ($($redist.ExitCode))" }
+    Remove-Item -Force "$root\\vc_redist.exe"
     Say "Downloading OpenComputerUse $($install.ocu)"
     Get-Download "https://github.com/IAmJSD/OpenComputerUse/releases/download/v$($install.ocu)/opencomputeruse-windows-x86_64.exe" "$root\\bin\\opencomputeruse.exe"
   }

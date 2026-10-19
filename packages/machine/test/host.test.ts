@@ -89,6 +89,10 @@ describe("Windows' setup disc", () => {
     );
     expect(boot).toContain("UserDataDir 'C:\\Users\\nibblet\\.browser' String");
     expect(boot).toContain("opencomputeruse-windows-x86_64.exe");
+    // Which needs Visual C++'s runtime, first.
+    expect(boot.indexOf("vc_redist.x64.exe")).toBeLessThan(
+      boot.indexOf("opencomputeruse-windows-x86_64.exe"),
+    );
   });
 
   it("finds itself by its label, and runs setup at specialize", () => {

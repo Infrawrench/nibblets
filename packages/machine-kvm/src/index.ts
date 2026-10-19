@@ -51,8 +51,13 @@ const WINDOWS_DISK_GB = 64;
 const INSTALL_HOURS = 3;
 /** Once it's said something, how long it may go without saying more: it says each step, and says it's still compiling. */
 const INSTALL_QUIET_MINUTES = 15;
-/** How long setup may take to get as far as saying anything: it's ten minutes or so with KVM. */
-const INSTALL_FIRST_WORD_MINUTES = 60;
+/**
+ * How long setup may take to get as far as saying anything while its screen
+ * is dark: it hasn't started from its installer. Once setup's own screens are
+ * up it has the whole install's time, since a slow host can take an hour or
+ * more just to copy Windows.
+ */
+const INSTALL_FIRST_WORD_MINUTES = 30;
 
 const x86 = process.arch !== "arm64";
 
@@ -386,22 +391,18 @@ export class Kvm implements HypervisorPlugin {
     // setup loads, which ignores keys), and never again once setup's own screen
     // is up: Enter there is Cancel, and after a restart it would start setup over.
     const shot = join(job.dir, "boot-screen.ppm");
+    const lit = () =>
+      ask(control.qmp, { execute: "screendump", arguments: { filename: shot } }, z.object({})).then(
+        async () => litFraction(await readFile(shot)) > 0.5,
+        () => false,
+      );
     for (let i = 0; i < 300; i++) {
       await sleep(2000);
-      const lit = await ask(
-        control.qmp,
-        { execute: "screendump", arguments: { filename: shot } },
-        z.object({}),
-      ).then(
-        async () => litFraction(await readFile(shot)),
-        () => 0,
-      );
-      if (lit > 0.5) break;
+      if (await lit()) break;
       await qmp(control.qmp, [
         { execute: "send-key", arguments: { keys: [{ type: "qcode", data: "ret" }] } },
       ]).catch(() => undefined);
     }
-    await rm(shot, { force: true });
     const started = Date.now();
     let last: string | null = null;
     let lastAt = Date.now();
@@ -414,6 +415,8 @@ export class Kvm implements HypervisorPlugin {
           lastAt = Date.now();
         }
         last = now;
+        // Before it says anything, setup's own screen being up is all it says.
+        if (last === null && (await lit())) lastAt = Date.now();
         const quiet =
           Date.now() - lastAt >
           (last === null ? INSTALL_FIRST_WORD_MINUTES : INSTALL_QUIET_MINUTES) * 60_000;
@@ -430,7 +433,7 @@ export class Kvm implements HypervisorPlugin {
         if (quiet) {
           throw new Error(
             last === null
-              ? `Windows' setup said nothing in ${INSTALL_FIRST_WORD_MINUTES} minutes: it may not have started from its installer. Its screen is in ${screen}`
+              ? `Windows' setup said nothing, and showed nothing, in ${INSTALL_FIRST_WORD_MINUTES} minutes: it may not have started from its installer. Its screen is in ${screen}`
               : `Windows' install went quiet for ${INSTALL_QUIET_MINUTES} minutes after it said "${last}". Its screen is in ${screen}`,
           );
         }
@@ -450,7 +453,7 @@ export class Kvm implements HypervisorPlugin {
       }
     } finally {
       if (pid && alive(pid)) process.kill(pid, "SIGKILL");
-      for (const f of [setup, control.qmp, control.pid]) await rm(f, { force: true });
+      for (const f of [setup, shot, control.qmp, control.pid]) await rm(f, { force: true });
     }
   }
 

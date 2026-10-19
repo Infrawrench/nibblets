@@ -16,7 +16,13 @@
  */
 import type { McpServerSpec } from "@nibblet/harness";
 import { DESKTOP_MCP_PORT, DESKTOP_VIEW_PORT } from "@nibblet/protocol";
-import { serveArgs, startComputer, waitForHttp, type Computer } from "./computer.ts";
+import {
+  serveArgs,
+  startComputer,
+  waitForHttp,
+  type Computer,
+  type OcuCommand,
+} from "./computer.ts";
 
 /** Where the runner reaches the desktop's view server, to start apps on it. */
 export const DESKTOP_VIEW_URL = `http://127.0.0.1:${DESKTOP_VIEW_PORT}`;
@@ -38,6 +44,7 @@ export async function startDesktop(
   token: string,
   workdir: string,
   log: (level: "info" | "warn", message: string) => void,
+  via?: OcuCommand,
 ): Promise<Computer | null> {
   const ports = { mcp: DESKTOP_MCP_PORT, view: DESKTOP_VIEW_PORT };
   // No stdio fallback: one in each harness would be no one else's, and a
@@ -48,6 +55,7 @@ export async function startDesktop(
     cwd: workdir,
     args: serveArgs(ports),
     stdio: false,
+    ...(via ? { via } : {}),
   });
 }
 

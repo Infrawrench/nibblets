@@ -148,8 +148,11 @@ async function main(): Promise<void> {
   const token = process.env.NIBBLET_DESKTOP_TOKEN ?? "";
   const joins = platform.ocu !== undefined && token !== "";
   const desktop = joins
-    ? await startDesktop(token, path.join(HOME, "work"), (level, message) =>
-        log(`${level}: ${message}`),
+    ? await startDesktop(
+        token,
+        path.join(HOME, "work"),
+        (level, message) => log(`${level}: ${message}`),
+        platform.ocu,
       )
     : null;
   if (joins && !desktop) log("the desktop didn't start; there are no desktop apps");

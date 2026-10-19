@@ -56,10 +56,12 @@ export class GuestRelay {
         else this.dataFromGuest(frame.frame);
       }
     });
-    const gone = () => {
-      if (this.port === port) this.dropPort();
+    const gone = (err?: Error) => {
+      if (this.port !== port) return;
+      if (!this.closed) this.log(`its agent's port closed${err ? `: ${err.message}` : ""}`);
+      this.dropPort();
     };
-    port.once("close", gone);
+    port.once("close", () => gone());
     port.once("error", gone);
     // Whatever either end thought was open is gone with the last port.
     this.toGuest({ type: "reset" });

@@ -181,6 +181,7 @@ class Hypervisor {
   private async keepConnected(id: string, relay: GuestRelay): Promise<void> {
     const ref = this.ref(id);
     let quiet = 0;
+    let connections = 0;
     for (;;) {
       if (this.relays.get(id) !== relay) return;
       const running = await this.plugin.running(this.ctx, ref).catch(() => null);
@@ -197,6 +198,8 @@ class Hypervisor {
         quiet = 0;
         try {
           const port: Duplex = await this.plugin.connect(this.ctx, ref);
+          // Again is worth saying: the guest drops what the server had open on it.
+          if (connections++ > 0) this.ctx.log(`[${id}] its agent's port connected again`);
           relay.attachPort(port);
         } catch {
           // Not up yet: the hypervisor makes the port as it boots.
