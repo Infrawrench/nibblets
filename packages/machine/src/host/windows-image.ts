@@ -6,7 +6,7 @@ import type { IsoFile } from "./iso.ts";
  * setup reads its answers from a second disc (SETUP_LABEL), which wipes the
  * disk, installs Windows without asking anything, and at `specialize` runs
  * setup.ps1. That puts bootstrap.ps1 on C: and has it run at every startup
- * as SYSTEM: it installs Node and this release's runner (and builds the two
+ * as SYSTEM: it installs Node and this release's runner (and builds its
  * helpers in machine/windows, with .NET Framework's compiler), then runs the guest agent. The first time,
  * while the image is being made, it shuts down instead, which is how the
  * hypervisor plugin knows the image is done.
@@ -240,7 +240,7 @@ if ($have.Trim() -ne $want) {
   # .NET Framework's own compiler, in a process of its own: it can be timed out, and says why it failed.
   $csc = "$env:WINDIR\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe"
   if (-not (Test-Path $csc)) { $csc = "$env:WINDIR\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe" }
-  foreach ($helper in 'runas', 'serial') {
+  foreach ($helper in 'runas', 'serial', 'hvsock') {
     Say "Building its $helper helper"
     $out = "$root\\bin\\nibblet-$helper.exe"
     if (Test-Path $out) { Remove-Item -Force $out }

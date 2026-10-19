@@ -24,7 +24,8 @@ const HVSOCK_RELAY = new URL("./hvsock-relay.py", import.meta.url).pathname;
 
 /**
  * Where its port shows up: a named virtio serial port (KVM), the second
- * virtio console (Apple's, after the console's hvc0), or COM2 (Hyper-V).
+ * virtio console (Apple's, after the console's hvc0), or a serial port. On
+ * Hyper-V it's a Hyper-V socket instead (openPort).
  */
 const PORTS = [`/dev/virtio-ports/${GUEST_PORT_NAME}`, "/dev/hvc1", "/dev/ttyS1"];
 

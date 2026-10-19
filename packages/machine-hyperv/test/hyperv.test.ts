@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -47,7 +47,7 @@ describe("Hyper-V", () => {
     expect(calls[1]?.params).toEqual({ name: `nibblet-${vm.id}`, force: true });
   });
 
-  it("names a VM's agent port as a pipe of its own, and its disks in its folder", async () => {
+  it("gives a VM its disks in its folder, and the agent's Hyper-V socket", async () => {
     const dir = await mkdtemp(join(tmpdir(), "hyperv-"));
     // A VM made before: it boots from the disks it has.
     await writeFile(join(dir, "system.vhdx"), "");
@@ -63,7 +63,7 @@ describe("Hyper-V", () => {
     });
     expect(calls[0]?.params).toMatchObject({
       name: "nibblet-nib_a",
-      agent: "\\\\.\\pipe\\nibblet-nib_a-agent",
+      service: "00004e42-facb-11e6-bd58-64006a7986d3",
       switch: "Default Switch",
       system: join(dir, "system.vhdx"),
       home: join(dir, "home.vhdx"),
@@ -97,24 +97,5 @@ describe("Hyper-V", () => {
       memoryMb: 16384,
     });
     expect(calls[0]?.params).toEqual({ switch: "nibblets" });
-  });
-
-  it("says which guest it is, and registers the agent's Hyper-V socket, as it starts one", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "hyperv-"));
-    await writeFile(join(dir, "system.vhdx"), "");
-    const { ps, calls } = fake([{ ok: true }]);
-    await new HyperV({ powershell: ps }).start(ctx, {
-      id: "nib_c",
-      dir,
-      guest: "linux",
-      cpus: 2,
-      memoryMb: 2048,
-      imageDir: "/no-image",
-      fresh: false,
-    });
-    // How connect knows to use a Hyper-V socket rather than COM2.
-    expect(await readFile(join(dir, "guest"), "utf8")).toBe("linux");
-    expect(calls[0]?.params).toMatchObject({ service: "00004e42-facb-11e6-bd58-64006a7986d3" });
-    await rm(dir, { recursive: true, force: true });
   });
 });

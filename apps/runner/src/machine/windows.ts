@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { HYPERV_AGENT_PORT, hypervServiceId } from "@nibblet/protocol";
 import { withHosts } from "./macos.ts";
 import { entryArgv, relayStream, type GuestPlugin } from "./guest.ts";
 
@@ -10,6 +11,8 @@ const HOME = "C:\\Users\\nibblet";
 const HOME_LABEL = "nibblet-home";
 /** Built by the guest's bootstrap from machine/windows/serial.cs; its stdio is the port. */
 export const SERIAL_RELAY = "C:\\Nibblets\\bin\\nibblet-serial.exe";
+/** And from machine/windows/hvsock.cs, for Hyper-V, whose COM port is slow and lossy. */
+export const HVSOCK_RELAY = "C:\\Nibblets\\bin\\nibblet-hvsock.exe";
 const HOSTS = "C:\\Windows\\System32\\drivers\\etc\\hosts";
 const ENTRY = fileURLToPath(new URL("../entry.ts", import.meta.url));
 
@@ -78,6 +81,14 @@ export const windows: GuestPlugin = {
   },
 
   async openPort(log) {
+    // Hyper-V says so of its VMs; KVM's say QEMU.
+    const system = await ps(
+      '$s = Get-CimInstance Win32_ComputerSystem; "$($s.Manufacturer)|$($s.Model)"',
+    ).catch(() => "");
+    if (system.trim() === "Microsoft Corporation|Virtual Machine") {
+      log("talking to the host on a Hyper-V socket");
+      return relayStream(HVSOCK_RELAY, [hypervServiceId(HYPERV_AGENT_PORT)]);
+    }
     log("talking to the host on COM2");
     return relayStream(SERIAL_RELAY, ["COM2"]);
   },

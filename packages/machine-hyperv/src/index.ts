@@ -1,10 +1,14 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Duplex } from "node:stream";
-import { GuestOs, HYPERV_AGENT_PORT, hypervServiceId, type GuestImage } from "@nibblet/protocol";
 import {
-  connectTo,
+  HYPERV_AGENT_PORT,
+  hypervServiceId,
+  type GuestImage,
+  type GuestOs,
+} from "@nibblet/protocol";
+import {
   linuxDiskFile,
   type HostContext,
   type HypervisorPlugin,
@@ -31,18 +35,19 @@ export const DEFAULT_SWITCH = "Default Switch";
 
 const vmName = (id: string) => `nibblet-${id}`;
 
-/** COM2 is the agent's (the guest's ttyS1); COM1 is the console's. */
-const agentPipe = (id: string) => `\\\\.\\pipe\\nibblet-${id}-agent`;
+/** COM1 is the console's; the agent's is a Hyper-V socket (AGENT_SERVICE). */
 const consolePipe = (id: string) => `\\\\.\\pipe\\nibblet-${id}-console`;
 
 const files = (vm: VmRef) => ({
   system: join(vm.dir, "system.vhdx"),
   home: join(vm.dir, "home.vhdx"),
-  /** Its guest's OS, which says how its agent is reached. */
-  guest: join(vm.dir, "guest"),
 });
 
-/** The agent's Hyper-V socket, as Hyper-V names the service a Linux guest's vsock port is. */
+/**
+ * The agent's Hyper-V socket, for Linux and Windows guests alike: the
+ * service id Hyper-V gives a Linux guest's vsock port, which a Windows
+ * guest listens on by that id. A COM port is slow, and loses what comes in.
+ */
 const AGENT_SERVICE = hypervServiceId(HYPERV_AGENT_PORT);
 
 const DETECT = `
@@ -79,7 +84,6 @@ if (-not $vm) {
   $vm = New-VM -Name $p.name -Generation 2 -MemoryStartupBytes ([int64]$p.memoryMb * 1MB) -NoVHD -Path $p.dir -SwitchName $p.switch
   Set-VM -VM $vm -AutomaticCheckpointsEnabled $false -CheckpointType Disabled -AutomaticStopAction ShutDown -AutomaticStartAction Nothing
   Set-VMComPort -VM $vm -Number 1 -Path $p.console
-  Set-VMComPort -VM $vm -Number 2 -Path $p.agent
 }
 if (-not (Get-VMHardDiskDrive -VM $vm)) {
   Add-VMHardDiskDrive -VM $vm -Path $p.system
@@ -141,9 +145,9 @@ const Ok = z.object({ ok: z.literal(true) });
 /**
  * Hyper-V, on Windows: Linux guests from the runner image, made in VHDX.
  * Its cmdlets need an administrator, or the Hyper-V Administrators group.
- * The agent's port is COM2, as a named pipe Hyper-V serves; it's slower
- * than a virtio port, so the browser's view and snapshots are slower than
- * on other hypervisors.
+ * The agent's port is a Hyper-V socket, which the guest listens on (a
+ * relay in it, Python's for Linux and nibblet-hvsock.exe for Windows), and
+ * the bridge connects to through a helper it builds (hvsock.ts).
  */
 export class HyperV implements HypervisorPlugin {
   readonly id = meta.id;
@@ -183,7 +187,6 @@ export class HyperV implements HypervisorPlugin {
       throw new Error(`There's no image at ${base}`);
     }
     this.states = null;
-    await writeFile(f.guest, vm.guest);
     await psJson(this.ps, Ok, START, {
       name: vmName(vm.id),
       dir: vm.dir,
@@ -197,7 +200,6 @@ export class HyperV implements HypervisorPlugin {
       cpus: vm.cpus,
       memoryMb: vm.memoryMb,
       switch: this.switchName,
-      agent: agentPipe(vm.id),
       console: consolePipe(vm.id),
       service: AGENT_SERVICE,
     });
@@ -232,15 +234,8 @@ export class HyperV implements HypervisorPlugin {
     await psJson(this.ps, Ok, REMOVE, { name: vmName(vm.id) });
   }
 
-  /**
-   * Its agent's port: a Hyper-V socket for Linux, whose COM port loses what
-   * comes in; Windows' COM2, through its relay, otherwise.
-   */
+  /** Its agent's port: a Hyper-V socket, through the helper. */
   async connect(ctx: HostContext, vm: VmRef): Promise<Duplex> {
-    const guest = GuestOs.catch("linux").parse(
-      (await readFile(files(vm).guest, "utf8").catch(() => "")).trim(),
-    );
-    if (guest !== "linux") return connectTo(agentPipe(vm.id));
     const [helper, { id }] = await Promise.all([
       hvsockHelper(join(ctx.dir, "bin")),
       psJson(this.ps, VmId, VM_ID, { name: vmName(vm.id) }),
