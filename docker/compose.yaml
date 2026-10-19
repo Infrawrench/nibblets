@@ -90,7 +90,8 @@ services:
       NIBBLET_HOST_NAME: ${NIBBLET_HOST_NAME:-}
       NIBBLET_HOST_PLATFORM: ${NIBBLET_HOST_PLATFORM:-other}
       NIBBLET_LAN_URLS: ${NIBBLET_LAN_URLS:-}
-      # Banks for nibblets' cards (packages/bank-*); each is off until its settings are set.
+      # Banks for nibblets' cards (packages/bank-*). Set them up in Settings → Bank;
+      # these are only a fallback for a bank with nothing saved there.
       SLASH_API_KEY: ${SLASH_API_KEY:-}
       SLASH_ACCOUNT_ID: ${SLASH_ACCOUNT_ID:-}
       SLASH_BASE_URL: ${SLASH_BASE_URL:-}

@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { bankAssets, draftOf, limitsOf, money } from "./bank.ts";
+import { MASKED, type BankField, type BankKind } from "@nibblet/protocol";
+import {
+  bankAssets,
+  bankDraftChanged,
+  bankDraftOf,
+  bankSettingsOf,
+  draftOf,
+  limitsOf,
+  missingField,
+  money,
+  newPrivateKey,
+} from "./bank.ts";
 
 const usd = { code: "USD", decimals: 2 };
 const btc = { code: "BTC", decimals: 8 };
@@ -43,5 +54,68 @@ describe("bank limits", () => {
   it("formats money", () => {
     expect(money("1250", usd)).toBe("12.50 USD");
     expect(money(100000n, btc)).toBe("0.001 BTC");
+  });
+});
+
+const field = (key: string, more: Partial<BankField> = {}): BankField => ({
+  key,
+  label: key,
+  hint: null,
+  placeholder: null,
+  required: false,
+  secret: false,
+  options: null,
+  generate: null,
+  lockedByCards: false,
+  ...more,
+});
+
+const kind = (settings: Record<string, string>): BankKind => ({
+  id: "fake",
+  name: "Fake",
+  about: "",
+  instrument: "wallet",
+  fields: [field("KEY", { secret: true, required: true }), field("NETWORK", { required: true })],
+  source: Object.keys(settings).length ? "saved" : null,
+  settings,
+  liveCards: 0,
+});
+
+describe("bank settings forms", () => {
+  it("start with what's saved, but never a secret", () => {
+    expect(bankDraftOf(kind({ KEY: MASKED, NETWORK: "signet" }))).toEqual({
+      KEY: "",
+      NETWORK: "signet",
+    });
+    expect(bankDraftOf(kind({}))).toEqual({ KEY: "", NETWORK: "" });
+  });
+
+  it("keep a saved secret that isn't retyped", () => {
+    const saved = kind({ KEY: MASKED, NETWORK: "signet" });
+    expect(bankSettingsOf(saved, { KEY: "", NETWORK: "mainnet" })).toEqual({
+      KEY: MASKED,
+      NETWORK: "mainnet",
+    });
+    expect(bankSettingsOf(saved, { KEY: " new ", NETWORK: "signet" })).toEqual({
+      KEY: "new",
+      NETWORK: "signet",
+    });
+  });
+
+  it("say what's still needed, counting saved secrets as there", () => {
+    expect(missingField(kind({}), { KEY: "k", NETWORK: "" })?.key).toBe("NETWORK");
+    expect(missingField(kind({ KEY: MASKED }), { KEY: "", NETWORK: "signet" })).toBeNull();
+  });
+
+  it("know when something's changed", () => {
+    const saved = kind({ KEY: MASKED, NETWORK: "signet" });
+    expect(bankDraftChanged(saved, { KEY: "", NETWORK: "signet" })).toBe(false);
+    expect(bankDraftChanged(saved, { KEY: "x", NETWORK: "signet" })).toBe(true);
+  });
+
+  it("make 32-byte keys, a new one each time", () => {
+    const key = newPrivateKey();
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    expect(newPrivateKey()).not.toBe(key);
   });
 });

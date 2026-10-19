@@ -24,7 +24,7 @@ import { AppUpdater, HarnessUpdater } from "./updates.ts";
 import { Notifier } from "./notifier.ts";
 import { tailscaleStatus } from "./hostmcp.ts";
 import { Bank } from "./bank.ts";
-import { loadBanks } from "./banks.ts";
+import { Banks } from "./banks.ts";
 
 // The repository's version, which releases are tagged with.
 const VERSION = z
@@ -57,15 +57,15 @@ async function main(): Promise<void> {
   conductor.terminals.onTasks = (nibbletId, tasks) =>
     bus.publish({ type: "tasks", nibbletId, tasks });
   conductor.terminals.onApps = (nibbletId, apps) => bus.publish({ type: "apps", nibbletId, apps });
-  const banks = loadBanks();
   const bank = new Bank({
     store,
-    plugins: banks.plugins,
-    errors: banks.errors,
+    plugins: new Map(),
     files: conductor.cardFiles,
     publish: (message) => bus.publish(message),
     log: (message) => console.warn(`bank: ${message}`),
   });
+  const banks = new Banks({ store, bank, env: process.env });
+  await banks.load();
   conductor.bank = bank;
   const scheduler = new Scheduler(store, conductor);
   const snapshots = new Snapshots({
@@ -115,6 +115,7 @@ async function main(): Promise<void> {
       harnessUpdates,
       appUpdates,
       bank,
+      banks,
     },
     bus,
   );

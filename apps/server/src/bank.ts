@@ -43,6 +43,7 @@ export type BankStore = Pick<
 
 export interface BankDeps {
   store: BankStore;
+  /** The banks set up when it starts; `use` swaps in others. */
   plugins: ReadonlyMap<BankProviderId, BankPlugin>;
   /** Plugins whose settings are there but wrong, with why. */
   errors?: ReadonlyMap<BankProviderId, string>;
@@ -75,29 +76,52 @@ export class Bank {
   private readonly paths = new Map<string, string>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private syncing: Promise<void> | null = null;
+  private plugins: ReadonlyMap<BankProviderId, BankPlugin>;
+  private errors: ReadonlyMap<BankProviderId, string>;
 
   constructor(deps: BankDeps) {
     this.deps = deps;
+    this.plugins = deps.plugins;
+    this.errors = deps.errors ?? new Map();
+  }
+
+  /**
+   * Swaps in the banks as they're set up now. Cards at a bank that's gone
+   * wait, as they are, for it to come back.
+   */
+  use(
+    plugins: ReadonlyMap<BankProviderId, BankPlugin>,
+    errors: ReadonlyMap<BankProviderId, string>,
+  ) {
+    this.plugins = plugins;
+    this.errors = errors;
+    this.deps.publish({ type: "bank_changed" });
   }
 
   /** Whether any bank is set up, so the tools are worth offering. */
   get enabled(): boolean {
-    return this.deps.plugins.size > 0;
+    return this.plugins.size > 0;
   }
 
   /** The banks nibblets can ask for cards from. */
   providers(): { id: string; label: string; asset: AssetInfo }[] {
-    return [...this.deps.plugins.values()].map((p) => ({
+    return [...this.plugins.values()].map((p) => ({
       id: p.id,
       label: p.label,
       asset: p.asset,
     }));
   }
 
-  async status(): Promise<BankStatus> {
+  async status(): Promise<Pick<BankStatus, "providers" | "problems">> {
     const providers = await Promise.all(
-      [...this.deps.plugins.values()].map(async (plugin): Promise<BankProvider> => {
-        const base = { id: plugin.id, label: plugin.label, asset: plugin.asset };
+      [...this.plugins.values()].map(async (plugin): Promise<BankProvider> => {
+        const base = {
+          id: plugin.id,
+          label: plugin.label,
+          asset: plugin.asset,
+          instrument: plugin.instrument,
+          fundAt: plugin.fundAt,
+        };
         try {
           const balance = await plugin.balance();
           return { ...base, state: "ready", detail: null, balance: balance?.toString() ?? null };
@@ -109,7 +133,7 @@ export class Bank {
         }
       }),
     );
-    const problems = [...(this.deps.errors ?? [])].map(([id, detail]) => ({ id, detail }));
+    const problems = [...this.errors].map(([id, detail]) => ({ id, detail }));
     return { providers, problems };
   }
 
@@ -261,7 +285,7 @@ export class Bank {
           "That card is still being made, or checked on. It'll be closed if it was made; try again in a few minutes.",
         );
       }
-      const plugin = this.deps.plugins.get(row.provider);
+      const plugin = this.plugins.get(row.provider);
       if (!plugin) {
         throw new RpcError(
           "unavailable",
@@ -300,7 +324,7 @@ export class Bank {
         // Checked in turn with kills, so a card killed meanwhile isn't written back.
         const row = await this.deps.store.cardRow(id);
         if (row.state !== "open") return;
-        const plugin = this.deps.plugins.get(row.provider);
+        const plugin = this.plugins.get(row.provider);
         if (!plugin) return;
         const details = await plugin.reveal(cardRef(row));
         const path = await this.deps.files.put(nibbletId, {
@@ -346,7 +370,7 @@ export class Bank {
 
   private async syncOnce(): Promise<void> {
     for (const row of await this.deps.store.liveCards()) {
-      const plugin = this.deps.plugins.get(row.provider);
+      const plugin = this.plugins.get(row.provider);
       if (!plugin) continue;
       try {
         await this.serially(row.nibbletId, async () => {
@@ -476,9 +500,9 @@ export class Bank {
   }
 
   private plugin(id: string): BankPlugin {
-    const plugin = this.deps.plugins.get(id);
+    const plugin = this.plugins.get(id);
     if (plugin) return plugin;
-    const known = [...this.deps.plugins.keys()];
+    const known = [...this.plugins.keys()];
     throw new RpcError(
       "bad_request",
       known.length

@@ -1,13 +1,17 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, XCircle } from "lucide-react";
+import { CheckCircle2, Copy, Plus, XCircle } from "lucide-react";
+import type { BankKind, BankProvider } from "@nibblet/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { money } from "../../lib/bank.ts";
 import { keys } from "../../lib/servers.tsx";
+import { Button } from "../ui/Button.tsx";
 import { SectionHeading } from "../ui/Field.tsx";
+import { BankDialog } from "./BankDialog.tsx";
 
 /**
  * The banks nibblets' cards come from: card issuers and crypto treasuries,
- * set up in the server's settings, and what each has left to fund cards with.
+ * set up here, and what each has left to fund cards with.
  */
 export function BankSection({ connection }: { connection: ServerConnection }) {
   const status = useQuery({
@@ -15,53 +19,116 @@ export function BankSection({ connection }: { connection: ServerConnection }) {
     queryFn: () => connection.client.bank.status({}),
     refetchInterval: 60_000,
   });
-  const providers = status.data?.providers ?? [];
-  const problems = status.data?.problems ?? [];
+  /** A bank's id to edit it, null to add one, undefined when the dialog's closed. */
+  const [dialog, setDialog] = useState<string | null | undefined>(undefined);
+  const kinds = status.data?.kinds ?? [];
+  const setUp = kinds.filter((k) => k.source !== null);
+  const addable = kinds.some((k) => k.source === null);
   return (
     <>
-      <SectionHeading>Bank</SectionHeading>
+      <SectionHeading
+        action={
+          addable ? (
+            <Button size="sm" variant="ghost" onClick={() => setDialog(null)}>
+              <Plus />
+              Add a bank
+            </Button>
+          ) : null
+        }
+      >
+        Bank
+      </SectionHeading>
       <p className="text-xs text-faint">
-        {providers.length === 0 && problems.length === 0
-          ? "No bank is set up, so nibblets can't have cards. Add your Slash account (SLASH_API_KEY) or a crypto treasury (BITCOIN_TREASURY_KEY, ETHEREUM_TREASURY_KEY) to the server's .env and restart it."
+        {setUp.length === 0
+          ? "No bank is set up, so nibblets can't have cards. Add a card issuer or a crypto treasury, then give each nibblet a spending limit in its settings."
           : "Nibblets get cards from these, within the spending limit you give each one in its settings."}
       </p>
-      {providers.map((p) => (
-        <div
-          key={p.id}
-          className="flex items-start gap-2.5 rounded-md border border-line bg-surface px-2.5 py-2"
-        >
-          {p.state === "ready" ? (
-            <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-ok" />
-          ) : (
-            <XCircle className="mt-0.5 size-4 shrink-0 text-danger" />
-          )}
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="text-sm font-medium">
-              {p.label}
-              <span className="ml-1.5 font-normal text-dim">{p.asset.code}</span>
-            </span>
-            <span className="text-xs break-all text-dim">
-              {p.state === "error"
-                ? `Can't be reached: ${p.detail ?? "no reason given"}`
-                : p.balance !== null
-                  ? `${money(p.balance, p.asset)} available`
-                  : "Ready"}
-            </span>
-          </div>
-        </div>
+      {setUp.map((kind) => (
+        <BankRow
+          key={kind.id}
+          kind={kind}
+          provider={status.data?.providers.find((p) => p.id === kind.id) ?? null}
+          problem={status.data?.problems.find((p) => p.id === kind.id)?.detail ?? null}
+          onEdit={() => setDialog(kind.id)}
+        />
       ))}
-      {problems.map((p) => (
-        <div
-          key={p.id}
-          className="flex items-start gap-2.5 rounded-md border border-line bg-surface px-2.5 py-2"
-        >
-          <XCircle className="mt-0.5 size-4 shrink-0 text-danger" />
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="text-sm font-medium">{p.id}</span>
-            <span className="text-xs break-all text-dim">Not set up: {p.detail}</span>
-          </div>
-        </div>
-      ))}
+      <BankDialog
+        connection={connection}
+        kinds={kinds}
+        chosen={dialog}
+        onClose={() => setDialog(undefined)}
+      />
     </>
+  );
+}
+
+function BankRow({
+  kind,
+  provider,
+  problem,
+  onEdit,
+}: {
+  kind: BankKind;
+  provider: BankProvider | null;
+  /** Why its settings don't load, if they don't. */
+  problem: string | null;
+  onEdit: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const ready = provider?.state === "ready";
+  const detail = !provider
+    ? `Not set up: ${problem ?? "its settings aren't finished"}`
+    : provider.state === "error"
+      ? `Can't be reached: ${provider.detail ?? "no reason given"}`
+      : provider.balance !== null
+        ? `${money(provider.balance, provider.asset)} available`
+        : "Ready";
+  return (
+    <div className="flex items-start gap-2.5 rounded-md border border-line bg-surface px-2.5 py-2">
+      {ready ? (
+        <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-ok" />
+      ) : (
+        <XCircle className="mt-0.5 size-4 shrink-0 text-danger" />
+      )}
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-sm font-medium">
+          {provider?.label ?? kind.name}
+          {provider ? (
+            <span className="ml-1.5 font-normal text-dim">{provider.asset.code}</span>
+          ) : null}
+        </span>
+        <span className="text-xs break-all text-dim">{detail}</span>
+        {provider?.fundAt ? (
+          <span className="flex items-center gap-1 text-xs text-faint">
+            <span className="shrink-0">Top up at</span>
+            <span className="min-w-0 truncate font-mono text-2xs text-dim" title={provider.fundAt}>
+              {provider.fundAt}
+            </span>
+            <button
+              type="button"
+              title="Copy the address"
+              className="shrink-0 rounded p-0.5 hover:bg-hover hover:text-text [&_svg]:size-3"
+              onClick={() => {
+                const address = provider.fundAt;
+                if (!address) return;
+                void navigator.clipboard.writeText(address).then(() => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                });
+              }}
+            >
+              <Copy />
+            </button>
+            {copied ? <span className="shrink-0">Copied</span> : null}
+          </span>
+        ) : null}
+        {kind.source === "env" ? (
+          <span className="text-2xs text-faint">From the server's environment</span>
+        ) : null}
+      </div>
+      <Button size="sm" onClick={onEdit}>
+        Edit
+      </Button>
+    </div>
   );
 }

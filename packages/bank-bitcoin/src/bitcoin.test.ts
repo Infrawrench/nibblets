@@ -238,23 +238,41 @@ describe("bitcoin", () => {
     await expect(plugin.issue({ ...request, cardId: "card_2" })).rejects.toBeInstanceOf(BankError);
   });
 
+  it("says where to top it up, and checks it can read the treasury", async () => {
+    const { plugin } = setUp();
+    expect(plugin.fundAt).toBe(treasury.address);
+    await expect(plugin.check()).resolves.toBeUndefined();
+    const down = bitcoinPlugin({
+      treasuryKey,
+      network: "regtest",
+      esplora: new Esplora("http://esplora.example:3000/api", async () => {
+        throw new Error("connect ECONNREFUSED");
+      }),
+    });
+    await expect(down.check()).rejects.toThrow(
+      "Couldn't read the treasury from the Esplora API at esplora.example:3000",
+    );
+  });
+
   it("turns on from its settings, and refuses wrong ones", () => {
     const deps = { fetch: globalThis.fetch, log: () => {} };
     const key = hex.encode(treasuryKey);
-    expect(bitcoin.fromEnv({}, deps)).toBeNull();
-    expect(() => bitcoin.fromEnv({ BITCOIN_TREASURY_KEY: key }, deps)).toThrow(/BITCOIN_NETWORK/);
+    expect(bitcoin.fromSettings({}, deps)).toBeNull();
+    expect(() => bitcoin.fromSettings({ BITCOIN_TREASURY_KEY: key }, deps)).toThrow(
+      /Network should be/,
+    );
     expect(
-      bitcoin.fromEnv({ BITCOIN_TREASURY_KEY: key, BITCOIN_NETWORK: "signet" }, deps)?.label,
+      bitcoin.fromSettings({ BITCOIN_TREASURY_KEY: key, BITCOIN_NETWORK: "signet" }, deps)?.label,
     ).toBe("Bitcoin (signet)");
     expect(() =>
-      bitcoin.fromEnv({ BITCOIN_TREASURY_KEY: key, BITCOIN_NETWORK: "regtest" }, deps),
-    ).toThrow(/BITCOIN_ESPLORA_URL/);
+      bitcoin.fromSettings({ BITCOIN_TREASURY_KEY: key, BITCOIN_NETWORK: "regtest" }, deps),
+    ).toThrow(/Esplora API is needed for regtest/);
     expect(() =>
-      bitcoin.fromEnv({ BITCOIN_TREASURY_KEY: "nope", BITCOIN_NETWORK: "mainnet" }, deps),
+      bitcoin.fromSettings({ BITCOIN_TREASURY_KEY: "nope", BITCOIN_NETWORK: "mainnet" }, deps),
     ).toThrow(/isn't a hex or mainnet WIF/);
     const wif = WIF(TEST_NETWORK).encode(treasuryKey);
     expect(
-      bitcoin.fromEnv({ BITCOIN_TREASURY_KEY: wif, BITCOIN_NETWORK: "testnet" }, deps)?.id,
+      bitcoin.fromSettings({ BITCOIN_TREASURY_KEY: wif, BITCOIN_NETWORK: "testnet" }, deps)?.id,
     ).toBe("bitcoin");
   });
 });

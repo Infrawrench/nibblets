@@ -37,7 +37,9 @@ function fakeSlash(opts: { hidePan?: boolean; failCreate?: number } = {}) {
     const url = new URL(String(input));
     const method = init?.method ?? "GET";
     const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : null;
-    calls.push({ method, url, key: new Headers(init?.headers).get("x-api-key"), body });
+    const key = new Headers(init?.headers).get("x-api-key");
+    calls.push({ method, url, key, body });
+    if (key === "wrong") return reply(401, { message: "Invalid API key" });
     const path = url.pathname;
     if (method === "POST" && path === "/card") {
       if (opts.failCreate) return reply(opts.failCreate, { message: "Account is frozen" });
@@ -203,12 +205,31 @@ describe("slash", () => {
     expect(await slashPlugin({ apiKey: "k" }, fakeSlash()).balance()).toBeNull();
   });
 
+  it("checks its key with Slash before it's saved", async () => {
+    await expect(slashPlugin({ apiKey: "k" }, fakeSlash()).check()).resolves.toBeUndefined();
+    await expect(
+      slashPlugin({ apiKey: "k", accountId: "acc_1" }, fakeSlash()).check(),
+    ).resolves.toBeUndefined();
+    const refused = slashPlugin({ apiKey: "wrong" }, fakeSlash()).check();
+    await expect(refused).rejects.toBeInstanceOf(BankError);
+    await expect(refused).rejects.toThrow("Slash: Invalid API key");
+    const down = slashPlugin(
+      { apiKey: "k" },
+      {
+        fetch: async () => {
+          throw new Error("fetch failed");
+        },
+      },
+    );
+    await expect(down.check()).rejects.toThrow("Couldn't reach Slash: fetch failed");
+  });
+
   it("turns on from its settings, and only then", () => {
     const deps = { fetch: globalThis.fetch, log: () => {} };
-    expect(slash.fromEnv({}, deps)).toBeNull();
-    expect(slash.fromEnv({ SLASH_API_KEY: "k" }, deps)?.label).toBe("Slash");
+    expect(slash.fromSettings({}, deps)).toBeNull();
+    expect(slash.fromSettings({ SLASH_API_KEY: "k" }, deps)?.label).toBe("Slash");
     expect(() =>
-      slash.fromEnv({ SLASH_API_KEY: "k", SLASH_BASE_URL: "http://plain.example" }, deps),
+      slash.fromSettings({ SLASH_API_KEY: "k", SLASH_BASE_URL: "http://plain.example" }, deps),
     ).toThrow(/https/);
   });
 });

@@ -1,4 +1,13 @@
-import type { AssetInfo, BankProviderId, CardKind, CardSecret } from "@nibblet/protocol";
+import {
+  MASKED,
+  type AssetInfo,
+  type BankField,
+  type BankInstrument,
+  type BankProviderId,
+  type BankSettings,
+  type CardKind,
+  type CardSecret,
+} from "@nibblet/protocol";
 
 export * from "./budget.ts";
 export * from "./keys.ts";
@@ -17,6 +26,15 @@ export interface BankPlugin {
   readonly label: string;
   /** The one asset its cards are in. */
   readonly asset: AssetInfo;
+  /** What its cards are, for how they're shown. */
+  readonly instrument: BankInstrument;
+  /** Where to send money to top it up (a treasury's address), or null for an account topped up elsewhere. */
+  readonly fundAt: string | null;
+  /**
+   * Asks the provider something harmless, to see that its settings work
+   * before they're saved. Throws a `BankError` saying what's wrong.
+   */
+  check(): Promise<void>;
   /** What's left to fund cards from, if the provider says; throws when it can't be reached. */
   balance(): Promise<bigint | null>;
   /**
@@ -106,8 +124,11 @@ export function defineBankPlugin(plugin: BankPlugin): BankPlugin {
   return plugin;
 }
 
-/** What a plugin reads its settings from: the server's environment. */
-export type BankEnv = Readonly<Record<string, string | undefined>>;
+/**
+ * A plugin's settings by field key: saved in Settings, or read from the
+ * server's environment, whose variables have the same names.
+ */
+export type BankSettingValues = Readonly<Record<string, string | undefined>>;
 
 export interface BankDeps {
   fetch: typeof globalThis.fetch;
@@ -116,18 +137,45 @@ export interface BankDeps {
 
 /**
  * How the server loads a plugin: from its settings, or not at all (null)
- * when they aren't there. Settings that are there but wrong throw, so a
- * typo doesn't quietly turn a bank off.
+ * when they aren't there. Settings that are there but wrong throw, with a
+ * message fit to show under the form, so a typo doesn't quietly turn a bank
+ * off.
  */
 export interface BankPluginFactory {
   readonly id: BankProviderId;
-  /** The variables it reads, for docs and errors. */
-  readonly env: readonly string[];
-  fromEnv(env: BankEnv, deps: BankDeps): BankPlugin | null;
+  /** What it's called before it's set up, e.g. "Bitcoin". */
+  readonly name: string;
+  /** A line on what it is, for choosing one to set up. */
+  readonly about: string;
+  /** What its cards are, for how they're shown. */
+  readonly instrument: BankInstrument;
+  /** What it needs, in the order the form asks for them. */
+  readonly fields: readonly BankField[];
+  fromSettings(settings: BankSettingValues, deps: BankDeps): BankPlugin | null;
 }
 
 export function defineBankFactory(factory: BankPluginFactory): BankPluginFactory {
   return factory;
+}
+
+/** A field for a plugin's form; plain, optional text unless `more` says otherwise. */
+export function defineField(
+  key: string,
+  label: string,
+  more: Partial<Omit<BankField, "key" | "label">> = {},
+): BankField {
+  return {
+    key,
+    label,
+    hint: null,
+    placeholder: null,
+    required: false,
+    secret: false,
+    options: null,
+    generate: null,
+    lockedByCards: false,
+    ...more,
+  };
 }
 
 export interface LoadedBanks {
@@ -139,7 +187,7 @@ export interface LoadedBanks {
 /** Loads every factory whose settings are present. */
 export function loadBankPlugins(
   factories: readonly BankPluginFactory[],
-  env: BankEnv,
+  settings: ReadonlyMap<BankProviderId, BankSettingValues>,
   deps: BankDeps,
 ): LoadedBanks {
   const plugins = new Map<BankProviderId, BankPlugin>();
@@ -149,7 +197,7 @@ export function loadBankPlugins(
     if (seen.has(factory.id)) throw new Error(`Two bank plugins are called ${factory.id}`);
     seen.add(factory.id);
     try {
-      const plugin = factory.fromEnv(env, deps);
+      const plugin = factory.fromSettings(settings.get(factory.id) ?? {}, deps);
       if (!plugin) continue;
       if (plugin.id !== factory.id) {
         throw new Error(`it calls itself ${plugin.id}, not ${factory.id}`);
@@ -162,11 +210,76 @@ export function loadBankPlugins(
   return { plugins, errors };
 }
 
-/** Reads a required setting, or says which one is missing. */
-export function requireEnv(env: BankEnv, name: string): string {
-  const value = env[name]?.trim();
-  if (!value) throw new Error(`${name} isn't set`);
+export interface ResolvedSettings {
+  source: "saved" | "env" | null;
+  settings: BankSettings;
+}
+
+/**
+ * A plugin's settings and where they're from: the ones saved in Settings if
+ * there are any, or else whichever of its fields the environment sets.
+ */
+export function resolveSettings(
+  factory: BankPluginFactory,
+  saved: BankSettings | undefined,
+  env: BankSettingValues,
+): ResolvedSettings {
+  if (saved) return { source: "saved", settings: saved };
+  const settings: BankSettings = {};
+  for (const field of factory.fields) {
+    const value = env[field.key]?.trim();
+    if (value) settings[field.key] = value;
+  }
+  return { source: Object.keys(settings).length > 0 ? "env" : null, settings };
+}
+
+/**
+ * What a form sent, over what's there: a secret sent as `MASKED` keeps the
+ * one it has, blanks are left out, and keys that aren't fields are dropped.
+ */
+export function mergeSettings(
+  fields: readonly BankField[],
+  input: BankSettings,
+  current: BankSettings,
+): BankSettings {
+  const merged: BankSettings = {};
+  for (const field of fields) {
+    const sent = input[field.key]?.trim() ?? "";
+    const value = field.secret && sent === MASKED ? (current[field.key] ?? "") : sent;
+    if (value) merged[field.key] = value;
+  }
+  return merged;
+}
+
+/** Settings fit for the API: each secret that's set shown as `MASKED`. */
+export function maskSettings(fields: readonly BankField[], settings: BankSettings): BankSettings {
+  const masked: BankSettings = {};
+  for (const field of fields) {
+    const value = settings[field.key];
+    if (value) masked[field.key] = field.secret ? MASKED : value;
+  }
+  return masked;
+}
+
+/** The fields that can't change while there are cards, which `next` changes from `current`. */
+export function changedLockedFields(
+  fields: readonly BankField[],
+  current: BankSettings,
+  next: BankSettings,
+): BankField[] {
+  return fields.filter((f) => f.lockedByCards && (current[f.key] ?? "") !== (next[f.key] ?? ""));
+}
+
+/** Reads a required setting, or says it's needed. */
+export function requireSetting(settings: BankSettingValues, field: BankField): string {
+  const value = settings[field.key]?.trim();
+  if (!value) throw new Error(`${field.label} is needed`);
   return value;
+}
+
+/** An optional setting, trimmed; undefined when it's blank. */
+export function optionalSetting(settings: BankSettingValues, field: BankField): string | undefined {
+  return settings[field.key]?.trim() || undefined;
 }
 
 /** `•••• 4242`. */

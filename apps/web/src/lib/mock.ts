@@ -11,6 +11,10 @@ import {
   mergeMcpServers,
   tailnetHostname,
   randomHamsterLook,
+  type BankField,
+  type BankKind,
+  type BankProvider,
+  type BankSettings,
   type Card,
   type Contract,
   type OnePasswordGrants,
@@ -272,6 +276,181 @@ export function createMockServer(): ServerConnection {
 
   const usd = { code: "USD", decimals: 2 };
   const btc = { code: "BTC", decimals: 8 };
+
+  // The banks, with the forms their plugins describe on a real server
+  // (`packages/bank-*`). Slash and Bitcoin start set up.
+  const field = (key: string, label: string, more: Partial<BankField> = {}): BankField => ({
+    key,
+    label,
+    hint: null,
+    placeholder: null,
+    required: false,
+    secret: false,
+    options: null,
+    generate: null,
+    lockedByCards: false,
+    ...more,
+  });
+  const treasuryHint =
+    "The private key of the wallet cards are funded from. Make a new one and keep a copy somewhere safe: it's the only way to the treasury's coins.";
+  const bankKinds: Omit<BankKind, "source" | "settings" | "liveCards">[] = [
+    {
+      id: "slash",
+      name: "Slash",
+      about: "Virtual cards in US dollars, on your Slash business account.",
+      instrument: "card",
+      fields: [
+        field("SLASH_API_KEY", "API key", {
+          required: true,
+          secret: true,
+          hint: "Make one in Slash's dashboard, with the cards.view and cards.manage permissions.",
+        }),
+        field("SLASH_ACCOUNT_ID", "Account ID", {
+          hint: "The account cards are made under, and whose balance shows here. Slash picks your first commercial account if it's blank.",
+        }),
+        field("SLASH_BASE_URL", "API URL", {
+          placeholder: "https://api.joinslash.com",
+          hint: "Only to point at another Slash API, such as a sandbox.",
+        }),
+      ],
+    },
+    {
+      id: "bitcoin",
+      name: "Bitcoin",
+      about: "A treasury wallet that funds a fresh wallet for each card, with exactly its limit.",
+      instrument: "wallet",
+      fields: [
+        field("BITCOIN_NETWORK", "Network", {
+          required: true,
+          lockedByCards: true,
+          options: [
+            { value: "mainnet", label: "Mainnet" },
+            { value: "testnet", label: "Testnet4" },
+            { value: "signet", label: "Signet" },
+            { value: "regtest", label: "Regtest" },
+          ],
+          hint: "Try it on signet first: its coins are free.",
+        }),
+        field("BITCOIN_TREASURY_KEY", "Treasury key", {
+          required: true,
+          secret: true,
+          generate: "private_key",
+          lockedByCards: true,
+          placeholder: "Hex or WIF",
+          hint: treasuryHint,
+        }),
+        field("BITCOIN_ESPLORA_URL", "Esplora API", {
+          placeholder: "mempool.space's",
+          hint: "Where the chain is read and transactions are sent. Needed for regtest.",
+        }),
+        field("BITCOIN_FEE_RATE", "Fee rate", {
+          placeholder: "Esplora's estimate",
+          hint: "In sat/vB.",
+        }),
+      ],
+    },
+    {
+      id: "ethereum",
+      name: "Ethereum",
+      about:
+        "A treasury account on Ethereum or another EVM chain, funding a fresh account for each card.",
+      instrument: "wallet",
+      fields: [
+        field("ETHEREUM_TREASURY_KEY", "Treasury key", {
+          required: true,
+          secret: true,
+          generate: "private_key",
+          lockedByCards: true,
+          placeholder: "0x…",
+          hint: treasuryHint.replace("wallet", "account"),
+        }),
+        field("ETHEREUM_RPC_URL", "RPC URL", {
+          required: true,
+          secret: true,
+          placeholder: "https://…",
+          hint: "A JSON-RPC endpoint for the chain. Kept secret, since many carry an API key.",
+        }),
+        field("ETHEREUM_CHAIN_ID", "Chain ID", {
+          lockedByCards: true,
+          placeholder: "Any",
+          hint: "Checked against the RPC before anything is sent: 1 for mainnet, 11155111 for Sepolia.",
+        }),
+        field("ETHEREUM_ASSET", "Coin", {
+          lockedByCards: true,
+          placeholder: "ETH",
+          hint: "The chain's own coin, for another EVM chain: POL for Polygon, say.",
+        }),
+      ],
+    },
+  ];
+  const bankSettings = new Map<string, BankSettings>([
+    ["slash", { SLASH_API_KEY: "mock-slash-key", SLASH_ACCOUNT_ID: "acc_8f3k2m" }],
+    ["bitcoin", { BITCOIN_NETWORK: "signet", BITCOIN_TREASURY_KEY: "mock-treasury-key" }],
+  ]);
+  /** Treasuries start with what's in them; a freshly set-up one is empty. */
+  const bankBalances = new Map([
+    ["slash", "248650"],
+    ["bitcoin", "4180000"],
+  ]);
+  const bankProvider = (id: string, settings: BankSettings): BankProvider => {
+    const base = { state: "ready" as const, detail: null };
+    if (id === "slash") {
+      return {
+        ...base,
+        id,
+        label: "Slash",
+        asset: usd,
+        instrument: "card",
+        balance: settings.SLASH_ACCOUNT_ID ? (bankBalances.get(id) ?? "0") : null,
+        fundAt: null,
+      };
+    }
+    if (id === "bitcoin") {
+      const network = settings.BITCOIN_NETWORK ?? "signet";
+      return {
+        ...base,
+        id,
+        label: network === "mainnet" ? "Bitcoin" : `Bitcoin (${network})`,
+        asset: btc,
+        instrument: "wallet",
+        balance: bankBalances.get(id) ?? "0",
+        fundAt:
+          network === "mainnet"
+            ? "bc1q7cyrfmck2ffu2ud3rn5l5a8yv6f0chkp0zpemf"
+            : "tb1q7cyrfmck2ffu2ud3rn5l5a8yv6f0chkp9ydvzd",
+      };
+    }
+    const asset = settings.ETHEREUM_ASSET ?? "ETH";
+    return {
+      ...base,
+      id,
+      label: asset === "ETH" ? "Ethereum" : `Ethereum (${asset})`,
+      asset: { code: asset, decimals: 18 },
+      instrument: "wallet",
+      balance: bankBalances.get(id) ?? "0",
+      fundAt: "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+    };
+  };
+  const liveCardsAt = (id: string) =>
+    cards.filter((c) => c.provider === id && c.state !== "closed").length;
+  const bankStatus = () => ({
+    providers: [...bankSettings].map(([id, settings]) => bankProvider(id, settings)),
+    problems: [],
+    kinds: bankKinds.map((kind) => {
+      const settings = bankSettings.get(kind.id);
+      return {
+        ...kind,
+        source: settings ? ("saved" as const) : null,
+        settings: Object.fromEntries(
+          Object.entries(settings ?? {}).map(([key, value]) => [
+            key,
+            kind.fields.find((f) => f.key === key)?.secret ? MASKED : value,
+          ]),
+        ),
+        liveCards: liveCardsAt(kind.id),
+      };
+    }),
+  });
   const cards: Card[] = [
     {
       id: "card_flights",
@@ -1023,34 +1202,14 @@ export function createMockServer(): ServerConnection {
       },
     },
     bank: {
-      status: async () => ({
-        providers: [
-          {
-            id: "slash",
-            label: "Slash",
-            asset: usd,
-            state: "ready",
-            detail: null,
-            balance: "248650",
-          },
-          {
-            id: "bitcoin",
-            label: "Bitcoin (signet)",
-            asset: btc,
-            state: "ready",
-            detail: null,
-            balance: "4180000",
-          },
-        ],
-        problems: [],
-      }),
+      status: async () => bankStatus(),
       cards: async ({ nibbletId }) => cards.filter((c) => c.nibbletId === nibbletId),
       allowances: async ({ nibbletId }) => {
         const n = nibblets.get(nibbletId);
         return (n?.spendingLimits ?? []).map((limit) => {
           const used = cards
             .filter((c) => c.nibbletId === nibbletId && c.asset.code === limit.asset)
-            .reduce((sum, c) => sum + BigInt(c.state === "open" ? c.limit : c.spent), 0n);
+            .reduce((sum, c) => sum + BigInt(c.state === "closed" ? c.spent : c.limit), 0n);
           const cap = BigInt(limit.amount);
           return {
             limit,
@@ -1068,6 +1227,58 @@ export function createMockServer(): ServerConnection {
         cards[i] = killed;
         push({ type: "cards_changed", nibbletId: card.nibbletId });
         return killed;
+      },
+      // Checked as a real server would, with the provider faked: Slash
+      // refuses the key `wrong`.
+      configure: async ({ id, settings: input }) => {
+        const kind = bankKinds.find((k) => k.id === id);
+        if (!kind) throw new RpcError("not_found", `No bank called ${id}`);
+        const current = bankSettings.get(id) ?? {};
+        const next: BankSettings = {};
+        for (const f of kind.fields) {
+          const sent = input[f.key]?.trim() ?? "";
+          const value = f.secret && sent === MASKED ? (current[f.key] ?? "") : sent;
+          if (value) next[f.key] = value;
+        }
+        const missing = kind.fields.find((f) => f.required && !next[f.key]);
+        if (missing) throw new RpcError("bad_request", `${missing.label} is needed`);
+        const locked = kind.fields.filter(
+          (f) => f.lockedByCards && (current[f.key] ?? "") !== (next[f.key] ?? ""),
+        );
+        if (locked.length > 0 && liveCardsAt(id) > 0) {
+          throw new RpcError(
+            "conflict",
+            `${locked.map((f) => f.label).join(" and ")} can't change while ${kind.name} has cards that aren't closed: kill them first.`,
+          );
+        }
+        await pause(900);
+        if (next.SLASH_API_KEY === "wrong")
+          throw new RpcError("bad_request", "Slash: Invalid API key");
+        const key = next.BITCOIN_TREASURY_KEY ?? next.ETHEREUM_TREASURY_KEY;
+        if (key && key !== (current.BITCOIN_TREASURY_KEY ?? current.ETHEREUM_TREASURY_KEY)) {
+          if (!/^(0x)?[0-9a-f]{64}$/i.test(key)) {
+            throw new RpcError("bad_request", "Treasury key isn't a hex private key");
+          }
+          // A new treasury starts empty.
+          bankBalances.delete(id);
+        }
+        bankSettings.set(id, next);
+        push({ type: "bank_changed" });
+        return bankStatus();
+      },
+      remove: async ({ id }) => {
+        const kind = bankKinds.find((k) => k.id === id);
+        if (!kind) throw new RpcError("not_found", `No bank called ${id}`);
+        const live = liveCardsAt(id);
+        if (live > 0) {
+          throw new RpcError(
+            "conflict",
+            `${kind.name} has ${live === 1 ? "a card that isn't closed" : `${live} cards that aren't closed`}, and closing them needs it: kill them first.`,
+          );
+        }
+        bankSettings.delete(id);
+        push({ type: "bank_changed" });
+        return bankStatus();
       },
     },
     snapshots: {

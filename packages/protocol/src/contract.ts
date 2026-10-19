@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BankStatus, Card, SpendingAllowance } from "./bank.ts";
+import { BankProviderId, BankSettings, BankStatus, Card, SpendingAllowance } from "./bank.ts";
 import { CliStatuses, HostTools } from "./mcp.ts";
 import { HarnessId, HarnessModels } from "./models.ts";
 import { ConnectStatus, TailscaleStatus } from "./connect.ts";
@@ -176,6 +176,13 @@ export const contract = {
     allowances: procedure(z.object({ nibbletId: z.string() }), z.array(SpendingAllowance)),
     /** Kills a card for good. */
     kill: procedure(Id, Card),
+    /**
+     * Sets a bank up, or changes its settings, once its provider answers to
+     * them. A secret given as `MASKED` keeps the one it has.
+     */
+    configure: procedure(z.object({ id: BankProviderId, settings: BankSettings }), BankStatus),
+    /** Forgets a bank's saved settings. Refused while it has cards that aren't closed. */
+    remove: procedure(z.object({ id: BankProviderId }), BankStatus),
   },
   snapshots: {
     /** A nibblet's snapshots, newest first, and where it stands among them. */
@@ -218,6 +225,8 @@ export const LiveMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("thread_reset"), nibbletId: z.string() }),
   /** One of its cards was made, killed, or spent on. */
   z.object({ type: z.literal("cards_changed"), nibbletId: z.string() }),
+  /** A bank was set up, changed, or removed. */
+  z.object({ type: z.literal("bank_changed") }),
   z.object({
     type: z.literal("snapshots_changed"),
     nibbletId: z.string(),

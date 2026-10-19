@@ -118,6 +118,9 @@ class FakeIssuer {
       id: "fake",
       label: "Fake issuer",
       asset: { code: "USD", decimals: 2 },
+      instrument: "card",
+      fundAt: null,
+      check: async () => {},
       balance: async () => 100_000n,
       issue: async (request) => {
         if (this.refuseNext) throw new BankError("the account is frozen");
@@ -444,7 +447,7 @@ describe("Bank", () => {
     const broken = new Bank({
       store,
       plugins: new Map([["fake", issuer.plugin()]]),
-      errors: new Map([["slash", "SLASH_API_KEY isn't set"]]),
+      errors: new Map([["slash", "API key is needed"]]),
       files: { put: async () => "", remove: async () => {} },
       publish: () => {},
       log: () => {},
@@ -455,12 +458,30 @@ describe("Bank", () => {
           id: "fake",
           label: "Fake issuer",
           asset: { code: "USD", decimals: 2 },
+          instrument: "card",
           state: "ready",
           detail: null,
           balance: "100000",
+          fundAt: null,
         },
       ],
-      problems: [{ id: "slash", detail: "SLASH_API_KEY isn't set" }],
+      problems: [{ id: "slash", detail: "API key is needed" }],
     });
+  });
+
+  it("takes banks set up while it runs, and says so", async () => {
+    const published: LiveMessage[] = [];
+    const later = new Bank({
+      store,
+      plugins: new Map(),
+      files: { put: async () => "", remove: async () => {} },
+      publish: (m) => published.push(m),
+      log: () => {},
+    });
+    expect(later.enabled).toBe(false);
+    later.use(new Map([["fake", issuer.plugin()]]), new Map());
+    expect(later.enabled).toBe(true);
+    expect(later.providers().map((p) => p.id)).toEqual(["fake"]);
+    expect(published).toEqual([{ type: "bank_changed" }]);
   });
 });

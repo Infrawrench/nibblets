@@ -2,11 +2,13 @@ import {
   BankError,
   defineBankFactory,
   defineBankPlugin,
+  defineField,
   maskedCard,
-  requireEnv,
+  optionalSetting,
+  requireSetting,
   type BankDeps,
-  type BankEnv,
   type BankPlugin,
+  type BankSettingValues,
   type CardRef,
   type CardUsage,
 } from "@nibblet/bank";
@@ -21,10 +23,10 @@ import { z } from "zod";
  * resets) of the card's limit, so Slash declines anything over it whatever
  * the server thinks.
  *
- * Settings: `SLASH_API_KEY` (with the cards.view and cards.manage
- * permissions), and optionally `SLASH_ACCOUNT_ID` (the account cards are
- * made under, and whose balance Settings shows; Slash picks the first
- * commercial account otherwise) and `SLASH_BASE_URL`.
+ * Settings (see `fields`): an API key with the cards.view and cards.manage
+ * permissions, and optionally the account cards are made under, and whose
+ * balance Settings shows (Slash picks the first commercial account
+ * otherwise), and another API URL.
  */
 
 export const SLASH_API = "https://api.joinslash.com";
@@ -155,6 +157,14 @@ export function slashPlugin(options: SlashOptions, deps: Pick<BankDeps, "fetch">
     return { open: state.status !== "closed", spent, used: spent > 0n };
   }
 
+  async function balance(): Promise<bigint | null> {
+    if (!options.accountId) return null;
+    const { balances } = Balances.parse(
+      await call("GET", `/account/${encodeURIComponent(options.accountId)}/balance`),
+    );
+    return balances.reduce((sum, b) => sum + BigInt(Math.round(b.available.amountCents)), 0n);
+  }
+
   const closeAt = (id: string) =>
     call("PATCH", `/card/${encodeURIComponent(id)}`, { status: "closed" });
 
@@ -162,14 +172,22 @@ export function slashPlugin(options: SlashOptions, deps: Pick<BankDeps, "fetch">
     id: "slash",
     label: "Slash",
     asset: { code: "USD", decimals: 2 },
+    instrument: "card",
+    fundAt: null,
 
-    async balance() {
-      if (!options.accountId) return null;
-      const { balances } = Balances.parse(
-        await call("GET", `/account/${encodeURIComponent(options.accountId)}/balance`),
-      );
-      return balances.reduce((sum, b) => sum + BigInt(Math.round(b.available.amountCents)), 0n);
+    async check() {
+      try {
+        if (options.accountId) await balance();
+        else CardList.parse(await call("GET", "/card?sort=createdAt&sortDirection=DESC"));
+      } catch (err) {
+        if (err instanceof BankError) throw err;
+        throw new BankError(
+          `Couldn't reach Slash: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     },
+
+    balance,
 
     async issue(request) {
       const made = SlashCard.parse(
@@ -242,19 +260,35 @@ export function slashPlugin(options: SlashOptions, deps: Pick<BankDeps, "fetch">
   });
 }
 
+const API_KEY = defineField("SLASH_API_KEY", "API key", {
+  required: true,
+  secret: true,
+  hint: "Make one in Slash's dashboard, with the cards.view and cards.manage permissions.",
+});
+const ACCOUNT_ID = defineField("SLASH_ACCOUNT_ID", "Account ID", {
+  hint: "The account cards are made under, and whose balance shows here. Slash picks your first commercial account if it's blank.",
+});
+const BASE_URL = defineField("SLASH_BASE_URL", "API URL", {
+  placeholder: SLASH_API,
+  hint: "Only to point at another Slash API, such as a sandbox.",
+});
+
 export const slash = defineBankFactory({
   id: "slash",
-  env: ["SLASH_API_KEY", "SLASH_ACCOUNT_ID", "SLASH_BASE_URL"],
-  fromEnv(env: BankEnv, deps: BankDeps) {
-    if (!env.SLASH_API_KEY?.trim()) return null;
-    const baseUrl = env.SLASH_BASE_URL?.trim();
+  name: "Slash",
+  about: "Virtual cards in US dollars, on your Slash business account.",
+  instrument: "card",
+  fields: [API_KEY, ACCOUNT_ID, BASE_URL],
+  fromSettings(settings: BankSettingValues, deps: BankDeps) {
+    if (!optionalSetting(settings, API_KEY)) return null;
+    const baseUrl = optionalSetting(settings, BASE_URL);
     if (baseUrl && !/^https:\/\//.test(baseUrl)) {
-      throw new Error("SLASH_BASE_URL should be an https URL");
+      throw new Error(`${BASE_URL.label} should be an https URL`);
     }
-    const accountId = env.SLASH_ACCOUNT_ID?.trim();
+    const accountId = optionalSetting(settings, ACCOUNT_ID);
     return slashPlugin(
       {
-        apiKey: requireEnv(env, "SLASH_API_KEY"),
+        apiKey: requireSetting(settings, API_KEY),
         ...(accountId ? { accountId } : {}),
         ...(baseUrl ? { baseUrl } : {}),
       },

@@ -2,7 +2,7 @@ import type { InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "rea
 import { cn } from "../../lib/cn.ts";
 
 const fieldClass =
-  "w-full rounded-md border border-edge bg-field px-2 text-sm text-text placeholder:text-faint focus:border-accent focus:outline-none";
+  "w-full rounded-md border border-edge bg-field px-2 text-sm text-text placeholder:text-faint focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-50";
 
 export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return <input className={cn(fieldClass, "h-7", className)} {...props} />;
@@ -22,16 +22,19 @@ export function Select({
   options,
   value,
   onChange,
+  disabled,
 }: {
   className?: string;
   options: readonly { value: string; label: string }[];
   value: string;
   onChange: (value: string) => void;
+  disabled?: boolean;
 }) {
   return (
     <select
       className={cn(fieldClass, "h-7 pr-6", className)}
       value={value}
+      disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
     >
       {options.map((o) => (
