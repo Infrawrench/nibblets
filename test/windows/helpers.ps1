@@ -22,7 +22,7 @@ $fenced = Join-Path $out 'fenced.exe'
 Copy-Item "$env:WINDIR\System32\curl.exe" $fenced
 
 $listeners = @()
-foreach ($port in 47001, 47002) {
+foreach ($port in 18431, 18432) {
   foreach ($address in [Net.IPAddress]::Loopback, [Net.IPAddress]::IPv6Loopback) {
     $listener = [Net.Sockets.TcpListener]::new($address, $port)
     $listener.Start()
@@ -41,19 +41,19 @@ function Expect($program, $hostname, $port, $code) {
 }
 
 try {
-  & $fence $fenced 47001
+  & $fence $fenced 18431
   if ($LASTEXITCODE -ne 0) { throw 'The fence failed' }
-  Expect $fenced '127.0.0.1' 47001 28
-  Expect $fenced '[::1]' 47001 28
-  Expect $fenced '127.0.0.1' 47002 7
-  Expect $fenced '[::1]' 47002 7
-  Expect "$env:WINDIR\System32\curl.exe" '127.0.0.1' 47002 28
+  Expect $fenced '127.0.0.1' 18431 28
+  Expect $fenced '[::1]' 18431 28
+  Expect $fenced '127.0.0.1' 18432 7
+  Expect $fenced '[::1]' 18432 7
+  Expect "$env:WINDIR\System32\curl.exe" '127.0.0.1' 18432 28
 
   # Again, with nothing shared: it replaces the last.
   & $fence $fenced
   if ($LASTEXITCODE -ne 0) { throw 'The fence failed' }
-  Expect $fenced '127.0.0.1' 47001 7
-  Expect $fenced '[::1]' 47001 7
+  Expect $fenced '127.0.0.1' 18431 7
+  Expect $fenced '[::1]' 18431 7
 } finally {
   foreach ($listener in $listeners) { $listener.Stop() }
 }
