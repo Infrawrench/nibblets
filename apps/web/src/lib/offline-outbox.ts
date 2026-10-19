@@ -26,7 +26,7 @@ export async function drainHead(
     `nibblets-outbox:${vault.id}:${JSON.stringify([connection.id, id])}`,
     async () => {
       if (!alive() || !vault.unlocked) return false;
-      const payload = await vault.read<OfflinePayload>("payload");
+      const payload = await vault.read("payload");
       const head = payload?.outbox.find(
         (m) =>
           m.server === connection.id &&

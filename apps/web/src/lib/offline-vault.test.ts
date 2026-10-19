@@ -1,14 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
+import { z } from "zod";
 import { OfflineVault } from "./offline-vault.ts";
+import { OfflinePayload } from "./offline-data.ts";
 import * as passkeys from "./offline-passkey.ts";
 
 const passphrase = "a long recovery passphrase";
 let factory: IDBFactory;
-const opened: OfflineVault[] = [];
+const Json = z.json();
+const opened: OfflineVault<z.infer<typeof Json>>[] = [];
 
-async function open(principal = "issuer:account-secret"): Promise<OfflineVault> {
-  const vault = await OfflineVault.open(principal);
+async function open(
+  principal = "issuer:account-secret",
+): Promise<OfflineVault<z.infer<typeof Json>>> {
+  const vault = await OfflineVault.open(principal, Json);
   opened.push(vault);
   return vault;
 }
@@ -95,6 +100,37 @@ describe("encrypted offline vault", () => {
     });
   });
 
+  it("checks what it decrypts against the vault's schema", async () => {
+    const vault = await open();
+    await vault.create(passphrase);
+    await vault.update("payload", () => ({ text: "not a payload" }));
+    const strict = await OfflineVault.open("issuer:account-secret", OfflinePayload);
+    opened.push(strict);
+    await expect(strict.unlock(passphrase)).rejects.toThrow();
+    expect(strict.unlocked).toBe(false);
+  });
+
+  it("drops a saved chat it can't read but keeps queued messages", () => {
+    const message = {
+      id: "m",
+      server: "s",
+      conversation: "c",
+      text: "hello",
+      attachments: [],
+      createdAt: "2026-10-18",
+      state: "queued",
+      attempted: false,
+    };
+    const parsed = OfflinePayload.parse({
+      bindings: {},
+      conversations: [{ id: "from an older version" }],
+      outbox: [message],
+    });
+    expect(parsed.conversations).toEqual([]);
+    expect(parsed.outbox).toEqual([message]);
+    expect(() => OfflinePayload.parse({ bindings: {}, conversations: [], outbox: [{}] })).toThrow();
+  });
+
   it("rejects ciphertext, revision, wrapper, and cross-principal substitution", async () => {
     const vault = await open();
     await vault.create(passphrase);
@@ -131,7 +167,10 @@ describe("encrypted offline vault", () => {
     await second.unlock(passphrase);
     await Promise.all(
       Array.from({ length: 5 }, (_, index) =>
-        (index % 2 ? first : second).update<number>("payload", (value) => (value ?? 0) + 1),
+        (index % 2 ? first : second).update(
+          "payload",
+          (value) => (typeof value === "number" ? value : 0) + 1,
+        ),
       ),
     );
     expect(await first.read("payload")).toBe(5);
@@ -363,7 +402,7 @@ describe("encrypted offline vault", () => {
 
   it("fails closed without the required browser facilities and rejects malformed storage", async () => {
     vi.stubGlobal("indexedDB", undefined);
-    await expect(OfflineVault.open("account")).rejects.toThrow("unavailable");
+    await expect(OfflineVault.open("account", Json)).rejects.toThrow("unavailable");
     vi.stubGlobal("indexedDB", factory);
     const vault = await open();
     await vault.create(passphrase);

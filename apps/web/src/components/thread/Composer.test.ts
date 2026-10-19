@@ -48,7 +48,7 @@ it("sends to the server while a nibblet works when offline messages are locked",
   const connection = createMockServer();
   const nibblet = {
     ...(await connection.client.nibblets.list({}))[0]!,
-    status: "running" as const,
+    status: "working" as const,
   };
   const send = vi.spyOn(connection.client.nibblets, "send").mockResolvedValue({ ok: true });
   await act(async () =>

@@ -7,7 +7,7 @@ import {
   emptyOfflinePayload,
   enqueueMessage,
   saveConversation,
-  type OfflinePayload,
+  OfflinePayload,
   type OutgoingMessage,
 } from "./offline-data.ts";
 import { createMockServer } from "./mock.ts";
@@ -41,7 +41,7 @@ beforeEach(async () => {
       },
     },
   });
-  vault = await OfflineVault.open("outbox-tests");
+  vault = await OfflineVault.open("outbox-tests", OfflinePayload);
   await vault.create("test recovery passphrase");
 });
 afterEach(() => {
@@ -50,7 +50,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 const mutate = (fn: (data: OfflinePayload) => OfflinePayload) =>
-  vault.update<OfflinePayload>("payload", (data) => fn(data ?? emptyOfflinePayload()));
+  vault.update("payload", (data) => fn(data ?? emptyOfflinePayload()));
 async function host() {
   const connection = createMockServer();
   connection.pinClient = (guard) => ({
@@ -155,7 +155,7 @@ describe("durable encrypted outbox", () => {
       .spyOn(connection.client.nibblets, "send")
       .mockRejectedValueOnce(new RpcError("unavailable", "A snapshot is being restored"));
     await drainHead(vault, connection, "chat", "queue", () => true, mutate);
-    expect((await vault.read<OfflinePayload>("payload"))?.outbox[0]).toMatchObject({
+    expect((await vault.read("payload"))?.outbox[0]).toMatchObject({
       id: "first",
       state: "queued",
       retrySafe: true,
@@ -199,13 +199,13 @@ describe("durable encrypted outbox", () => {
       .spyOn(connection.client.nibblets, "send")
       .mockRejectedValue(new RpcError("internal", "Accepted but dispatch failed"));
     await drainHead(vault, connection, "chat", "queue", () => true, mutate);
-    expect((await vault.read<OfflinePayload>("payload"))?.outbox[0]).toMatchObject({
+    expect((await vault.read("payload"))?.outbox[0]).toMatchObject({
       state: "uncertain",
       retrySafe: true,
     });
     send.mockRejectedValue(new RpcError("unauthorized", "Sign in again"));
     await drainHead(vault, connection, "chat", "reconnect", () => true, mutate);
-    expect((await vault.read<OfflinePayload>("payload"))?.outbox[0]).toMatchObject({
+    expect((await vault.read("payload"))?.outbox[0]).toMatchObject({
       id: "first",
       state: "uncertain",
       retrySafe: false,
@@ -239,7 +239,7 @@ describe("durable encrypted outbox", () => {
   it("sends only one FIFO head and persists its attempted state before calling the host", async () => {
     const connection = await host();
     const send = vi.spyOn(connection.client.nibblets, "send").mockImplementation(async (input) => {
-      expect((await vault.read<OfflinePayload>("payload"))?.outbox[0]).toMatchObject({
+      expect((await vault.read("payload"))?.outbox[0]).toMatchObject({
         id: "first",
         attempted: true,
         state: "uncertain",
@@ -251,7 +251,7 @@ describe("durable encrypted outbox", () => {
     });
     expect(await drainHead(vault, connection, "chat", "queue", () => true, mutate)).toBe(true);
     expect(send).toHaveBeenCalledTimes(1);
-    expect((await vault.read<OfflinePayload>("payload"))?.outbox.map((m) => m.state)).toEqual([
+    expect((await vault.read("payload"))?.outbox.map((m) => m.state)).toEqual([
       "accepted",
       "queued",
     ]);
@@ -292,7 +292,7 @@ describe("durable encrypted outbox", () => {
       drainHead(vault, connection, "chat", "reconnect", () => true, mutate),
     ).rejects.toThrow("identity");
     expect(send).not.toHaveBeenCalled();
-    expect((await vault.read<OfflinePayload>("payload"))?.outbox[0]?.attempted).toBe(false);
+    expect((await vault.read("payload"))?.outbox[0]?.attempted).toBe(false);
   });
   it("never retries a missing receipt and exposes interrupted submissions without resending", async () => {
     const connection = await host();
@@ -306,7 +306,7 @@ describe("durable encrypted outbox", () => {
       receipt: { clientMessageId: "terminal", turnId: "turn", state: "interrupted" },
     });
     await drainHead(vault, connection, "chat", "reconnect", () => true, mutate);
-    expect((await vault.read<OfflinePayload>("payload"))?.outbox[0]).toMatchObject({
+    expect((await vault.read("payload"))?.outbox[0]).toMatchObject({
       state: "rejected",
       detail: "interrupted",
     });
@@ -342,7 +342,7 @@ describe("durable encrypted outbox", () => {
     });
     await drainHead(vault, connection, "chat", "queue", () => true, mutate);
     await vault.unlock("test recovery passphrase");
-    expect((await vault.read<OfflinePayload>("payload"))?.outbox[0]?.state).toBe("uncertain");
+    expect((await vault.read("payload"))?.outbox[0]?.state).toBe("uncertain");
   });
   it("bounds the outbox independently from sanitized history", async () => {
     let data = emptyOfflinePayload();

@@ -9,7 +9,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RpcError, type LiveMessage } from "@nibblet/protocol";
 import { OfflineVault } from "./offline-vault.ts";
-import { emptyOfflinePayload, type OfflinePayload } from "./offline-data.ts";
+import { emptyOfflinePayload, OfflinePayload } from "./offline-data.ts";
 import { createMockServer } from "./mock.ts";
 import { drainHead } from "./offline-outbox.ts";
 import { OfflineBridge } from "./offline-bridge.tsx";
@@ -65,7 +65,7 @@ afterEach(() => {
 });
 
 async function fixture() {
-  const vault = await OfflineVault.open("mounted-queue-tests");
+  const vault = await OfflineVault.open("mounted-queue-tests", OfflinePayload);
   await vault.create("test recovery passphrase");
   const id = crypto.randomUUID();
   const payload: OfflinePayload = {
@@ -86,9 +86,7 @@ async function fixture() {
   };
   await vault.update("payload", () => payload);
   const mutate = async (fn: (data: OfflinePayload) => OfflinePayload) => {
-    const data = await vault.update<OfflinePayload>("payload", (old) =>
-      fn(old ?? emptyOfflinePayload()),
-    );
+    const data = await vault.update("payload", (old) => fn(old ?? emptyOfflinePayload()));
     if (shared.offline) shared.offline.payload = data;
     return data;
   };
@@ -336,8 +334,7 @@ describe("mounted outbox availability", () => {
       unlock: async () => {
         await act(async () => {
           await f.vault.unlock("test recovery passphrase");
-          shared.offline!.payload =
-            (await f.vault.read<OfflinePayload>("payload")) ?? emptyOfflinePayload();
+          shared.offline!.payload = (await f.vault.read("payload")) ?? emptyOfflinePayload();
           root.render(createElement(QueryClientProvider, { client }, createElement(OfflineBridge)));
         });
       },
@@ -362,7 +359,7 @@ describe("mounted outbox availability", () => {
     const f = await mount(new TypeError("Network receipt lost"));
     try {
       await vi.waitFor(async () =>
-        expect((await f.vault.read<OfflinePayload>("payload"))?.outbox[0]?.state).toBe("uncertain"),
+        expect((await f.vault.read("payload"))?.outbox[0]?.state).toBe("uncertain"),
       );
       vi.mocked(f.connection.client.nibblets.list).mockResolvedValue([
         { ...f.idle, status: "working" },
@@ -486,7 +483,7 @@ describe("mounted outbox availability", () => {
         text: "original queued text",
       });
       await vi.waitFor(async () =>
-        expect((await f.vault.read<OfflinePayload>("payload"))?.outbox[0]?.state).toBe("accepted"),
+        expect((await f.vault.read("payload"))?.outbox[0]?.state).toBe("accepted"),
       );
     } finally {
       releaseAuth();
@@ -519,9 +516,7 @@ describe("mounted outbox availability", () => {
       const f = await mount(error);
       try {
         await vi.waitFor(async () =>
-          expect((await f.vault.read<OfflinePayload>("payload"))?.outbox[0]?.state).toBe(
-            "uncertain",
-          ),
+          expect((await f.vault.read("payload"))?.outbox[0]?.state).toBe("uncertain"),
         );
         await f.rebind();
         await act(async () => {
@@ -537,7 +532,7 @@ describe("mounted outbox availability", () => {
     const f = await mount(new RpcError("unavailable", "A snapshot is being restored"));
     try {
       await vi.waitFor(async () =>
-        expect((await f.vault.read<OfflinePayload>("payload"))?.outbox[0]).toMatchObject({
+        expect((await f.vault.read("payload"))?.outbox[0]).toMatchObject({
           state: "queued",
           attempted: true,
         }),
@@ -568,14 +563,14 @@ describe("mounted outbox availability", () => {
     f.send.mockRejectedValue(error);
     try {
       await vi.waitFor(async () =>
-        expect((await f.vault.read<OfflinePayload>("payload"))?.outbox[0]?.state).toBe("queued"),
+        expect((await f.vault.read("payload"))?.outbox[0]?.state).toBe("queued"),
       );
       await f.render();
       expect(f.send).toHaveBeenCalledOnce();
       await f.emitIdle();
       await vi.waitFor(() => expect(f.send).toHaveBeenCalledTimes(2));
       await vi.waitFor(async () =>
-        expect((await f.vault.read<OfflinePayload>("payload"))?.outbox[0]?.state).toBe("queued"),
+        expect((await f.vault.read("payload"))?.outbox[0]?.state).toBe("queued"),
       );
       await f.render();
       await act(async () => {
@@ -592,12 +587,12 @@ describe("mounted outbox availability", () => {
     f.send.mockRejectedValueOnce(error);
     try {
       await vi.waitFor(async () =>
-        expect((await f.vault.read<OfflinePayload>("payload"))?.outbox[0]?.state).toBe("queued"),
+        expect((await f.vault.read("payload"))?.outbox[0]?.state).toBe("queued"),
       );
       await f.emitIdle();
       await vi.waitFor(() => expect(f.send).toHaveBeenCalledTimes(2));
       await vi.waitFor(async () =>
-        expect((await f.vault.read<OfflinePayload>("payload"))?.outbox[0]?.state).toBe("queued"),
+        expect((await f.vault.read("payload"))?.outbox[0]?.state).toBe("queued"),
       );
       await f.emitSnapshotComplete();
       await vi.waitFor(() => expect(f.send).toHaveBeenCalledTimes(3));
@@ -613,7 +608,7 @@ describe("mounted outbox availability", () => {
     const f = await mount(error);
     try {
       await vi.waitFor(async () =>
-        expect((await f.vault.read<OfflinePayload>("payload"))?.outbox[0]?.state).toBe("uncertain"),
+        expect((await f.vault.read("payload"))?.outbox[0]?.state).toBe("uncertain"),
       );
       await f.emitIdle();
       await act(async () => {

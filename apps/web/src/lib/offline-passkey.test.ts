@@ -22,13 +22,18 @@ class Attestation {
     return this.data;
   }
 }
+class Assertion {
+  constructor(
+    readonly clientDataJSON: ArrayBuffer,
+    readonly authenticatorData: ArrayBuffer,
+  ) {}
+}
 class Credential {
   readonly type = "public-key";
   readonly rawId = credentialId.buffer;
   readonly id = "AQID";
   constructor(
-    readonly response:
-      Attestation | { clientDataJSON: ArrayBuffer; authenticatorData: ArrayBuffer },
+    readonly response: Attestation | Assertion,
     private readonly extensions: object,
   ) {}
   getClientExtensionResults(): object {
@@ -66,7 +71,7 @@ async function response(
   return new Credential(
     type === "webauthn.create"
       ? new Attestation(clientDataJSON, data.buffer)
-      : { clientDataJSON, authenticatorData: data.buffer },
+      : new Assertion(clientDataJSON, data.buffer),
     extensions,
   );
 }
@@ -76,6 +81,7 @@ beforeEach(() => {
   vi.stubGlobal("location", { origin, hostname: "offline.example" });
   vi.stubGlobal("PublicKeyCredential", Credential);
   vi.stubGlobal("AuthenticatorAttestationResponse", Attestation);
+  vi.stubGlobal("AuthenticatorAssertionResponse", Assertion);
 });
 afterEach(() => {
   vi.restoreAllMocks();

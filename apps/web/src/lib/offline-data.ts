@@ -1,36 +1,57 @@
-import type { HamsterLook, Nibblet, StoredItem } from "@nibblet/protocol";
+import { z } from "zod";
+import { HamsterLook, HarnessId, type Nibblet, type StoredItem } from "@nibblet/protocol";
 
-export interface OfflineConversation {
-  server: string;
-  host: string;
-  systemName: string;
-  id: string;
-  name: string;
-  look: HamsterLook;
-  harness: Nibblet["harness"];
-  model: string;
-  savedAt: string;
-  messages: { id: string; role: "user" | "assistant"; text: string; at: string }[];
-}
+export const OfflineConversation = z.object({
+  server: z.string(),
+  host: z.string(),
+  systemName: z.string(),
+  id: z.string(),
+  name: z.string(),
+  look: HamsterLook,
+  harness: HarnessId,
+  model: z.string(),
+  savedAt: z.string(),
+  messages: z.array(
+    z.object({
+      id: z.string(),
+      role: z.enum(["user", "assistant"]),
+      text: z.string(),
+      at: z.string(),
+    }),
+  ),
+});
+export type OfflineConversation = z.infer<typeof OfflineConversation>;
 
-export interface OutgoingMessage {
-  id: string;
-  server: string;
-  conversation: string;
-  text: string;
-  attachments: string[];
-  createdAt: string;
-  state: "queued" | "uncertain" | "accepted" | "rejected";
-  attempted: boolean;
-  retrySafe?: boolean;
-  detail?: string;
-}
+export const OutgoingMessage = z.object({
+  id: z.string(),
+  server: z.string(),
+  conversation: z.string(),
+  text: z.string(),
+  attachments: z.array(z.string()),
+  createdAt: z.string(),
+  state: z.enum(["queued", "uncertain", "accepted", "rejected"]),
+  attempted: z.boolean(),
+  retrySafe: z.boolean().optional(),
+  detail: z.string().optional(),
+});
+export type OutgoingMessage = z.infer<typeof OutgoingMessage>;
 
-export interface OfflinePayload {
-  bindings: Record<string, string>;
-  conversations: OfflineConversation[];
-  outbox: OutgoingMessage[];
-}
+/**
+ * Everything the vault holds. Saved chats are only a cache, so one this
+ * version can't read is dropped rather than locking the vault; queued
+ * messages are never dropped.
+ */
+export const OfflinePayload = z.object({
+  bindings: z.record(z.string(), z.string()),
+  conversations: z.array(z.json()).transform((saved) =>
+    saved.flatMap((entry) => {
+      const parsed = OfflineConversation.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    }),
+  ),
+  outbox: z.array(OutgoingMessage),
+});
+export type OfflinePayload = z.infer<typeof OfflinePayload>;
 
 export const emptyOfflinePayload = (): OfflinePayload => ({
   bindings: {},

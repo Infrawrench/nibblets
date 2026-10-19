@@ -98,7 +98,8 @@ export class Conductor {
   private readonly initialization = new Promise<void>((resolve) => {
     this.initialized = resolve;
   });
-  private readonly mutations = new Map<string, Promise<unknown>>();
+  /** Per nibblet, the tail of its serialised work; it always settles without rejecting. */
+  private readonly mutations = new Map<string, Promise<void>>();
   private readonly restoring = new Set<string>();
 
   async beginRestore(nibbletId: string): Promise<void> {
@@ -118,14 +119,15 @@ export class Conductor {
   }
 
   private serial<T>(id: string, run: () => Promise<T>): Promise<T> {
-    const previous = this.mutations.get(id) ?? Promise.resolve();
-    const result = previous.catch(() => undefined).then(run);
-    this.mutations.set(id, result);
-    void result
-      .finally(() => {
-        if (this.mutations.get(id) === result) this.mutations.delete(id);
-      })
-      .catch(() => undefined);
+    const result = (this.mutations.get(id) ?? Promise.resolve()).then(run);
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.mutations.set(id, settled);
+    void settled.then(() => {
+      if (this.mutations.get(id) === settled) this.mutations.delete(id);
+    });
     return result;
   }
 

@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useOffline, threadLock } from "../../lib/offline-context.tsx";
-import {
-  enqueueMessage,
-  type OfflinePayload,
-  type OutgoingMessage,
-} from "../../lib/offline-data.ts";
+import { enqueueMessage, type OutgoingMessage } from "../../lib/offline-data.ts";
 
 export function useQueuedMessages(
   server: string,
@@ -62,7 +58,7 @@ export function useQueuedMessages(
       ready = resolve;
     });
     const operation = threadLock(vault.id, server, id, async () => {
-      const data = await vault.read<OfflinePayload>("payload");
+      const data = await vault.read("payload");
       if (!mounted.current || !vault.unlocked) {
         reserving.current = false;
         ready();

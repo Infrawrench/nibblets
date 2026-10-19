@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   createPasskey,
   decode,
@@ -7,19 +8,37 @@ import {
   randomBytes,
 } from "./offline-passkey.ts";
 import type { PasskeyMetadata } from "./offline-passkey.ts";
+import type { OfflinePayload } from "./offline-data.ts";
 
-interface Cipher {
-  iv: string;
-  ciphertext: string;
-}
-interface Envelope {
-  version: 1;
-  revision: number;
-  id: string;
-  passphrase: Cipher & { salt: string };
-  passkey?: Cipher & PasskeyMetadata;
-  payload: Cipher;
-}
+/** Base64 that decodes to exactly `length` bytes. */
+const bytes = (length: number) =>
+  z.string().refine((value) => {
+    try {
+      return decode(value).length === length;
+    } catch {
+      return false;
+    }
+  });
+// Ciphertext and passkey metadata are checked where they're used, so a bad
+// passkey wrapper still leaves the passphrase able to unlock.
+const Cipher = z.object({ iv: z.string(), ciphertext: z.string() });
+type Cipher = z.infer<typeof Cipher>;
+/** The one IndexedDB record per vault: the wrapped data key and the encrypted payload. */
+const Envelope = z.object({
+  version: z.literal(1),
+  revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  id: bytes(32),
+  passphrase: Cipher.extend({ salt: bytes(16) }),
+  passkey: Cipher.extend({
+    credential: z.string(),
+    input: z.string(),
+    salt: z.string(),
+  }).optional(),
+  payload: Cipher,
+});
+type Envelope = z.infer<typeof Envelope>;
+/** What IndexedDB holds for a vault: nothing yet, or a well-formed envelope. */
+const Stored = Envelope.optional();
 
 const text = new TextEncoder();
 
@@ -67,7 +86,11 @@ async function decrypt(
   );
 }
 
-export class OfflineVault {
+/**
+ * One account's encrypted offline storage: a single value of type `T`,
+ * validated by `schema` whenever it's decrypted.
+ */
+export class OfflineVault<T = OfflinePayload> {
   private key: CryptoKey | null = null;
   private epoch = 0;
   private closed = false;
@@ -77,9 +100,10 @@ export class OfflineVault {
   private constructor(
     private readonly db: IDBDatabase,
     readonly id: string,
+    private readonly schema: z.ZodType<T>,
   ) {
     this.channel = new BroadcastChannel(`nibblets-vault:${id}`);
-    this.channel.onmessage = (event: MessageEvent<unknown>) => {
+    this.channel.onmessage = (event: MessageEvent) => {
       if (event.data === "lock") this.clearKey();
       else if (event.data === "changed") this.notify();
     };
@@ -88,7 +112,7 @@ export class OfflineVault {
     return this.id;
   }
 
-  static async open(principal: string): Promise<OfflineVault> {
+  static async open<T>(principal: string, schema: z.ZodType<T>): Promise<OfflineVault<T>> {
     if (
       !globalThis.crypto?.subtle ||
       !globalThis.indexedDB ||
@@ -112,7 +136,7 @@ export class OfflineVault {
       request.onblocked = () =>
         reject(new Error("Offline vault database upgrade is blocked. Close other tabs."));
     });
-    return new OfflineVault(db, scope);
+    return new OfflineVault(db, scope, schema);
   }
 
   get unlocked(): boolean {
@@ -156,7 +180,10 @@ export class OfflineVault {
   private check(epoch: number): void {
     if (epoch !== this.epoch) throw new Error("Offline vault was locked during the operation.");
   }
-  private aad(name: string, ...metadata: unknown[]): Uint8Array<ArrayBuffer> {
+  private aad(
+    name: string,
+    ...metadata: (string | number | PasskeyMetadata)[]
+  ): Uint8Array<ArrayBuffer> {
     return text.encode(JSON.stringify([1, this.scope, name, ...metadata]));
   }
   private async envelope(): Promise<Envelope | undefined> {
@@ -164,24 +191,11 @@ export class OfflineVault {
       const transaction = this.db.transaction("vaults", "readonly");
       const request = transaction.objectStore("vaults").get(this.scope);
       transaction.oncomplete = () => {
-        try {
-          const value = request.result as Envelope | undefined;
-          if (
-            value &&
-            (value.version !== 1 ||
-              !Number.isSafeInteger(value.revision) ||
-              value.revision < 1 ||
-              typeof value.id !== "string" ||
-              decode(value.id).length !== 32 ||
-              !value.passphrase ||
-              !value.payload ||
-              decode(value.passphrase.salt).length !== 16)
-          )
-            throw new Error("Invalid vault format.");
-          resolve(value);
-        } catch (error) {
+        const stored = Stored.safeParse(request.result);
+        if (stored.success) resolve(stored.data);
+        else {
           this.lock();
-          reject(error);
+          reject(new Error("Invalid vault format."));
         }
       };
       transaction.onerror = transaction.onabort = () =>
@@ -201,10 +215,8 @@ export class OfflineVault {
       const request = store.get(this.scope);
       let conflict: Error | undefined;
       request.onsuccess = () => {
-        if (
-          this.epoch !== epoch ||
-          (request.result as Envelope | undefined)?.revision !== previous
-        ) {
+        const stored = Stored.safeParse(request.result);
+        if (this.epoch !== epoch || !stored.success || stored.data?.revision !== previous) {
           conflict = new Error("Offline vault changed or locked. Retry the operation.");
           transaction.abort();
           return;
@@ -317,43 +329,43 @@ export class OfflineVault {
       throw error;
     }
   }
-  private async payloadWithKey<T>(key: CryptoKey, envelope: Envelope): Promise<T | null> {
+  private async payloadWithKey(key: CryptoKey, envelope: Envelope): Promise<T | null> {
     const raw = await decrypt(
       key,
       envelope.payload,
       this.aad("payload", envelope.id, envelope.revision),
     );
     try {
-      return JSON.parse(new TextDecoder().decode(raw)) as T;
+      return this.schema.nullable().parse(JSON.parse(new TextDecoder().decode(raw)));
     } finally {
       raw.fill(0);
     }
   }
-  private async plaintext<T>(envelope: Envelope): Promise<T | null> {
+  private async plaintext(envelope: Envelope): Promise<T | null> {
     if (!this.key) throw new Error("Unlock the offline vault first.");
     try {
-      return await this.payloadWithKey<T>(this.key, envelope);
+      return await this.payloadWithKey(this.key, envelope);
     } catch (error) {
       this.lock();
       throw error;
     }
   }
-  async read<T>(record: "payload"): Promise<T | null> {
+  async read(record: "payload"): Promise<T | null> {
     const epoch = this.epoch;
     if (record !== "payload") throw new Error("Unknown vault record.");
     const envelope = await this.envelope();
     if (!envelope || !this.key) throw new Error("Unlock the offline vault first.");
-    const value = await this.plaintext<T>(envelope);
+    const value = await this.plaintext(envelope);
     this.check(epoch);
     return value;
   }
-  async update<T>(record: "payload", mutate: (current: T | null) => T): Promise<T> {
+  async update(record: "payload", mutate: (current: T | null) => T): Promise<T> {
     const epoch = this.epoch;
     if (record !== "payload") throw new Error("Unknown vault record.");
     return this.exclusive(async () => {
       const envelope = await this.envelope();
       if (!envelope || !this.key) throw new Error("Unlock the offline vault first.");
-      const current = await this.plaintext<T>(envelope);
+      const current = await this.plaintext(envelope);
       this.check(epoch);
       const value = mutate(current);
       const revision = envelope.revision + 1;

@@ -12,7 +12,7 @@ import { OfflineVault } from "./offline-vault.ts";
 import {
   emptyOfflinePayload,
   enqueueMessage,
-  type OfflinePayload,
+  OfflinePayload,
   type OutgoingMessage,
 } from "./offline-data.ts";
 
@@ -100,11 +100,11 @@ export function OfflineProvider({
       setPasskey(device);
       if (!current.unlocked) return;
       wasUnlocked = true;
-      const data = await current.read<OfflinePayload>("payload");
+      const data = await current.read("payload");
       if (generation === epoch.current && sequence === refreshSequence && current.unlocked)
         setPayload(data ?? emptyOfflinePayload());
     };
-    void OfflineVault.open(principal)
+    void OfflineVault.open(principal, OfflinePayload)
       .then(async (opened) => {
         if (generation !== epoch.current) {
           opened.close();
@@ -132,9 +132,7 @@ export function OfflineProvider({
     async (fn: (data: OfflinePayload) => OfflinePayload) => {
       if (!vault?.unlocked) throw new Error("Unlock offline messages first.");
       const generation = epoch.current;
-      const data = await vault.update<OfflinePayload>("payload", (old) =>
-        fn(old ?? emptyOfflinePayload()),
-      );
+      const data = await vault.update("payload", (old) => fn(old ?? emptyOfflinePayload()));
       if (generation !== epoch.current || !vault.unlocked)
         throw new Error("Offline messages were locked.");
       setPayload(data);
@@ -174,8 +172,7 @@ export function OfflineProvider({
         await vault.create(passphrase);
         setExists(true);
       }
-      if (vault.unlocked)
-        setPayload((await vault.read<OfflinePayload>("payload")) ?? emptyOfflinePayload());
+      if (vault.unlocked) setPayload((await vault.read("payload")) ?? emptyOfflinePayload());
       setPassphrase("");
       setConfirmation("");
     } catch (failure) {

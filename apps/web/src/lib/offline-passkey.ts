@@ -1,6 +1,4 @@
-type PrfExtensions = AuthenticationExtensionsClientOutputs & {
-  prf?: { enabled?: boolean; results?: { first?: ArrayBuffer } };
-};
+import { z } from "zod";
 
 export interface PasskeyMetadata {
   credential: string;
@@ -23,6 +21,20 @@ export function randomBytes(size: number): Uint8Array<ArrayBuffer> {
   return crypto.getRandomValues(new Uint8Array(size));
 }
 
+/** The parts of WebAuthn client data that are checked; a cross-origin call is refused. */
+const ClientData = z.object({
+  type: z.string(),
+  challenge: z.string(),
+  origin: z.string(),
+  crossOrigin: z.literal(false).optional(),
+});
+
+function authenticatorData(response: AuthenticatorResponse): ArrayBuffer {
+  if (response instanceof AuthenticatorAttestationResponse) return response.getAuthenticatorData();
+  if (response instanceof AuthenticatorAssertionResponse) return response.authenticatorData;
+  throw new Error("Unexpected passkey response.");
+}
+
 function requirePasskeys(): void {
   if (!isSecureContext || !navigator.credentials || !globalThis.PublicKeyCredential)
     throw new Error("Passkey unlock requires a supported secure browser.");
@@ -43,29 +55,21 @@ async function validate(
     (expectedId && encode(new Uint8Array(credential.rawId)) !== expectedId)
   )
     throw new Error("Unexpected passkey credential.");
-  const client: unknown = JSON.parse(new TextDecoder().decode(credential.response.clientDataJSON));
   const expectedChallenge = encode(challenge)
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
+  const client = ClientData.safeParse(
+    JSON.parse(new TextDecoder().decode(credential.response.clientDataJSON)),
+  );
   if (
-    !client ||
-    typeof client !== "object" ||
-    !("type" in client) ||
-    client.type !== type ||
-    !("challenge" in client) ||
-    client.challenge !== expectedChallenge ||
-    !("origin" in client) ||
-    client.origin !== location.origin ||
-    ("crossOrigin" in client && client.crossOrigin !== false)
+    !client.success ||
+    client.data.type !== type ||
+    client.data.challenge !== expectedChallenge ||
+    client.data.origin !== location.origin
   )
     throw new Error("Passkey client data failed verification.");
-  const response = credential.response;
-  const auth =
-    response instanceof AuthenticatorAttestationResponse
-      ? response.getAuthenticatorData()
-      : (response as AuthenticatorAssertionResponse).authenticatorData;
-  const data = new Uint8Array(auth);
+  const data = new Uint8Array(authenticatorData(credential.response));
   const rpHash = new Uint8Array(
     await crypto.subtle.digest("SHA-256", new TextEncoder().encode(location.hostname)),
   );
@@ -78,7 +82,7 @@ async function validate(
 }
 
 function result(credential: PublicKeyCredential): Uint8Array<ArrayBuffer> {
-  const first = (credential.getClientExtensionResults() as PrfExtensions).prf?.results?.first;
+  const first = credential.getClientExtensionResults().prf?.results?.first;
   if (!(first instanceof ArrayBuffer) || first.byteLength !== 32)
     throw new Error("This passkey does not support encryption unlock. Use your passphrase.");
   return new Uint8Array(first);
@@ -100,9 +104,7 @@ export async function getPasskey(metadata: PasskeyMetadata): Promise<Uint8Array<
       rpId: location.hostname,
       userVerification: "required",
       allowCredentials: [{ id: decode(metadata.credential), type: "public-key" }],
-      extensions: {
-        prf: { eval: { first: decode(metadata.input) } },
-      } as AuthenticationExtensionsClientInputs,
+      extensions: { prf: { eval: { first: decode(metadata.input) } } },
     },
   });
   if (!(credential instanceof PublicKeyCredential))
@@ -128,7 +130,7 @@ export async function createPasskey(
       ],
       authenticatorSelection: { residentKey: "required", userVerification: "required" },
       attestation: "none",
-      extensions: { prf: { eval: { first: input } } } as AuthenticationExtensionsClientInputs,
+      extensions: { prf: { eval: { first: input } } },
     },
   });
   if (!(credential instanceof PublicKeyCredential))
@@ -139,7 +141,7 @@ export async function createPasskey(
     input: encode(input),
     salt: encode(randomBytes(32)),
   };
-  const prf = (credential.getClientExtensionResults() as PrfExtensions).prf;
+  const prf = credential.getClientExtensionResults().prf;
   if (prf?.enabled !== true)
     throw new Error("This passkey does not support encryption unlock. Use your passphrase.");
   return { metadata, secret: prf.results?.first ? result(credential) : await getPasskey(metadata) };
