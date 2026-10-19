@@ -53,8 +53,7 @@ export function Composer({
       if (queue.offline.vault?.unlocked) {
         await queue.send(ready.map((r) => r.fileId));
       } else {
-        if (running)
-          throw new Error("Unlock offline messages to queue while this nibblet is working.");
+        // Without the vault the server queues it, even while the nibblet is working.
         await connection.client.nibblets.send({
           id: nibblet.id,
           text: message,
