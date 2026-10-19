@@ -97,6 +97,22 @@ describe("Tunnel recovery", () => {
     expect(container.inspect.mock.calls.length).toBeGreaterThan(configured);
   });
 
+  it("keeps a healthy tunnel up when reconfigured with the same config", async () => {
+    const { tunnel } = setup();
+    const config = { mode: "token", token: "test", hostname: "example.com" } as const;
+    await tunnel.configure(config);
+    const up = tunnel.current();
+    expect(up.state).toBe("up");
+    const again = tunnel.configure(config);
+    expect(tunnel.current()).toBe(up);
+    expect(tunnel.publicUrl()).toBe(up.url);
+    await again;
+    expect(tunnel.current().state).toBe("up");
+    const other = tunnel.configure({ ...config, hostname: "other.example.com" });
+    expect(tunnel.current()).toMatchObject({ state: "starting", url: null });
+    await other;
+  });
+
   it("retries an errored tunnel after 5 s, not 1 s", async () => {
     const { tunnel, container } = setup();
     container.inspect.mockRejectedValueOnce(new Error("offline"));

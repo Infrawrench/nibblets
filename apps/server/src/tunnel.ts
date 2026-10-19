@@ -17,6 +17,7 @@ export class Tunnel {
   private status: TunnelStatus = { mode: "off", state: "off", url: null, detail: null };
   private generation = 0;
   private stopped = false;
+  private applied: string | undefined;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private pending = Promise.resolve();
   private quickUrl: { container: string; startedAt: string; url: string } | undefined;
@@ -52,12 +53,18 @@ export class Tunnel {
     if (this.stopped) return this.status;
     const generation = ++this.generation;
     clearTimeout(this.timer);
-    this.status = {
-      mode: config.mode,
-      state: config.mode === "off" ? "off" : "starting",
-      url: null,
-      detail: null,
-    };
+    const applied = JSON.stringify(config);
+    // Reconfiguring a healthy tunnel with the same config must not drop publicUrl() to the local URL.
+    const unchanged = this.status.state === "up" && applied === this.applied;
+    this.applied = applied;
+    if (!unchanged) {
+      this.status = {
+        mode: config.mode,
+        state: config.mode === "off" ? "off" : "starting",
+        url: null,
+        detail: null,
+      };
+    }
     await this.enqueue(async () => {
       if (!this.active(generation)) return;
       try {
