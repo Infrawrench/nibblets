@@ -47,6 +47,11 @@ export class GuestRelay {
 
   /** Its port, connected (or again, after it dropped). */
   attachPort(port: Duplex): void {
+    // A connection made for a relay that's gone since: to the guest, it would be the host's newest.
+    if (this.closed) {
+      port.destroy();
+      return;
+    }
     this.dropPort();
     this.port = port;
     this.reader = new SerialReader();

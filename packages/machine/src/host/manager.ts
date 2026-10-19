@@ -198,6 +198,11 @@ class Hypervisor {
         quiet = 0;
         try {
           const port: Duplex = await this.plugin.connect(this.ctx, ref);
+          // Connecting can take a while (half a minute, on Hyper-V), and the relay may be gone by then.
+          if (this.relays.get(id) !== relay) {
+            port.destroy();
+            return;
+          }
           // Again is worth saying: the guest drops what the server had open on it.
           if (connections++ > 0) this.ctx.log(`[${id}] its agent's port connected again`);
           relay.attachPort(port);

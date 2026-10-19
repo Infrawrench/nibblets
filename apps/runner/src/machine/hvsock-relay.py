@@ -45,6 +45,7 @@ print(f"nibblet-hvsock: listening on vsock port {port}", file=sys.stderr, flush=
 
 def from_host(conn):
     """What the host sends on `conn`, to the agent, for as long as it's the host's newest."""
+    global current
     try:
         while True:
             data = conn.recv(65536)
