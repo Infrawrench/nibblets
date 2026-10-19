@@ -44,6 +44,9 @@ const SavedPending = z.object({
 });
 const PENDING_SETTING = "connect.pending";
 
+/** How soon to beat again while the tunnel isn't up yet, doubling towards the usual interval. */
+const TUNNEL_WAIT_MS = 5000;
+
 interface Pending extends z.infer<typeof SavedPending> {
   timer: ReturnType<typeof setTimeout> | null;
 }
@@ -77,6 +80,7 @@ export class Connect {
   private generation = 0;
   private linkWrites: Promise<void> = Promise.resolve();
   private tunnelWrites: Promise<void> = Promise.resolve();
+  private tunnelWait = TUNNEL_WAIT_MS;
   private lastHeartbeatAt: string | null = null;
   private lastError: string | null = null;
   private routes: ServerRoutes = { lan: [], tailscale: null, tunnel: null };
@@ -314,6 +318,7 @@ export class Connect {
     const generation = this.generation;
     this.link = link;
     this.jwks = null;
+    this.tunnelWait = TUNNEL_WAIT_MS;
     this.scheduleBeat(0, generation);
     await this.configureTunnel(
       link.tunnel
@@ -433,7 +438,14 @@ export class Connect {
       this.lastError = err instanceof Error ? err.message : String(err);
     }
     if (this.generation !== generation) return;
-    // Either tunnel kind takes a few seconds to come up; report its address promptly.
-    this.scheduleBeat(this.routes.tunnel ? HEARTBEAT_EVERY_MS : 5000, generation);
+    // Either tunnel kind takes a few seconds to come up; report its address promptly,
+    // backing off if it never does.
+    if (this.routes.tunnel) {
+      this.tunnelWait = TUNNEL_WAIT_MS;
+      this.scheduleBeat(HEARTBEAT_EVERY_MS, generation);
+    } else {
+      this.scheduleBeat(this.tunnelWait, generation);
+      this.tunnelWait = Math.min(this.tunnelWait * 2, HEARTBEAT_EVERY_MS);
+    }
   }
 }

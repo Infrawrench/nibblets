@@ -297,6 +297,17 @@ describe("Connect heartbeats", () => {
     expect(tunnelRoutes()).toEqual([null, "https://server.tunnel.example"]);
   });
 
+  it("backs off towards the usual interval while a tunnel never comes up", async () => {
+    deps.tunnel.current = () => ({ mode: "quick", state: "starting", url: null, detail: null });
+    await connect.restore();
+    const beats: number[] = [];
+    for (let ms = 0; ms <= 100_000; ms += 1000) {
+      await vi.advanceTimersByTimeAsync(ms === 0 ? 0 : 1000);
+      if (fetcher.mock.calls.length > beats.length) beats.push(ms);
+    }
+    expect(beats).toEqual([0, 5000, 15_000, 35_000, 65_000, 95_000]);
+  });
+
   it("lets a slow tunnel setup finish before the first heartbeat turns it off", async () => {
     const events: string[] = [];
     const setup = Promise.withResolvers<void>();
