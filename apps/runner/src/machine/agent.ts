@@ -6,6 +6,7 @@
  * for what goes over the port.
  */
 import { readFileSync } from "node:fs";
+import type { Writable } from "node:stream";
 import { z } from "zod";
 import { GuestDaemon } from "./daemon.ts";
 import type { GuestPlugin } from "./guest.ts";
@@ -25,11 +26,18 @@ const VERSION = z
     JSON.parse(readFileSync(new URL("../../../../package.json", import.meta.url), "utf8")),
   ).version;
 
-const log = (message: string) => console.log(`agent: ${message}`);
+/** The guest's console, where it keeps one; lines are dropped rather than kept while it's behind. */
+let consoleOut: Writable | null = null;
+const log = (message: string) => {
+  const line = `agent: ${message}`;
+  console.log(line);
+  if (consoleOut && consoleOut.writableLength < 64_000) consoleOut.write(`${line}\r\n`);
+};
 
 async function main(): Promise<void> {
   const guest = guests[process.platform];
   if (!guest) throw new Error(`no guest plugin for ${process.platform}`);
+  consoleOut = guest.console?.() ?? null;
   try {
     await guest.prepare(log);
   } catch (err) {

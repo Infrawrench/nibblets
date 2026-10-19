@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { Duplex } from "node:stream";
+import { Duplex, type Writable } from "node:stream";
 import type { EntryCommand, GuestOs } from "@nibblet/protocol";
 
 /**
@@ -25,6 +25,11 @@ export interface GuestPlugin {
   poweroff(): Promise<void>;
   /** Tidies up after one of the entry's commands, however it ended. */
   afterRun?(command: EntryCommand): Promise<void>;
+  /**
+   * Where the agent's log goes too, for a hypervisor that keeps the
+   * guest's console (Windows' COM1, which Hyper-V gives a host's pipe).
+   */
+  console?(): Writable | null;
 }
 
 /** The entry's own name for a command: the nibblet itself is the default. */
@@ -37,8 +42,18 @@ export function entryArgv(command: EntryCommand, args: readonly string[]): strin
  * goes to it. For a port that only a helper can open (vsock on macOS, a
  * COM port on Windows).
  */
-export function relayStream(file: string, args: string[]): Duplex {
-  const child = spawn(file, args, { stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
+export function relayStream(file: string, args: string[], log?: (message: string) => void): Duplex {
+  const child = spawn(file, args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  // What it says goes in the agent's log, a line at a time, or to its stderr.
+  if (!log) child.stderr.pipe(process.stderr);
+  else {
+    let partial = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      const lines = (partial + chunk.toString("utf8")).split(/\r?\n/);
+      partial = lines.pop() ?? "";
+      for (const line of lines) if (line.trim()) log(line.trim());
+    });
+  }
   const stream = new Duplex({
     read() {
       child.stdout.resume();

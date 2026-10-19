@@ -25,13 +25,17 @@ export const INSTALL_DONE = "Done: shutting down to finish its image";
 /** What it says when a step fails, before why: it won't finish by itself then. */
 export const INSTALL_FAILED = "Failed: ";
 
-/** The last thing setup or the bootstrap said, from what COM1 recorded. */
-export function installSaid(recorded: string): string | null {
-  const lines = recorded
+/** Everything setup and the bootstrap said, in order, from what COM1 recorded. */
+export function installSayings(recorded: string): string[] {
+  return recorded
     .split(/\r?\n/)
     .filter((l) => l.startsWith(INSTALL_SAYS))
     .map((l) => l.slice(INSTALL_SAYS.length).trim());
-  return lines.at(-1) ?? null;
+}
+
+/** The last thing setup or the bootstrap said, from what COM1 recorded. */
+export function installSaid(recorded: string): string | null {
+  return installSayings(recorded).at(-1) ?? null;
 }
 
 /** PowerShell for saying how far it's got on COM1; nothing hears it once the image is made. */
@@ -198,6 +202,8 @@ $log = "$root\\bootstrap.log"
 Start-Transcript -Path $log -Append | Out-Null
 ${SAY_PS1}
 trap { Say "${INSTALL_FAILED}$($_.Exception.Message)"; break }
+# Which boot, and which run of it: worth knowing if it starts again.
+Say "Bootstrap started (process $PID, boot of $((Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToString('s')))"
 $install = Get-Content "$root\\install.json" -Raw | ConvertFrom-Json
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

@@ -17,6 +17,7 @@ import {
   type VmSpec,
 } from "@nibblet/machine/host";
 import { z } from "zod";
+import { ConsoleRecorder, consoleTail } from "./console.ts";
 import { connectHvSock, hvsockHelper } from "./hvsock.ts";
 import { meta } from "./meta.ts";
 import { powershell, psJson, type PowerShell } from "./powershell.ts";
@@ -155,6 +156,7 @@ export class HyperV implements HypervisorPlugin {
   readonly diskFormat: "vhdx" = "vhdx";
   private readonly ps: PowerShell;
   private readonly switchName: string;
+  private readonly consoles = new ConsoleRecorder((vm) => this.running(null, vm));
 
   constructor(opts: { powershell?: PowerShell; switch?: string } = {}) {
     this.ps = opts.powershell ?? powershell;
@@ -203,6 +205,7 @@ export class HyperV implements HypervisorPlugin {
       console: consolePipe(vm.id),
       service: AGENT_SERVICE,
     });
+    this.consoles.record(vm, consolePipe(vm.id));
   }
 
   private states: { at: number; states: Promise<Record<string, string>> } | null = null;
@@ -220,7 +223,7 @@ export class HyperV implements HypervisorPlugin {
     return this.states.states;
   }
 
-  async running(_ctx: HostContext, vm: VmRef): Promise<boolean> {
+  async running(_ctx: HostContext | null, vm: VmRef): Promise<boolean> {
     const state = (await this.vmStates())[vmName(vm.id)];
     return state === "Running" || state === "Starting";
   }
@@ -231,11 +234,14 @@ export class HyperV implements HypervisorPlugin {
   }
 
   async remove(_ctx: HostContext, vm: VmRef): Promise<void> {
+    this.consoles.stop(vm.id);
     await psJson(this.ps, Ok, REMOVE, { name: vmName(vm.id) });
   }
 
   /** Its agent's port: a Hyper-V socket, through the helper. */
   async connect(ctx: HostContext, vm: VmRef): Promise<Duplex> {
+    // One started before the bridge was, too.
+    this.consoles.record(vm, consolePipe(vm.id));
     const [helper, { id }] = await Promise.all([
       hvsockHelper(join(ctx.dir, "bin")),
       psJson(this.ps, VmId, VM_ID, { name: vmName(vm.id) }),
@@ -243,9 +249,9 @@ export class HyperV implements HypervisorPlugin {
     return connectHvSock(helper, id, AGENT_SERVICE);
   }
 
-  /** Hyper-V keeps no console of its own, and nothing reads COM1 for it; the agent's runs say more. */
-  async console(): Promise<string> {
-    return "";
+  /** What its guest said on COM1, as recorded: Hyper-V keeps none of it. */
+  async console(_ctx: HostContext, vm: VmRef): Promise<string> {
+    return consoleTail(vm);
   }
 
   async capacity() {

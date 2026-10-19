@@ -25,6 +25,7 @@ import {
   INSTALL_DONE,
   INSTALL_FAILED,
   installSaid,
+  installSayings,
   linuxDiskFile,
   livePid,
   makeIso,
@@ -406,15 +407,16 @@ export class Kvm implements HypervisorPlugin {
     const started = Date.now();
     let last: string | null = null;
     let lastAt = Date.now();
+    let heard = 0;
     try {
       for (let tick = 0; pid && alive(pid); tick++) {
         await sleep(15_000);
-        const now = installSaid(await tailFile(said));
-        if (now !== last) {
-          ctx.log(`Windows' install: ${now}`);
-          lastAt = Date.now();
-        }
-        last = now;
+        // All of it, not just the last: a step can come and go between looks.
+        const sayings = installSayings(await readFile(said, "latin1").catch(() => ""));
+        for (const saying of sayings.slice(heard)) ctx.log(`Windows' install: ${saying}`);
+        if (sayings.length > heard) lastAt = Date.now();
+        heard = sayings.length;
+        last = sayings.at(-1) ?? null;
         // Before it says anything, setup's own screen being up is all it says.
         if (last === null && (await lit())) lastAt = Date.now();
         const quiet =

@@ -102,10 +102,13 @@ public static class NibbletHvSock
             var from = conn.RemoteEndPoint as HyperVEndPoint;
             if (from == null || from.VmId == Loopback)
             {
+                Console.Error.WriteLine("nibblet-hvsock: turned away a connection from " + (from == null ? "nowhere" : from.VmId.ToString()));
                 conn.Close();
                 continue;
             }
+            Console.Error.WriteLine("nibblet-hvsock: the host connected");
             lock (Gate) current = conn;
+            string why = "the host closed it";
             try
             {
                 int n;
@@ -115,8 +118,9 @@ public static class NibbletHvSock
                     stdout.Flush();
                 }
             }
-            catch (SocketException) { }
-            catch (ObjectDisposedException) { }
+            catch (SocketException e) { why = e.Message; }
+            catch (ObjectDisposedException) { why = "it was closed here"; }
+            Console.Error.WriteLine("nibblet-hvsock: the host's connection ended: " + why);
             lock (Gate)
             {
                 if (current == conn) current = null;

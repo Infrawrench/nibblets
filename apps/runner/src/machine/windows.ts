@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -87,10 +87,21 @@ export const windows: GuestPlugin = {
     ).catch(() => "");
     if (system.trim() === "Microsoft Corporation|Virtual Machine") {
       log("talking to the host on a Hyper-V socket");
-      return relayStream(HVSOCK_RELAY, [hypervServiceId(HYPERV_AGENT_PORT)]);
+      return relayStream(HVSOCK_RELAY, [hypervServiceId(HYPERV_AGENT_PORT)], log);
     }
     log("talking to the host on COM2");
-    return relayStream(SERIAL_RELAY, ["COM2"]);
+    return relayStream(SERIAL_RELAY, ["COM2"], log);
+  },
+
+  // Through the serial relay, whose writes may block where Node's would hold up its own.
+  console() {
+    const child = spawn(SERIAL_RELAY, ["COM1"], {
+      stdio: ["pipe", "ignore", "ignore"],
+      windowsHide: true,
+    });
+    child.on("error", () => {});
+    child.stdin.on("error", () => {});
+    return child.stdin;
   },
 
   entry(command, args) {
