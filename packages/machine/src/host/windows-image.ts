@@ -245,7 +245,7 @@ if ($have.Trim() -ne $want) {
   # .NET Framework's own compiler, in a process of its own: it can be timed out, and says why it failed.
   $csc = "$env:WINDIR\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe"
   if (-not (Test-Path $csc)) { $csc = "$env:WINDIR\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe" }
-  foreach ($helper in 'runas', 'serial', 'hvsock') {
+  foreach ($helper in 'runas', 'serial', 'hvsock', 'fence') {
     Say "Building its $helper helper"
     $out = "$root\\bin\\nibblet-$helper.exe"
     if (Test-Path $out) { Remove-Item -Force $out }
@@ -274,6 +274,9 @@ if ($have.Trim() -ne $want) {
     Say "Downloading OpenComputerUse $($install.ocu)"
     Get-Download "https://github.com/IAmJSD/OpenComputerUse/releases/download/v$($install.ocu)/opencomputeruse-windows-x86_64.exe" "$root\\bin\\opencomputeruse.exe"
   }
+  # For nibblets on a tailnet.
+  Say 'Downloading Tailscale'
+  & "$root\\app\\apps\\runner\\src\\machine\\windows\\get-tailscale.ps1" -To "$root\\tailscale" -Arch $(if ($arch -eq 'x64') { 'amd64' } else { 'arm64' })
   Set-Content "$root\\app\\.nibblets" $want
 }
 
@@ -286,7 +289,7 @@ if (Test-Path "$root\\preparing") {
     Start-Sleep -Seconds 60
   }
   # A desktop for its browser and apps: the agent's user, signed in at boot.
-  $secret = 'C:\\ProgramData\\Nibblets\\agent.json'
+  $secret = 'C:\\ProgramData\\Nibblets\\users\\nibblet.json'
   if (-not (Test-Path $secret)) {
     Say 'Setting up its desktop'
     New-Item -ItemType Directory -Force -Path (Split-Path $secret) | Out-Null

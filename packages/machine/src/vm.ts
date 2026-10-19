@@ -33,14 +33,14 @@ export interface HypervisorMeta {
  * What a virtual machine can do, by guest. Linux guests run the runner
  * image itself, so they have its browser and Tailscale. Windows guests
  * have a browser (Edge) and a desktop, on the session they sign in to at
- * boot; macOS guests have neither yet, and neither has Tailscale yet. None
- * share the host's SSH agent, and a VM's size is fixed while it runs.
+ * boot, and Tailscale; macOS guests have neither yet. None share the
+ * host's SSH agent, and a VM's size is fixed while it runs.
  */
 export function vmCapabilities(guest: GuestOs): MachineCapabilities {
   const linux = guest === "linux";
   return {
     browser: linux || guest === "windows",
-    tailscale: linux,
+    tailscale: linux || guest === "windows",
     sshAgent: false,
     liveResources: false,
   };
@@ -701,7 +701,7 @@ export class VirtualMachines implements MachinePlugin {
   /** Only a VM that may still be on a tailnet is booted to sign out. */
   async leaveTailnet(id: string): Promise<void> {
     const vm = await this.vm(id);
-    if (!vm?.tailscale || vm.guest !== "linux") return;
+    if (!vm?.tailscale || !vmCapabilities(vm.guest).tailscale) return;
     await this.withGuest(id, (link) => link.runToEnd({ command: "tailscale-leave" }, 2 * 60_000));
     await this.client.update(id, { tailscale: false });
   }

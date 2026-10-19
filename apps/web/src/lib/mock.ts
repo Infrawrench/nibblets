@@ -1116,13 +1116,14 @@ export function createMockServer(): ServerConnection {
   const onePasswordGrants: OnePasswordGrants = {
     pip: [{ vaultId: "v-nibblets", access: "read" }],
   };
-  const linuxVm: MachineCapabilities = {
+  const guestVm: MachineCapabilities = {
     browser: true,
     tailscale: true,
     sshAgent: false,
     liveResources: false,
   };
-  const desktopVm: MachineCapabilities = { ...linuxVm, browser: false, tailscale: false };
+  // As vmCapabilities says: Linux and Windows guests have both, macOS guests neither yet.
+  const macosVm: MachineCapabilities = { ...guestVm, browser: false, tailscale: false };
   const ready: GuestImage = { state: "ready", detail: null, progress: null, source: "none" };
   const mockMachines: MachineBackend[] = [
     {
@@ -1136,7 +1137,7 @@ export function createMockServer(): ServerConnection {
         {
           os: "linux",
           image: ready,
-          capabilities: { ...linuxVm, sshAgent: true, liveResources: true },
+          capabilities: { ...guestVm, sshAgent: true, liveResources: true },
         },
       ],
     },
@@ -1148,8 +1149,8 @@ export function createMockServer(): ServerConnection {
       detail: null,
       recommended: false,
       guests: [
-        { os: "linux", image: { ...ready, state: "missing" }, capabilities: linuxVm },
-        { os: "macos", image: { ...ready, state: "missing" }, capabilities: desktopVm },
+        { os: "linux", image: { ...ready, state: "missing" }, capabilities: guestVm },
+        { os: "macos", image: { ...ready, state: "missing" }, capabilities: macosVm },
       ],
     },
     {
@@ -1160,7 +1161,7 @@ export function createMockServer(): ServerConnection {
       detail: null,
       recommended: false,
       guests: [
-        { os: "windows", image: { ...ready, source: "windows-iso" }, capabilities: desktopVm },
+        { os: "windows", image: { ...ready, source: "windows-iso" }, capabilities: guestVm },
       ],
     },
   ];

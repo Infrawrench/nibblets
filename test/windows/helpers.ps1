@@ -57,5 +57,29 @@ try {
 } finally {
   foreach ($listener in $listeners) { $listener.Stop() }
 }
-# The last curl said 7, as it should: that is not the script failing.
+# Tailscale, fetched as the bootstrap fetches it, and started as tailscale.ts
+# starts it: in userspace networking, on a pipe only an administrator could
+# have made, which its CLI talks to.
+$tailscale = Join-Path $env:RUNNER_TEMP 'tailscale'
+& "$src\get-tailscale.ps1" -To $tailscale -Arch amd64
+$pipe = '\\.\pipe\ProtectedPrefix\Administrators\Nibblets\tailscaled'
+$state = Join-Path $env:RUNNER_TEMP 'tailscale-state'
+New-Item -ItemType Directory -Force -Path $state | Out-Null
+$daemon = Start-Process -FilePath "$tailscale\tailscaled.exe" -PassThru -NoNewWindow -RedirectStandardError "$state\tailscaled.log" -ArgumentList '--tun=userspace-networking', "--statedir=$state", "--socket=$pipe", '--socks5-server=127.0.0.1:1055', '--outbound-http-proxy-listen=127.0.0.1:1055'
+try {
+  $said = ''
+  for ($i = 0; $i -lt 60 -and -not ($said -match '"BackendState"'); $i++) {
+    Start-Sleep -Seconds 1
+    $said = (& "$tailscale\tailscale.exe" "--socket=$pipe" status --json 2>&1) -join "`n"
+  }
+  if ($said -notmatch '"BackendState":\s*"(\w+)"') {
+    Get-Content "$state\tailscaled.log" -Tail 30 | Write-Host
+    throw "tailscaled didn't answer on its pipe: $said"
+  }
+  Write-Host "tailscaled answered on its pipe: $($Matches[1])"
+} finally {
+  Stop-Process -Id $daemon.Id -Force -ErrorAction SilentlyContinue
+}
+
+# The last command's exit code isn't the script's: it got here, so it passed.
 exit 0

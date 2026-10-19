@@ -12,9 +12,9 @@
 // session, and gives it the user's own environment, with this process's
 // laid over it but for what's the user's (their profile's folders).
 //
-// The password is read from C:\ProgramData\Nibblets\agent.json, which
-// only SYSTEM and Administrators can open (see entry/windows.ts). Compiled
-// in the guest by its bootstrap, with PowerShell's Add-Type.
+// A user's password is read from C:\ProgramData\Nibblets\users\<user>.json,
+// which only SYSTEM and Administrators can open (see entry/windows.ts).
+// Compiled in the guest by its bootstrap.
 
 using System;
 using System.ComponentModel;
@@ -233,7 +233,8 @@ public static class NibbletRunAs
         }
         else
         {
-            string secret = File.ReadAllText(@"C:\ProgramData\Nibblets\agent.json");
+            if (!Regex.IsMatch(args[0], "^[A-Za-z0-9-]+$")) { Console.Error.WriteLine("nibblet-runas: no such user as " + args[0]); return 2; }
+            string secret = File.ReadAllText(@"C:\ProgramData\Nibblets\users\" + args[0] + ".json");
             Match m = Regex.Match(secret, "\"password\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
             if (!m.Success) { Console.Error.WriteLine("nibblet-runas: no password for " + args[0]); return 2; }
             string password = Regex.Unescape(m.Groups[1].Value);

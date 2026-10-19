@@ -5,8 +5,11 @@
  * which logs it on and ends its whole tree when it ends. Folders are fenced
  * with ACLs, and the firewall is Windows Firewall's, in a group of its own.
  * Windows has no SIGTERM for a console process, so stopping is at once.
+ *
+ * Tailscale's tailscaled runs as SYSTEM, its CLI as a third user, and it's
+ * fenced in by nibblet-fence (machine/windows/fence.cs): see tailscale.ts.
  */
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
@@ -15,17 +18,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { HOME_ARCHIVE_EXCLUDES } from "@nibblet/protocol";
-import { ownSubnet } from "./linux.ts";
-import { inherit, sleep } from "./shared.ts";
+import { TAILSCALE_USER, WINDOWS_TAILSCALE } from "../tailscale.ts";
+import { ownSubnet, tailnetPorts } from "./linux.ts";
+import { inherit, pick, sleep } from "./shared.ts";
 import type { EntryPlatform, Who } from "./platform.ts";
 
 const run = promisify(execFile);
 const win = path.win32;
 const HOME = "C:\\Users\\nibblet";
 export const NIBBLETS_DATA = "C:\\ProgramData\\Nibblets";
-/** The agent's password, for runas to log it on with: SYSTEM's and Administrators' alone. */
-export const AGENT_SECRET = win.join(NIBBLETS_DATA, "agent.json");
+/** Each of its users' passwords, for runas to log them on with: SYSTEM's and Administrators' alone. */
+export const USER_SECRETS = win.join(NIBBLETS_DATA, "users");
 export const RUNAS = "C:\\Nibblets\\bin\\nibblet-runas.exe";
+const FENCE = "C:\\Nibblets\\bin\\nibblet-fence.exe";
 /** Downloaded by the bootstrap, for its browser and desktop (x64 only). */
 const OCU = "C:\\Nibblets\\bin\\opencomputeruse.exe";
 const scripts = () => fileURLToPath(new URL("..", import.meta.url));
@@ -90,31 +95,39 @@ export function aclArgs(dir: string, who: Who | "downloads", agentSid: string): 
   return [dir, "/inheritance:r", "/grant:r", ...grants, "/Q"];
 }
 
-async function users(): Promise<void> {
-  if (existsSync(AGENT_SECRET)) return;
-  await mkdir(NIBBLETS_DATA, { recursive: true });
+/** A hidden local user, with its password where runas finds it; made once. */
+async function localUser(name: string, description: string): Promise<void> {
+  const secret = win.join(USER_SECRETS, `${name}.json`);
+  if (existsSync(secret)) return;
   const password = `${randomBytes(18).toString("base64url")}aA1!`;
   await ps(
     `$pw = ConvertTo-SecureString $p.password -AsPlainText -Force
-if (Get-LocalUser -Name 'nibblet' -ErrorAction SilentlyContinue) { Set-LocalUser -Name 'nibblet' -Password $pw }
-else { New-LocalUser -Name 'nibblet' -Password $pw -PasswordNeverExpires -UserMayNotChangePassword -Description 'Nibblets agent' | Out-Null }
-Add-LocalGroupMember -Group 'Users' -Member 'nibblet' -ErrorAction SilentlyContinue
+if (Get-LocalUser -Name $p.name -ErrorAction SilentlyContinue) { Set-LocalUser -Name $p.name -Password $pw }
+else { New-LocalUser -Name $p.name -Password $pw -PasswordNeverExpires -UserMayNotChangePassword -Description $p.description | Out-Null }
+Add-LocalGroupMember -Group 'Users' -Member $p.name -ErrorAction SilentlyContinue
 # Not on the sign-in screen: nobody signs in as it.
 $list = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\SpecialAccounts\\UserList'
 New-Item -Path $list -Force | Out-Null
-New-ItemProperty -Path $list -Name 'nibblet' -Value 0 -PropertyType DWord -Force | Out-Null`,
-    { password },
+New-ItemProperty -Path $list -Name $p.name -Value 0 -PropertyType DWord -Force | Out-Null`,
+    { name, description, password },
   );
-  await writeFile(AGENT_SECRET, JSON.stringify({ user: "nibblet", password }));
+  await writeFile(secret, JSON.stringify({ user: name, password }));
+  log(`made the ${name} user`);
+}
+
+async function users(): Promise<void> {
+  await mkdir(USER_SECRETS, { recursive: true });
+  // What's made in it is SYSTEM's and Administrators' alone too.
   await run("icacls", [
-    AGENT_SECRET,
+    USER_SECRETS,
     "/inheritance:r",
     "/grant:r",
-    `${SYSTEM}:F`,
-    `${ADMINISTRATORS}:F`,
+    `${SYSTEM}:(OI)(CI)F`,
+    `${ADMINISTRATORS}:(OI)(CI)F`,
     "/Q",
   ]);
-  log("made the nibblet user");
+  await localUser("nibblet", "Nibblets agent");
+  await localUser(TAILSCALE_USER, "Nibblets' Tailscale");
 }
 
 async function firewall(): Promise<void> {
@@ -140,16 +153,22 @@ foreach ($r in $p.ranges) {
   }
 }
 
-/** The agent's user's SID, once it's made. */
-let agentSid: Promise<string> | null = null;
-function agentUser(): Promise<string> {
-  agentSid ??= ps("(Get-LocalUser -Name 'nibblet').SID.Value").then((out) => {
-    const sid = out.trim();
-    if (!/^S-1-5-21-[\d-]+$/.test(sid)) throw new Error(`the nibblet user's SID isn't one: ${sid}`);
-    return sid;
-  });
-  return agentSid;
+/** A local user's SID, once it's made. */
+const sids = new Map<string, Promise<string>>();
+function sidOf(name: string): Promise<string> {
+  let sid = sids.get(name);
+  if (!sid) {
+    sid = ps("(Get-LocalUser -Name $p.name).SID.Value", { name }).then((out) => {
+      const sid = out.trim();
+      if (!/^S-1-5-21-[\d-]+$/.test(sid))
+        throw new Error(`the ${name} user's SID isn't one: ${sid}`);
+      return sid;
+    });
+    sids.set(name, sid);
+  }
+  return sid;
 }
+const agentUser = () => sidOf("nibblet");
 
 async function ownedDir(dir: string, who: Who | "downloads"): Promise<void> {
   await mkdir(dir, { recursive: true });
@@ -163,6 +182,75 @@ async function folders(): Promise<void> {
   await ownedDir(win.join(HOME, "Downloads"), "downloads");
   const link = win.join(HOME, ".guard", "Downloads");
   if (!existsSync(link)) await symlink(win.join(HOME, "Downloads"), link, "junction");
+}
+
+/**
+ * Tailscale's folders: its state, tailscaled's (SYSTEM's) alone; and where
+ * its key waits for `tailscale up`, which its user reads.
+ */
+async function tailscaleFolders(): Promise<void> {
+  const own = async (dir: string, grants: string[]) => {
+    await mkdir(dir, { recursive: true });
+    await run("icacls", [dir, "/inheritance:r", "/grant:r", ...grants, "/Q"]);
+  };
+  await own(WINDOWS_TAILSCALE.state, [`${SYSTEM}:(OI)(CI)F`, `${ADMINISTRATORS}:(OI)(CI)F`]);
+  await own(WINDOWS_TAILSCALE.run, [
+    `${SYSTEM}:(OI)(CI)F`,
+    `*${await sidOf(TAILSCALE_USER)}:(OI)(CI)RX`,
+  ]);
+}
+
+/**
+ * Starts Tailscale, to join, or (`leave`) to sign out the machine a
+ * nibblet taken off the tailnet left behind. The fence comes first: without
+ * it, it doesn't join, and the user's told why.
+ */
+async function startTailscale(leave = false): Promise<ChildProcess | null> {
+  if (!existsSync(WINDOWS_TAILSCALE.tailscaled)) {
+    log("there's no Tailscale in this machine's image");
+    return null;
+  }
+  const ports = leave ? [] : tailnetPorts(process.env.NIBBLET_TAILSCALE_PORTS);
+  let blocked: string | null = null;
+  try {
+    await run(FENCE, [WINDOWS_TAILSCALE.tailscaled, ...ports.map(String)]);
+    log(`tailnet may reach ${ports.length ? `ports ${ports.join(", ")}` : "nothing"}`);
+    await tailscaleFolders();
+  } catch (err) {
+    blocked = `Couldn't fence off the machine from the tailnet, so it hasn't joined: ${err instanceof Error ? err.message : String(err)}`;
+    // Leaving is tidying up: not worth being on the tailnet unfenced for.
+    if (leave) return null;
+  }
+  const child = spawn(process.execPath, [path.join(scripts(), "tailscale.ts")], {
+    env: {
+      ...pick([
+        "PATH",
+        "PATHEXT",
+        "SystemRoot",
+        "SystemDrive",
+        "windir",
+        "TEMP",
+        "TMP",
+        "NODE_ENV",
+      ]),
+      ...pick(["NIBBLET_ID", "NIBBLET_SERVER_URL", "NIBBLET_GUARD_TOKEN"]),
+      ...(blocked ? { NIBBLET_TAILSCALE_BLOCKED: blocked } : {}),
+      ...(leave ? { NIBBLET_TAILSCALE_LEAVE: "1" } : {}),
+    },
+    stdio: "inherit",
+    windowsHide: true,
+  });
+  // The nibblet carries on without it: the user sees why on its settings.
+  child.on("exit", (code) => log(`tailscale stopped (${code})`));
+  child.on("error", (err) => log(`tailscale: ${err.message}`));
+  return child;
+}
+
+/** `entry.ts tailscale-leave`: just signs out the machine a nibblet left. */
+async function leaveTailnet(): Promise<void> {
+  if (!existsSync(win.join(WINDOWS_TAILSCALE.state, "tailscaled.state"))) return;
+  const child = await startTailscale(true);
+  if (child) await new Promise((resolve) => child.once("exit", resolve));
 }
 
 /** Ends a process and everything it started; Windows has no gentler way for a console process. */
@@ -205,8 +293,23 @@ export const windows: EntryPlatform = {
     await users();
     await firewall();
     await folders();
-    return async () => {};
+    const left = existsSync(win.join(WINDOWS_TAILSCALE.state, "tailscaled.state"));
+    const tailscale = await (
+      process.env.NIBBLET_TAILSCALE === "1"
+        ? startTailscale()
+        : left
+          ? startTailscale(true)
+          : Promise.resolve(null)
+    ).catch((err: unknown) => {
+      log(`couldn't start Tailscale: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    });
+    return async () => {
+      if (tailscale?.pid && tailscale.exitCode === null) await killTree(tailscale.pid);
+    };
   },
+
+  leaveTailnet,
 
   ownedDir: (dir, who) => ownedDir(dir, who),
 
