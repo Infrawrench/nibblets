@@ -285,7 +285,8 @@ describe.skipIf(missing !== null)(title, () => {
 
   it("shows its browser, if its guest has one", async ({ skip }) => {
     if (!capabilities?.browser) skip();
-    const until = Date.now() + 120_000;
+    // Windows' starts once its first sign-in's done, which can take minutes.
+    const until = Date.now() + (vm ? 300_000 : 120_000);
     let last = 0;
     while (Date.now() < until) {
       const res = await fetch(`${stack.base}/api/nibblets/${nibblet.id}/computer/sessions`, {
@@ -300,7 +301,7 @@ describe.skipIf(missing !== null)(title, () => {
       await sleep(2000);
     }
     throw new Error(`The browser's view answered ${last}`);
-  }, 150_000);
+  }, 330_000);
 
   it(
     "snapshots its home, and goes back to it",

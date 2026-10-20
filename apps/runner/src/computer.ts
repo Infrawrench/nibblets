@@ -35,6 +35,8 @@ import { z } from "zod";
 // The tokens go in the environment (OCU_SERVE_TOKEN, OCU_VIEW_TOKEN), never
 // the command line, which every process in the container can read.
 const DEFAULT_PORTS = { mcp: BROWSER_MCP_PORT, view: VIEW_PORT };
+/** How long it has to come up through a wrapper: the session runas waits for (three minutes), and then some. */
+const WRAPPED_START_MS = 4 * 60_000;
 
 export interface Computer {
   mcp: McpServerSpec;
@@ -163,7 +165,10 @@ export async function startComputer(
     log("warn", `OpenComputerUse: ${err.message}`);
   });
 
-  if (!(await waitForHttp(url, () => exited))) {
+  // Through a wrapper (runas into Windows' signed-in session), it can't start
+  // before the session has: a first boot's sign-in, making its profile, takes
+  // minutes, which runas waits out.
+  if (!(await waitForHttp(url, () => exited, lead.length > 0 ? WRAPPED_START_MS : 15_000))) {
     log("warn", `OpenComputerUse serve mode didn't come up${stdio ? "; using stdio" : ""}`);
     if (!exited) child.kill();
     return stdio;
