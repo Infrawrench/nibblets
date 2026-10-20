@@ -17,6 +17,7 @@ import {
   maskMcpServers,
   maskProductKey,
   McpServerList,
+  Resources,
   ToolRules,
   randomHamsterLook,
   RpcError,
@@ -273,6 +274,7 @@ export class Store {
         cliCredentials: input.cliCredentials ?? [],
         mcpServers: McpServerList.parse(input.mcpServers ?? []),
         toolApprovals: ToolRules.parse(input.toolApprovals ?? []),
+        ...(input.resources ? { resources: Resources.parse(input.resources) } : {}),
         tokenHash: hashToken(token),
       })
       .returning();

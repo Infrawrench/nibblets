@@ -42,6 +42,11 @@ const machine: MachineChoice = { backend, guest };
 const vm = backend !== "docker";
 const windowsIso = process.env.NIBBLET_TEST_WINDOWS_ISO ?? "";
 const repo = process.env.NIBBLET_TEST_GUEST_REPO ?? "Infrawrench/nibblets";
+/** Its size, where the host's small (a runner that runs Docker in a VM beside it): the default otherwise. */
+const resources = {
+  cpus: process.env.NIBBLET_TEST_CPUS ? Number(process.env.NIBBLET_TEST_CPUS) : null,
+  memoryMb: process.env.NIBBLET_TEST_MEMORY_MB ? Number(process.env.NIBBLET_TEST_MEMORY_MB) : null,
+};
 /** What stops it running here, if anything. */
 const missing = !backend
   ? "NIBBLET_TEST_MACHINE"
@@ -245,6 +250,7 @@ describe.skipIf(missing !== null)(title, () => {
         machine,
         ...(guest === "windows" ? { windowsProductKey: PRODUCT_KEY } : {}),
         browser: capabilities?.browser ?? false,
+        resources,
         message: "Say pong.",
       });
       expect(nibblet.machine).toEqual(machine);

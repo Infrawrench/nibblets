@@ -299,6 +299,8 @@ export const CreateNibblet = z.object({
   cliCredentials: z.array(z.string()).default([]),
   mcpServers: McpServerList.default([]),
   toolApprovals: ToolRules.default([]),
+  /** How much of the machine it may use; the default unless given. */
+  resources: Resources.optional(),
   /** First message, sent once the container is up. */
   message: z.string().optional(),
 });

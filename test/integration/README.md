@@ -55,8 +55,13 @@ On Windows Server, which has no Default Switch, name Hyper-V's switch with
 it mounts are given as `/mnt/<drive>/…`), and `NIBBLET_TEST_HOST_FROM_DOCKER`
 to the address its containers reach Windows at.
 
+On a small host, `NIBBLET_TEST_CPUS` and `NIBBLET_TEST_MEMORY_MB` size the
+test's nibblet, rather than its default (up to four CPUs, and 4 GB).
+
 CI runs Linux in Docker, Podman and KVM on every push. The Machines workflow
 (for changes to machines, weekly, or by hand) runs Windows on KVM, and Linux
 and Windows on Hyper-V, on `windows-2025`, which runs Hyper-V and WSL 2
 nested; Windows guests install from the ISO the `WINDOWS_ISO_URL` secret
-names. Hosted runners can't run Apple Virtualization, so that runs here.
+names. Apple Virtualization runs here: `macos-15-intel`, the one hosted
+runner with a hypervisor, runs only one VM at a time (its runner is lost
+when a nibblet's starts beside Docker's), and Depot's Macs have none.
