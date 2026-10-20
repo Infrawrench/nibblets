@@ -1,0 +1,4 @@
+# Generated files that LeanerCloud/dotclaude's scripts/reclaim-merged-worktrees.sh may delete
+# along with a merged worktree. Exact paths, one per line, read only from the default branch.
+# TanStack Router regenerates this route tree on every web build or dev run; it is gitignored.
+apps/web/src/routeTree.gen.ts
