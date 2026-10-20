@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import type { Duplex, Readable } from "node:stream";
 import {
@@ -54,6 +55,10 @@ export class GuestDaemon {
   private readonly opts: DaemonOptions;
   private readonly log: (message: string) => void;
   private port: Duplex | null = null;
+  /** The link it last heard hello from, and how often it's let go of channels, as this agent. */
+  private link: string | null = null;
+  private drops = 0;
+  private readonly instance = randomBytes(6).toString("hex");
   private reader = new SerialReader();
   private readonly runs = new Map<string, Run>();
   /** Finished runs' tails and exits, newest last. */
@@ -143,18 +148,21 @@ export class GuestDaemon {
     this.write(encodeSerial({ kind: "data", frame: encodeFrame(channel, new Uint8Array(0)) }));
   }
 
-  private hello(): void {
+  private hello(link?: string): void {
     this.send({
       type: "hello",
       os: this.opts.guest.os,
       version: this.opts.version,
       runs: [...this.runs].map(([run, r]) => ({ run, pid: r.child.pid ?? 0 })),
       exited: this.finished.map((f) => f.exit),
+      ...(link ? { link } : {}),
+      epoch: `${this.instance}.${this.drops}`,
     });
   }
 
   /** Drops channels, and runs' output to them; `which` picks them by id. */
   private dropChannels(which: (channel: number) => boolean): void {
+    this.drops++;
     for (const [channel, c] of [...this.channels]) {
       if (!which(channel)) continue;
       this.channels.delete(channel);
@@ -184,8 +192,12 @@ export class GuestDaemon {
     switch (msg.type) {
       case "hello":
         // A new link from the server: what it opened before is gone with it.
-        this.dropChannels((channel) => channel < GUEST_CHANNELS);
-        this.hello();
+        // The same one again (it and the bridge may both ask) loses nothing.
+        if (msg.link === undefined || msg.link !== this.link) {
+          this.dropChannels((channel) => channel < GUEST_CHANNELS);
+          this.link = msg.link ?? null;
+        }
+        this.hello(msg.link);
         return;
       case "reset":
         this.dropChannels(() => true);

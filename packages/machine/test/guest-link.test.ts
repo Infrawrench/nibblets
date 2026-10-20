@@ -17,13 +17,14 @@ function pretend() {
     onClose: () => {},
   };
   const say = (msg: object) => onMessage(JSON.stringify(msg));
-  const hello = (runs: string[] = [], exited: object[] = []) =>
+  const hello = (runs: string[] = [], exited: object[] = [], also: object = {}) =>
     say({
       type: "hello",
       os: "linux",
       version: "t",
       runs: runs.map((run) => ({ run, pid: 1 })),
       exited,
+      ...also,
     });
   return {
     socket,
@@ -73,6 +74,49 @@ describe("a guest link", () => {
     guest.say({ type: "exited", run: run.run, code: 0, signal: null, error: null });
     await expect(job).rejects.toThrow(/cut off/);
     expect(got).toEqual([1, 2, 3]);
+  });
+
+  /** A link that's started a job, its run, and the job's end. */
+  async function started(guest: ReturnType<typeof pretend>) {
+    const opening = GuestLink.open(guest.socket, { nibbletId: "n", boot: "b" });
+    const asked = guest.sent.find((m) => m.type === "hello");
+    const link = asked?.type === "hello" ? asked.link : undefined;
+    guest.hello([], [], { link, epoch: "agent.1" });
+    const opened = await opening;
+    const out = new Writable({ write: (_c, _e, done) => done() });
+    out.on("error", () => {});
+    const job = opened.runToEnd({ command: "archive-home", stdout: out });
+    job.catch(() => {});
+    await new Promise((r) => setTimeout(r, 10));
+    const run = guest.sent.find((m) => m.type === "run");
+    if (run?.type !== "run") throw new Error("no run");
+    guest.say({ type: "started", run: run.run, pid: 2 });
+    return { link, run: run.run, job };
+  }
+
+  it("loses nothing to the guest answering its hello twice", async () => {
+    const guest = pretend();
+    const { link, run, job } = await started(guest);
+    // Asked by the link and by the bridge: the same agent, having let go of nothing.
+    guest.hello([], [], { link, epoch: "agent.1" });
+    guest.say({ type: "exited", run, code: 0, signal: null, error: null });
+    await expect(job).resolves.toBeUndefined();
+  });
+
+  it("doesn't hear another link's answer", async () => {
+    const guest = pretend();
+    const { run, job } = await started(guest);
+    guest.hello([], [], { link: "another", epoch: "agent.2" });
+    guest.say({ type: "exited", run, code: 0, signal: null, error: null });
+    await expect(job).resolves.toBeUndefined();
+  });
+
+  it("is cut off when the guest has let go of its channels since", async () => {
+    const guest = pretend();
+    const { link, run, job } = await started(guest);
+    guest.hello([run], [], { link, epoch: "agent.2" });
+    guest.say({ type: "exited", run, code: 0, signal: null, error: null });
+    await expect(job).rejects.toThrow(/cut off/);
   });
 
   it("names each job its own, so a new link's first job isn't an old one's", async () => {

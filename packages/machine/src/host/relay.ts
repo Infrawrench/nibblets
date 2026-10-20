@@ -9,7 +9,7 @@ import {
   SERIAL_CHUNK,
   SerialReader,
   type GuestTarget,
-  type ServerToGuest,
+  ServerToGuest,
 } from "@nibblet/protocol";
 import type { GuestSocket } from "../guest-link.ts";
 
@@ -20,6 +20,24 @@ export type RelayTargets = Record<GuestTarget, { host: string; port: number }>;
 export function target(url: string): { host: string; port: number } {
   const u = new URL(url);
   return { host: u.hostname, port: Number(u.port || (u.protocol === "https:" ? 443 : 80)) };
+}
+
+const HELLO = JSON.stringify({ type: "hello" });
+
+/** Whether a message from the server is its hello. */
+function isHello(text: string): boolean {
+  // Most aren't, and needn't be parsed to tell.
+  if (!text.includes('"hello"')) return false;
+  const parsed = ServerToGuest.safeParse(parseJson(text));
+  return parsed.success && parsed.data.type === "hello";
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -36,6 +54,8 @@ export class GuestRelay {
   private port: Duplex | null = null;
   private reader = new SerialReader();
   private server: GuestSocket | null = null;
+  /** How the server's link last said hello, to say it again when the guest's port comes back. */
+  private serverHello = HELLO;
   /** The guest's connections, by channel. */
   private readonly sockets = new Map<number, Socket>();
   private closed = false;
@@ -70,7 +90,8 @@ export class GuestRelay {
     port.once("error", gone);
     // Whatever either end thought was open is gone with the last port.
     this.toGuest({ type: "reset" });
-    if (this.server) this.toGuest({ type: "hello" });
+    // Asked as the link asked, so the guest knows it.
+    if (this.server) this.writePort(encodeSerial({ kind: "message", text: this.serverHello }));
   }
 
   get connected(): boolean {
@@ -89,10 +110,12 @@ export class GuestRelay {
   attachServer(socket: GuestSocket): void {
     const previous = this.server;
     this.server = socket;
+    this.serverHello = HELLO;
     previous?.close();
     socket.onMessage((data) => {
       let room = true;
       if (typeof data === "string") {
+        if (this.server === socket && isHello(data)) this.serverHello = data;
         room = this.writePort(encodeSerial({ kind: "message", text: data }));
       } else {
         const frame = decodeFrame(data);

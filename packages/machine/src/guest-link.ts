@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { Duplex, Writable, type Readable } from "node:stream";
 import {
   decodeFrame,
@@ -110,6 +111,10 @@ export class GuestLink {
   /** Jobs' names, unique to this link, so an old job's exit is never a new one's. */
   private readonly jobPrefix = `job:${Math.random().toString(36).slice(2, 10)}`;
   private helloed = false;
+  /** Says hello as this, so its answers are told from another link's. */
+  private readonly id = randomBytes(8).toString("hex");
+  /** The agent's epoch when it last said hello. */
+  private epoch: string | undefined;
   private isGone = false;
   /** Runs whose output was cut off, so they can't be said to have ended well. */
   private readonly cutOff = new Set<string>();
@@ -144,7 +149,7 @@ export class GuestLink {
     timeoutMs = 30_000,
   ): Promise<GuestLink> {
     const link = new GuestLink(socket, machine.nibbletId, machine.boot);
-    link.send({ type: "hello" });
+    link.send({ type: "hello", link: link.id });
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
@@ -179,6 +184,12 @@ export class GuestLink {
     const msg = parsed.data;
     switch (msg.type) {
       case "hello": {
+        // An answer to another link's asking: not this one's to hear.
+        if (msg.link !== undefined && msg.link !== this.id) return;
+        // Asked twice (by this link and the bridge), it answers twice: the
+        // same epoch is the same agent, having let go of nothing since.
+        if (this.helloed && msg.epoch !== undefined && msg.epoch === this.epoch) return;
+        this.epoch = msg.epoch;
         const running = new Set(msg.runs.map((r) => r.run));
         // Another on the same link: the port started afresh, and what was on its channels is lost.
         if (this.helloed) this.loseChannels();

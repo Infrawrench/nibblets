@@ -82,9 +82,10 @@ export const ServerToGuest = z.discriminatedUnion("type", [
   /**
    * Asks it to say `hello` again: sent whenever the server's side connects.
    * Channels the server opened (from 1) are gone with the server's last
-   * link, so it closes them, and stops sending runs' output anywhere.
+   * link, so it closes them, and stops sending runs' output anywhere: unless
+   * `link` is the one it last heard from, which may ask more than once.
    */
-  z.object({ type: z.literal("hello") }),
+  z.object({ type: z.literal("hello"), link: z.string().max(64).optional() }),
   /** The host's end of the port is new: every channel is gone, the guest's own too. */
   z.object({ type: z.literal("reset") }),
   /**
@@ -140,6 +141,13 @@ export const GuestToServer = z.discriminatedUnion("type", [
     version: z.string(),
     runs: z.array(z.object({ run: z.string(), pid: z.int() })),
     exited: z.array(RunExitInfo),
+    /** The link that asked, if one did. */
+    link: z.string().max(64).optional(),
+    /**
+     * This agent, and how many times it's let go of channels: a link that
+     * hears it unchanged has lost none since it last heard it.
+     */
+    epoch: z.string().max(64).optional(),
   }),
   z.object({ type: z.literal("started"), run: z.string(), pid: z.int() }),
   RunExitInfo.extend({ type: z.literal("exited") }),
