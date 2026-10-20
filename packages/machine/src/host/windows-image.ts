@@ -63,7 +63,7 @@ export interface WindowsSetup {
 }
 
 /** The OpenComputerUse release Windows guests run: 0.11 or later for a live view of them. */
-export const WINDOWS_OCU_VERSION = "0.10.0";
+export const WINDOWS_OCU_VERSION = "0.11.0";
 
 const xml = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
