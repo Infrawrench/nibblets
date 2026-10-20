@@ -1,3 +1,5 @@
+// First, so tls distrusts the compromised eMudhra intermediates before anything connects.
+import "kill-emudhra";
 import { parseArgs } from "node:util";
 import { startHostMcpBridge } from "./bridge.ts";
 import { runOnHost } from "./clis/index.ts";
