@@ -888,7 +888,15 @@ export class Conductor {
 
   // Runner connections
 
-  async attach(nibbletId: string, link: RunnerLink): Promise<void> {
+  /** Takes a runner's link, or turns it away: whether it took it. */
+  async attach(nibbletId: string, link: RunnerLink): Promise<boolean> {
+    const row = await this.store.nibbletRow(nibbletId);
+    // A runner still up after its nibblet was stopped, its machine on its way
+    // down (a VM's stop waits for a snapshot first): not taken back.
+    if (row.status === "stopped" && this.links.get(nibbletId) !== link) {
+      link.close();
+      return false;
+    }
     const previous = this.links.get(nibbletId);
     previous?.close();
     if (previous && previous !== link) {
@@ -896,7 +904,6 @@ export class Conductor {
       this.cardFiles.runnerGone(nibbletId);
     }
     this.links.set(nibbletId, link);
-    const row = await this.store.nibbletRow(nibbletId);
     const onePassword = await onePasswordLogin(this.config, this.store, nibbletId, (m) =>
       console.warn(`[${nibbletId}] ${m}`),
     );
@@ -928,6 +935,7 @@ export class Conductor {
         }),
       },
     });
+    return true;
   }
 
   /** Its own MCP servers, less any the host's tools now cover. */

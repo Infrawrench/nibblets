@@ -186,6 +186,9 @@ export class GuestLink {
       case "hello": {
         // An answer to another link's asking: not this one's to hear.
         if (msg.link !== undefined && msg.link !== this.id) return;
+        // An agent saying hello as it starts, not answering this link: the
+        // answer's still to come, and says what it's let go of since.
+        if (!this.helloed && msg.link === undefined && msg.epoch !== undefined) return;
         // Asked twice (by this link and the bridge), it answers twice: the
         // same epoch is the same agent, having let go of nothing since.
         if (this.helloed && msg.epoch !== undefined && msg.epoch === this.epoch) return;

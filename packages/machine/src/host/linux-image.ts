@@ -81,6 +81,8 @@ RUN apt-get update \\
  */
 const DISK_SCRIPT = String.raw`set -eu
 format="$1"
+# Only the disk, streamed, goes to stdout (on 3); everything else is said on stderr.
+exec 3>&1 1>&2
 mkdir -p /out
 # On arm64, no SME: M4 Macs have it, and Linux guests that use it under
 # Apple's hypervisor corrupt their own memory.
@@ -135,6 +137,8 @@ if [ "$format" = vhdx ]; then
   qemu-img convert -f raw -O vhdx -o subformat=dynamic "$disk" /out/disk.vhdx
   rm "$disk"
 fi
+# A sparse tar keeps its holes on the way out.
+if [ "${"${2:-}"}" = stream ]; then tar -C /out -cSf - "$(basename "$disk")" >&3; fi
 `;
 
 /** The disk file in an image's folder. */
@@ -148,7 +152,12 @@ const NEEDS_GB = 12;
 function docker(
   cli: string,
   args: string[],
-  opts: { stdin?: string | NodeJS.ReadableStream; onLine?: (line: string) => void } = {},
+  opts: {
+    stdin?: string | NodeJS.ReadableStream;
+    /** Where its stdout goes, rather than being kept and said. */
+    stdout?: NodeJS.WritableStream;
+    onLine?: (line: string) => void;
+  } = {},
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(cli, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -159,10 +168,13 @@ function docker(
       tail = (tail + text).slice(-4000);
       for (const line of text.split(/\r?\n/)) if (line.trim()) opts.onLine?.(line);
     };
-    child.stdout.on("data", (chunk: Buffer) => {
-      out += chunk.toString("utf8");
-      lines(chunk);
-    });
+    if (opts.stdout) child.stdout.pipe(opts.stdout);
+    else {
+      child.stdout.on("data", (chunk: Buffer) => {
+        out += chunk.toString("utf8");
+        lines(chunk);
+      });
+    }
     child.stderr.on("data", lines);
     child.once("error", reject);
     child.once("close", (code) =>
@@ -248,15 +260,36 @@ export async function buildLinuxImage(opts: {
     opts.progress(0.55, "Copying the runner image onto a disk");
     await docker(cli, ["create", "--name", name, tag, "true"]);
     const exported = spawn(cli, ["export", name], { stdio: ["ignore", "pipe", "inherit"] });
-    // A raw disk is sparse, which only a mount keeps; a VHDX is compact, so
-    // it's copied out instead, which works with a Docker that can't see this
-    // folder (one in WSL, for Hyper-V), as a mount doesn't.
-    const mounted = opts.format === "raw";
+    // A raw disk is sparse, which a mount keeps, on Linux; elsewhere Docker's
+    // in a VM, whose mounts of the host's folders are slow to make 32 GB of
+    // file system on, so it's streamed out as a sparse tar instead. A VHDX is
+    // compact, so it's copied out, which works with a Docker that can't see
+    // this folder (one in WSL, for Hyper-V), as a mount doesn't.
+    const how =
+      opts.format === "vhdx" ? "copied" : process.platform === "linux" ? "mounted" : "streamed";
+    const unpack =
+      how === "streamed"
+        ? spawn("tar", ["-xf", "-", "-C", resolve(opts.dir)], {
+            stdio: ["pipe", "inherit", "inherit"],
+          })
+        : null;
+    const unpacked = unpack
+      ? new Promise<void>((done, fail) => {
+          unpack.once("error", fail);
+          unpack.once("close", (code) =>
+            code === 0 ? done() : fail(new Error(`Unpacking the disk failed (${code})`)),
+          );
+        })
+      : Promise.resolve();
     await docker(
       cli,
       [
         "run",
-        ...(mounted ? ["--rm", "-v", `${resolve(opts.dir)}:/out`] : ["--name", tools]),
+        ...(how === "mounted"
+          ? ["--rm", "-v", `${resolve(opts.dir)}:/out`]
+          : how === "streamed"
+            ? ["--rm"]
+            : ["--name", tools]),
         "-i",
         "--network",
         "none",
@@ -266,10 +299,12 @@ export async function buildLinuxImage(opts: {
         DISK_SCRIPT,
         "disk",
         opts.format,
+        ...(how === "streamed" ? ["stream"] : []),
       ],
-      { stdin: exported.stdout },
+      { stdin: exported.stdout, ...(unpack ? { stdout: unpack.stdin } : {}) },
     );
-    if (!mounted) {
+    await unpacked;
+    if (how === "copied") {
       opts.progress(0.95, "Copying the disk out");
       await docker(cli, ["cp", `${tools}:/out/${linuxDiskFile(opts.format)}`, opts.dir]);
     }

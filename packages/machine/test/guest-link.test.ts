@@ -103,6 +103,16 @@ describe("a guest link", () => {
     await expect(job).resolves.toBeUndefined();
   });
 
+  it("opens on its own answer, not on the agent saying hello as it starts", async () => {
+    const guest = pretend();
+    const opening = GuestLink.open(guest.socket, { nibbletId: "n", boot: "b" });
+    const asked = guest.sent.find((m) => m.type === "hello");
+    guest.hello([], [], { epoch: "agent.0" });
+    expect(await settles(opening)).toBe(false);
+    guest.hello([], [], { link: asked?.type === "hello" ? asked.link : "", epoch: "agent.2" });
+    expect(await settles(opening)).toBe(true);
+  });
+
   it("doesn't hear another link's answer", async () => {
     const guest = pretend();
     const { run, job } = await started(guest);

@@ -174,10 +174,15 @@ export function createApp(services: Services, bus: Bus) {
         send: (message) => socket?.send(JSON.stringify(message)),
         close: () => socket?.close(1000, "replaced"),
       };
+      // Its messages are heard once it's taken, in order, and not at all if it's turned away.
+      let taken: Promise<boolean> = Promise.resolve(false);
       return {
         onOpen(_event, ws) {
           socket = ws;
-          void conductor.attach(nibbletId, link);
+          taken = conductor.attach(nibbletId, link).catch((err: unknown) => {
+            console.error(err);
+            return false;
+          });
         },
         onMessage(event) {
           const parsed = RunnerToServer.safeParse(JSON.parse(String(event.data)));
@@ -185,8 +190,8 @@ export function createApp(services: Services, bus: Bus) {
             console.warn(`bad message from runner ${nibbletId}`, parsed.error.message);
             return;
           }
-          void conductor
-            .onRunnerMessage(nibbletId, parsed.data)
+          void taken
+            .then((ok) => (ok ? conductor.onRunnerMessage(nibbletId, parsed.data) : undefined))
             .catch((err: unknown) => console.error(err));
         },
         onClose() {
