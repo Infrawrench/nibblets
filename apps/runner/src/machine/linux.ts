@@ -3,6 +3,7 @@ import { mkdir, open, readdir, readFile, stat, writeFile, type FileHandle } from
 import { Duplex } from "node:stream";
 import { promisify } from "node:util";
 import {
+  APPLE_AGENT_VSOCK_PORT,
   GUEST_PORT_NAME,
   HYPERV_AGENT_PORT,
   TAILSCALE_GID,
@@ -206,6 +207,28 @@ export const linux: GuestPlugin = {
       await sh("modprobe", ["hv_sock"]).catch(() => "");
       log(`talking to the host on Hyper-V socket port ${HYPERV_AGENT_PORT}`);
       return relayStream("python3", [HVSOCK_RELAY, String(HYPERV_AGENT_PORT)]);
+    }
+    // On Apple Virtualization, vsock, to the port the host listens on: the
+    // virtio console it also offers is a tty, which stalled for good on a
+    // fresh VM's first boot. Elsewhere there's no host there, and it's on
+    // to the console ports.
+    if (await exists("/dev/vsock")) {
+      const probe = await run(
+        "python3",
+        [HVSOCK_RELAY, "--connect", String(APPLE_AGENT_VSOCK_PORT), "--probe"],
+        { timeout: 10_000 },
+      ).then(
+        () => true,
+        () => false,
+      );
+      if (probe) {
+        log(`talking to the host on vsock port ${APPLE_AGENT_VSOCK_PORT}`);
+        return relayStream(
+          "python3",
+          [HVSOCK_RELAY, "--connect", String(APPLE_AGENT_VSOCK_PORT)],
+          log,
+        );
+      }
     }
     // udev names the port a moment after boot.
     for (let attempt = 0; attempt < 60; attempt++) {

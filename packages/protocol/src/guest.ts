@@ -40,6 +40,9 @@ export const GUEST_PORT_NAME = "dev.nibblets.agent";
  */
 export const HYPERV_AGENT_PORT = 0x4e42;
 
+/** The vsock port the host listens on for a guest's agent under Apple Virtualization. */
+export const APPLE_AGENT_VSOCK_PORT = 1024;
+
 /** The Hyper-V service id for a Linux guest's vsock port, as hv_sock maps them. */
 export function hypervServiceId(port: number): string {
   return `${port.toString(16).padStart(8, "0")}-facb-11e6-bd58-64006a7986d3`;

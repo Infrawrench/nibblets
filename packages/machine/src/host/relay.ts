@@ -175,6 +175,19 @@ export class GuestRelay {
       this.sockets.delete(parsed.data.channel);
       return;
     }
+    // An agent saying hello unasked has just opened its port, and may have
+    // missed the link's asking (said before it could hear): asked again now,
+    // the link needn't wait to ask again itself. Only an agent that says
+    // which link it's answering, so an older one's answer can't loop.
+    if (
+      parsed.success &&
+      parsed.data.type === "hello" &&
+      parsed.data.link === undefined &&
+      parsed.data.epoch !== undefined &&
+      this.server
+    ) {
+      this.writePort(encodeSerial({ kind: "message", text: this.serverHello }));
+    }
     this.server?.send(text);
   }
 

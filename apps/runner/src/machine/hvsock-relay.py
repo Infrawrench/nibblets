@@ -10,11 +10,40 @@
 # host), so nothing in this VM can pose as it and run things as root.
 #
 #   python3 hvsock-relay.py <vsock port>
+#
+# On Apple Virtualization the host listens instead: with --connect it
+# connects to it, and ends when either side does (--probe: just to see if
+# it can). The agent's port there was a virtio console, a tty, which stalled.
+#
+#   python3 hvsock-relay.py --connect <vsock port> [--probe]
 
 import os
 import socket
 import sys
 import threading
+
+if sys.argv[1] == "--connect":
+    conn = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
+    try:
+        conn.connect((socket.VMADDR_CID_HOST, int(sys.argv[2])))
+    except OSError as e:
+        print(f"nibblet-vsock: no host to connect to: {e}", file=sys.stderr, flush=True)
+        sys.exit(3)
+    if "--probe" in sys.argv:
+        conn.close()
+        sys.exit(0)
+
+    def from_host():
+        while data := conn.recv(65536):
+            view = memoryview(data)
+            while view:
+                view = view[os.write(1, view) :]
+        os._exit(0)
+
+    threading.Thread(target=from_host, daemon=True).start()
+    while data := os.read(0, 65536):
+        conn.sendall(data)
+    os._exit(0)
 
 port = int(sys.argv[1])
 lock = threading.Lock()

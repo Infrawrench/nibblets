@@ -1,5 +1,5 @@
 import { Duplex, PassThrough } from "node:stream";
-import { SerialReader } from "@nibblet/protocol";
+import { encodeSerial, SerialReader } from "@nibblet/protocol";
 import { describe, expect, it } from "vitest";
 import type { GuestSocket } from "../src/guest-link.ts";
 import { GuestRelay } from "../src/host/index.ts";
@@ -68,5 +68,36 @@ describe("a VM's relay", () => {
     const again = guestPort();
     relay.attachPort(again);
     expect(again.said()).toEqual(['{"type":"reset"}', '{"type":"hello"}']);
+  });
+
+  it("asks an agent again when it says hello unasked, as one that's just opened its port", async () => {
+    const tick = () => new Promise((r) => setImmediate(r));
+    const relay = new GuestRelay(targets, () => {});
+    const port = guestPort();
+    relay.attachPort(port);
+    relay.attachServer(server());
+    port.said();
+    const hello = (extra: object) =>
+      port.push(
+        encodeSerial({
+          kind: "message",
+          text: JSON.stringify({
+            type: "hello",
+            os: "linux",
+            version: "t",
+            runs: [],
+            exited: [],
+            ...extra,
+          }),
+        }),
+      );
+    hello({ epoch: "agent.0" });
+    await tick();
+    expect(port.said()).toEqual(['{"type":"hello"}']);
+    // An answer to a link, or an older agent's hello: nothing more.
+    hello({ link: "l", epoch: "agent.1" });
+    hello({});
+    await tick();
+    expect(port.said()).toEqual([]);
   });
 });
