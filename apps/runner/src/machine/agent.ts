@@ -5,6 +5,8 @@
  * `docker exec` does for a container. See daemon.ts, and protocol's guest.ts
  * for what goes over the port.
  */
+// First, so tls distrusts the compromised eMudhra intermediates before anything connects.
+import "kill-emudhra";
 import { readFileSync } from "node:fs";
 import type { Writable } from "node:stream";
 import { z } from "zod";
