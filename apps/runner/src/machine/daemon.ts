@@ -194,6 +194,10 @@ export class GuestDaemon {
         // A new link from the server: what it opened before is gone with it.
         // The same one again (it and the bridge may both ask) loses nothing.
         if (msg.link === undefined || msg.link !== this.link) {
+          if (this.runs.size > 0)
+            this.log(
+              `a new link (${msg.link ?? "?"}) said hello; dropping the last one's channels`,
+            );
           this.dropChannels((channel) => channel < GUEST_CHANNELS);
           this.link = msg.link ?? null;
         }

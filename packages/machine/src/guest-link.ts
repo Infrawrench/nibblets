@@ -189,10 +189,19 @@ export class GuestLink {
         // Asked twice (by this link and the bridge), it answers twice: the
         // same epoch is the same agent, having let go of nothing since.
         if (this.helloed && msg.epoch !== undefined && msg.epoch === this.epoch) return;
+        const before = this.epoch;
         this.epoch = msg.epoch;
         const running = new Set(msg.runs.map((r) => r.run));
         // Another on the same link: the port started afresh, and what was on its channels is lost.
-        if (this.helloed) this.loseChannels();
+        if (this.helloed) {
+          if (this.closers.size > 0) {
+            this.log(
+              "warn",
+              `it said hello again (as ${msg.epoch ?? "an older agent"}, after ${before ?? "nothing"}), so what was open on it is gone`,
+            );
+          }
+          this.loseChannels();
+        }
         this.helloed = true;
         // How the last few runs ended, but not of a name that's running again now.
         for (const exit of msg.exited) if (!running.has(exit.run)) this.settle(exit.run, exit);
@@ -254,6 +263,7 @@ export class GuestLink {
   private end(): void {
     if (this.isGone) return;
     this.isGone = true;
+    if (this.closers.size > 0) this.log("warn", "the link closed, with channels open on it");
     this.hello.reject(new GuestGone());
     for (const d of [...this.started.values(), ...this.opens.values()]) d.reject(new GuestGone());
     for (const d of this.tails.values()) d.reject(new GuestGone());

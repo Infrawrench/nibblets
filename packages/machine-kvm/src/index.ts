@@ -50,8 +50,13 @@ const HOME_GB = 64;
 const WINDOWS_DISK_GB = 64;
 /** How long Windows gets to install itself and the runner, which is mostly downloading. */
 const INSTALL_HOURS = 3;
-/** Once it's said something, how long it may go without saying more: it says each step, and says it's still compiling. */
-const INSTALL_QUIET_MINUTES = 15;
+/**
+ * Once it's said something, how long it may go without saying more: it says
+ * each step, and says it's still compiling. Between setup's last word and
+ * the bootstrap's first are Windows' own first-run steps, which say nothing,
+ * and on a slow host have taken over 15 minutes.
+ */
+const INSTALL_QUIET_MINUTES = 30;
 /**
  * How long setup may take to get as far as saying anything while its screen
  * is dark: it hasn't started from its installer. Once setup's own screens are
