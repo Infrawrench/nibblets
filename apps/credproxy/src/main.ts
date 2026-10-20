@@ -1,3 +1,5 @@
+// First, so tls distrusts the compromised eMudhra intermediates before anything connects.
+import "kill-emudhra";
 import { existsSync } from "node:fs";
 import { serve } from "@hono/node-server";
 import { z } from "zod";

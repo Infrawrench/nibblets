@@ -23,6 +23,8 @@
  * own profile), gate, harness state and temporary folder. It shares the
  * parent's desktop (see desktop.ts), as it does its files.
  */
+// First, so tls distrusts the compromised eMudhra intermediates before anything connects.
+import "kill-emudhra";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promises as dns } from "node:dns";
 import {
