@@ -34,6 +34,7 @@ import { NibbletSettings } from "./panels/NibbletSettings.tsx";
 import { Segmented } from "./ui/Segmented.tsx";
 import { Button } from "./ui/Button.tsx";
 import { MobileBack } from "./MobileBack.tsx";
+import { answerFromDevice, declineLocation } from "../lib/location.ts";
 
 function initialPanel(): PanelTab | null {
   const saved = storage.get(PANEL_KEY);
@@ -170,6 +171,10 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
           }}
           onResume={async () => {
             await connection.client.nibblets.resume({ id: nibblet.id });
+          }}
+          onLocation={async (requestId, share) => {
+            if (share) await answerFromDevice(connection, nibblet.id, requestId);
+            else await declineLocation(connection, nibblet.id, requestId);
           }}
         />
         <Composer connection={connection} nibblet={nibblet} running={running} />

@@ -7,6 +7,7 @@ import {
   Card,
   SpendingAllowance,
 } from "./bank.ts";
+import { LocationFix } from "./location.ts";
 import { CliStatuses, HostTools } from "./mcp.ts";
 import { HarnessId, HarnessModels } from "./models.ts";
 import { ConnectStatus, TailscaleStatus } from "./connect.ts";
@@ -75,6 +76,14 @@ export const contract = {
         approve: z.boolean(),
         reason: z.string().max(500).optional(),
       }),
+      Ok,
+    ),
+    /**
+     * Answers a nibblet asking where its person is (a pending
+     * `location_request`) with where this device is, or null to decline.
+     */
+    answerLocation: procedure(
+      z.object({ id: z.string(), requestId: z.string(), location: LocationFix.nullable() }),
       Ok,
     ),
     /** What it has running in the background, from `task_start`. Empty while it's asleep. */

@@ -399,6 +399,24 @@ export class Store {
     );
   }
 
+  /** `location_get` asks still marked pending, across every nibblet. */
+  async pendingLocationRequests(): Promise<
+    { nibbletId: string; item: Extract<ThreadItem, { type: "location_request" }> }[]
+  > {
+    const rows = await this.db
+      .select({ nibbletId: items.nibbletId, item: items.item })
+      .from(items)
+      .where(
+        and(
+          sql`${items.item}->>'type' = 'location_request'`,
+          sql`${items.item}->>'status' = 'pending'`,
+        ),
+      );
+    return rows.flatMap((r) =>
+      r.item.type === "location_request" ? [{ nibbletId: r.nibbletId, item: r.item }] : [],
+    );
+  }
+
   /** Turn items still marked running, across every nibblet. */
   async runningTurnItems(): Promise<
     { nibbletId: string; item: Extract<ThreadItem, { type: "turn" }> }[]

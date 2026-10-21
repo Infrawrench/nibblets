@@ -164,7 +164,7 @@ describe("systemPrompt", () => {
   it("points it at location_get once its person has shared where they are", () => {
     const prompt = systemPrompt({ ...base, nibblet, location: true });
     expect(prompt).toContain("## Where your person is");
-    expect(prompt).toContain("call `location_get`");
+    expect(prompt).toContain("call `location_get`, which asks their device");
     // The location itself only comes from the tool.
     expect(prompt).not.toContain("London");
     expect(prompt).not.toContain("51.5");
@@ -190,6 +190,18 @@ describe("systemPrompt", () => {
       sharedAt: "2026-10-20T08:00:00.000Z",
     });
     expect(answer.localTime).toMatch(/^Wednesday 21 October.* 13:00 BST$/);
+    expect(answer.fresh).toBe(true);
+    expect(answer.note).toBe("Their device gave this just now.");
+  });
+
+  it("says why an answer is where they last were, not where they are", () => {
+    const answer = locationAnswer(
+      london,
+      new Date("2026-10-21T12:00:00Z"),
+      "No Nibblets was open on their devices to ask, so this is where they last shared.",
+    );
+    expect(answer.fresh).toBe(false);
+    expect(answer.note).toContain("No Nibblets was open");
     expect(answer.note).toContain("They may have moved since");
   });
 

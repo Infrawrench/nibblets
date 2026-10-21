@@ -25,6 +25,7 @@ import { z } from "zod";
 import { cliLogins } from "./clilogins.ts";
 import type { Config } from "./config.ts";
 import { Approvals } from "./approvals.ts";
+import type { LocationRequests } from "./location-requests.ts";
 import { Budgets } from "./budget.ts";
 import { heartbeatInput, isQuiet, mayBeQuiet, QUIET_REPLY, systemPrompt } from "./context.ts";
 import {
@@ -141,6 +142,8 @@ export class Conductor {
   });
   /** Nibblets' cards, once the bank is set up; it writes their files through `cardFiles`. */
   bank: Bank | null = null;
+  /** `location_get` asks waiting on a device; set once the server has them. */
+  locations: LocationRequests | null = null;
   serverName = "nibblet";
 
   constructor(store: Store, docker: Orchestrator, config: Config) {
@@ -596,6 +599,7 @@ export class Conductor {
       this.subagentRuns.delete(child.id);
       this.views.delete(child.id);
       void this.approvals.cancelAll(child.id, reason);
+      void this.locations?.cancelAll(child.id);
       this.failActive(child.id, "interrupted", reason);
       this.links.get(child.id)?.close();
       this.links.delete(child.id);
@@ -616,6 +620,7 @@ export class Conductor {
 
   async stop(nibbletId: string): Promise<Nibblet> {
     await this.approvals.cancelAll(nibbletId, "The nibblet was stopped");
+    await this.locations?.cancelAll(nibbletId);
     await this.limits.end(nibbletId, "cancelled");
     this.failActive(nibbletId, "interrupted", "Stopped");
     this.links.get(nibbletId)?.close();
@@ -751,6 +756,7 @@ export class Conductor {
 
   interrupt(nibbletId: string): void {
     void this.approvals.cancelAll(nibbletId, "The turn was stopped");
+    void this.locations?.cancelAll(nibbletId);
     void this.limits.end(nibbletId, "cancelled");
     const turn = this.active.get(nibbletId);
     if (turn) {

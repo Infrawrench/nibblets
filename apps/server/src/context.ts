@@ -214,12 +214,12 @@ export function systemPrompt(input: SystemPromptInput): string {
 
 /**
  * What a nibblet whose person has shared their location is told. The
- * location itself comes from `location_get` when it needs it, so it isn't
- * sent with every turn.
+ * location itself comes fresh from their device through `location_get` when
+ * it needs it, so it isn't sent with every turn.
  */
 export const LOCATION_SECTION = `## Where your person is
 
-They've shared where they are with you. Whenever that or their local time matters (the weather, opening hours, what's nearby, travel, which country's sites, prices, units and rules apply, or the time zone for a schedule or heartbeat), call \`location_get\` for it rather than guessing, and give them times in their time zone. It's private: don't give it to a site or a person they didn't ask you to.`;
+They've shared where they are with you. Whenever that or their local time matters (the weather, opening hours, what's nearby, travel, which country's sites, prices, units and rules apply, or the time zone for a schedule or heartbeat), call \`location_get\`, which asks their device where they are now, rather than guessing, and give them times in their time zone. Once a turn is enough. It's private: don't give it to a site or a person they didn't ask you to.`;
 
 /** "Wednesday 21 October at 13:36 CEST", in `timeZone`. */
 export function localTime(timeZone: string, now: Date): string {
@@ -235,8 +235,12 @@ export function localTime(timeZone: string, now: Date): string {
   });
 }
 
-/** What `location_get` answers: where its person is, and the time there now. */
-export function locationAnswer(location: NibbletLocation, now: Date) {
+/**
+ * What `location_get` answers: where its person is, and the time there now.
+ * `stale` says why it's where they last shared rather than where their
+ * device is now.
+ */
+export function locationAnswer(location: NibbletLocation, now: Date, stale?: string) {
   const { place } = location;
   return {
     place: place && placeLabel(place),
@@ -255,13 +259,15 @@ export function locationAnswer(location: NibbletLocation, now: Date) {
     accuracyMetres: location.accuracyM,
     timeZone: location.timeZone,
     localTime: location.timeZone ? localTime(location.timeZone, now) : null,
+    fresh: stale === undefined,
     sharedAt: location.sharedAt,
     note: [
+      stale ?? "Their device gave this just now.",
       place
         ? null
         : "The place it's in couldn't be looked up; work it out from the coordinates if you need it.",
       location.timeZone ? null : "Their device didn't say its time zone.",
-      "This is where their device was when they last shared it. They may have moved since; if being wrong would matter, check with them.",
+      stale ? "They may have moved since; if being wrong would matter, check with them." : null,
     ]
       .filter(Boolean)
       .join(" "),

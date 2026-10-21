@@ -960,6 +960,18 @@ export function createMockServer(): ServerConnection {
     });
     // Mention a file, or attach one, and the mock hamster shares a sketch back.
     if (attachments.length > 0 || /\bfiles?\b/i.test(text)) mockShare(id, turnId);
+    // Ask about the weather, or where something is, and it asks where you are.
+    if (/\b(where|weather|nearby)\b/i.test(text)) {
+      store(id, {
+        type: "location_request",
+        id: crypto.randomUUID(),
+        turnId,
+        createdAt: now(),
+        status: "pending",
+        place: null,
+        decidedAt: null,
+      });
+    }
     store(id, {
       type: "turn",
       id: turnId,
@@ -1169,6 +1181,21 @@ export function createMockServer(): ServerConnection {
       tasks: async () => [],
       apps: async () => mockApps,
       stopTask: async () => ({ ok: true }),
+      answerLocation: async ({ id, requestId, location }) => {
+        const found = items.get(id)?.find((s) => s.item.id === requestId)?.item;
+        if (found?.type !== "location_request" || found.status !== "pending")
+          throw new RpcError("not_found", "It isn't waiting to hear where you are any more");
+        store(id, {
+          ...found,
+          status: location ? "shared" : "declined",
+          place: location ? "Shoreditch, London, England, United Kingdom" : null,
+          decidedAt: now(),
+        });
+        // No geocoder here: wherever it is, it's London.
+        if (location)
+          save({ ...get(id), location: { ...location, place: LONDON.place, sharedAt: now() } });
+        return { ok: true };
+      },
       decide: async ({ id, approvalId, approve, reason }) => {
         const found = items.get(id)?.find((s) => s.item.id === approvalId)?.item;
         if (found?.type === "approval" && found.status === "pending") {

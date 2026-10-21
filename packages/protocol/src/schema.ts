@@ -413,6 +413,18 @@ export const ThreadItem = z.discriminatedUnion("type", [
     decidedAt: Timestamp.nullable(),
   }),
   /**
+   * The nibblet asked where its person is (`location_get`), and an open
+   * Nibblets on their device answered, or didn't.
+   */
+  ItemBase.extend({
+    type: z.literal("location_request"),
+    /** `unanswered`: no device answered in time. */
+    status: z.enum(["pending", "shared", "declined", "unanswered"]),
+    /** The place that was shared, once it was. */
+    place: z.string().nullable(),
+    decidedAt: Timestamp.nullable(),
+  }),
+  /**
    * The nibblet hit its subscription's usage limit, or its own monthly budget,
    * and is waiting for it to reset.
    */

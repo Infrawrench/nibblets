@@ -4,7 +4,6 @@ import {
   type HarnessId,
   mergeMcpServers,
   mergeTailscale,
-  type NibbletLocation,
   RpcError,
   ServerInfo,
   type Contract,
@@ -32,6 +31,7 @@ import type { Scheduler } from "./scheduler.ts";
 import type { Snapshots } from "./snapshots.ts";
 import type { Files } from "./files.ts";
 import type { Geocoder } from "./geocode.ts";
+import { toLocation, type LocationRequests } from "./location-requests.ts";
 import type { Store } from "./store.ts";
 import type { Connect } from "./connect.ts";
 import type { Tunnel } from "./tunnel.ts";
@@ -55,6 +55,7 @@ export interface Services {
   bank: Bank;
   banks: Banks;
   geocoder: Geocoder;
+  locations: LocationRequests;
 }
 
 const ok = { ok: true } as const;
@@ -162,13 +163,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
           if (kept.length !== (merged ?? row.mcpServers).length) merged = kept;
         }
         // The place is looked up here, so what the nibblet's told comes from one source.
-        const location =
-          fix &&
-          ({
-            ...fix,
-            place: await s.geocoder.place(fix.latitude, fix.longitude),
-            sharedAt: new Date().toISOString(),
-          } satisfies NibbletLocation);
+        const location = fix && (await toLocation(s.geocoder, fix));
         const updated = await store.updateNibblet(id, {
           ...rest,
           ...(merged ? { mcpServers: merged } : {}),
@@ -231,6 +226,10 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       stopTask: async ({ id, taskId }) => {
         if (!conductor.terminals.stopTask(id, taskId))
           throw new RpcError("bad_request", "It isn't running");
+        return ok;
+      },
+      answerLocation: async ({ id, requestId, location }) => {
+        await s.locations.answer(id, requestId, location);
         return ok;
       },
       decide: async ({ id, approvalId, approve, reason }) => {

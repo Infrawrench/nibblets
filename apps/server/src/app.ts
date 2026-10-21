@@ -130,7 +130,7 @@ export function createApp(services: Services, bus: Bus) {
       let keepalive: ReturnType<typeof setInterval> | null = null;
       return {
         onOpen(_event, ws) {
-          unsubscribe = bus.subscribe((message: LiveMessage) =>
+          unsubscribe = bus.subscribeUi((message: LiveMessage) =>
             ws.send(JSON.stringify(message), { compress: true }),
           );
           // Tunnels and proxies close sockets that go quiet (Cloudflare's after

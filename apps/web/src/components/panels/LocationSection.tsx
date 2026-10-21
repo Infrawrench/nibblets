@@ -1,19 +1,26 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LocateFixed, MapPin } from "lucide-react";
 import { formatCoordinates, placeLabel, type Nibblet } from "@nibblet/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
-import { currentFix, localTime, locationUnavailable } from "../../lib/location.ts";
+import {
+  answersByItself,
+  currentFix,
+  localTime,
+  locationUnavailable,
+  setAnswersByItself,
+} from "../../lib/location.ts";
 import { relativeTime } from "../../lib/time.ts";
 import { Button } from "../ui/Button.tsx";
 import { SectionHeading } from "../ui/Field.tsx";
+import { Switch } from "../ui/Switch.tsx";
 
 const distance = (metres: number) =>
   metres < 1000 ? `${Math.round(metres)} m` : `${(metres / 1000).toFixed(1)} km`;
 
 /**
  * Where the person is, shared from this device's location (the browser's, or
- * the desktop app's) when they ask. The server looks up the place it's in,
- * and the nibblet asks for it, with their time zone, with `location_get`.
+ * the desktop app's) when they ask, and whether this device answers the
+ * nibblet's `location_get` by itself. The server looks up the place.
  */
 export function LocationSection({
   connection,
@@ -25,6 +32,8 @@ export function LocationSection({
   const [busy, setBusy] = useState<"share" | "forget" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [auto, setAuto] = useState(() => answersByItself(connection.id, nibblet.id));
+  useEffect(() => setAuto(answersByItself(connection.id, nibblet.id)), [connection.id, nibblet.id]);
   const unavailable = locationUnavailable();
   const location = nibblet.location;
   const label = location?.place ? placeLabel(location.place) : null;
@@ -97,8 +106,8 @@ export function LocationSection({
         <div className="flex items-center gap-2 pt-0.5">
           <p className="flex-1 text-faint">
             {location
-              ? `${nibblet.name} looks this up when it needs it. Share again when you've moved.`
-              : "Lets it look up where you are (your town, time zone and coordinates) for the weather, local times and what's nearby. Your server finds the place with OpenStreetMap."}
+              ? `Where you last were. ${nibblet.name} asks your device again when it needs to know.`
+              : "When it needs to know where you are (for the weather, local times, what's nearby), it asks an open Nibblets on your device. Your server finds the place with OpenStreetMap."}
           </p>
           {location ? (
             <Button
@@ -120,6 +129,24 @@ export function LocationSection({
             {busy === "share" ? "Finding you…" : location ? "Update" : "Share my location"}
           </Button>
         </div>
+        {nibblet.parentId || unavailable ? null : (
+          <div className="flex items-center gap-2 border-t border-line pt-2">
+            <span className="flex-1 text-dim">
+              Answer from this device without asking me
+              <span className="block text-faint">
+                For a device you carry. It still needs the browser's permission.
+              </span>
+            </span>
+            <Switch
+              checked={auto}
+              onChange={(on) => {
+                setAnswersByItself(connection.id, nibblet.id, on);
+                setAuto(on);
+              }}
+              label="Answer from this device without asking me"
+            />
+          </div>
+        )}
       </div>
     </>
   );

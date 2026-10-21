@@ -26,6 +26,7 @@ import { tailscaleStatus } from "./hostmcp.ts";
 import { Bank } from "./bank.ts";
 import { Banks } from "./banks.ts";
 import { Geocoder } from "./geocode.ts";
+import { LocationRequests } from "./location-requests.ts";
 
 // The repository's version, which releases are tagged with.
 const VERSION = z
@@ -68,6 +69,9 @@ async function main(): Promise<void> {
   const banks = new Banks({ store, bank, env: process.env });
   await banks.load();
   conductor.bank = bank;
+  const geocoder = new Geocoder({ url: config.NIBBLET_GEOCODER_URL, version: VERSION });
+  const locations = new LocationRequests({ store, geocoder, viewers: () => bus.viewers });
+  conductor.locations = locations;
   const scheduler = new Scheduler(store, conductor);
   const snapshots = new Snapshots({
     store,
@@ -117,7 +121,8 @@ async function main(): Promise<void> {
       appUpdates,
       bank,
       banks,
-      geocoder: new Geocoder({ url: config.NIBBLET_GEOCODER_URL, version: VERSION }),
+      geocoder,
+      locations,
     },
     bus,
   );
@@ -138,6 +143,7 @@ async function main(): Promise<void> {
   );
 
   await conductor.reconcile();
+  await locations.resetStale();
   await scheduler.start();
   snapshots.start();
   harnessUpdates.start();

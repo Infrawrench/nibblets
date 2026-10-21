@@ -1,4 +1,6 @@
-import { isTimeZone, type LocationFix } from "@nibblet/protocol";
+import { isTimeZone, type LocationFix, type Nibblet } from "@nibblet/protocol";
+import type { ServerConnection } from "./connection.ts";
+import { storage } from "./storage.ts";
 
 /** The platform of the desktop app this page is in, or null in a browser. */
 function desktopPlatform(userAgent: string): string | null {
@@ -67,7 +69,7 @@ export function currentFix(geolocation: Geolocation = navigator.geolocation): Pr
     geolocation.getCurrentPosition(
       (position) => resolve(toFix(position, deviceTimeZone())),
       (error) => reject(new Error(positionErrorMessage(error))),
-      { enableHighAccuracy: false, timeout: 20_000, maximumAge: 5 * 60_000 },
+      { enableHighAccuracy: false, timeout: 20_000, maximumAge: 60_000 },
     );
   });
 }
@@ -80,4 +82,63 @@ export function localTime(timeZone: string, now = new Date()): string {
     minute: "2-digit",
     timeZone,
   });
+}
+
+const autoKey = (server: string, nibbletId: string) =>
+  `nibblet.location.auto.${server}.${nibbletId}`;
+
+/**
+ * Whether this device answers a nibblet asking where its person is without
+ * asking them. Kept on the device, since it's about where the device goes:
+ * a phone that's carried, say, and not a desktop left at home.
+ */
+export function answersByItself(server: string, nibbletId: string): boolean {
+  return storage.get(autoKey(server, nibbletId)) === "1";
+}
+
+export function setAnswersByItself(server: string, nibbletId: string, on: boolean): void {
+  if (on) storage.set(autoKey(server, nibbletId), "1");
+  else storage.remove(autoKey(server, nibbletId));
+}
+
+/** The top of a nibblet's tree: its sub-agents go by its setting. */
+export function rootOf(nibblets: readonly Pick<Nibblet, "id" | "parentId">[], id: string): string {
+  const seen = new Set<string>();
+  let current = nibblets.find((n) => n.id === id);
+  while (current?.parentId && !seen.has(current.id)) {
+    seen.add(current.id);
+    const parentId: string = current.parentId;
+    const parent = nibblets.find((n) => n.id === parentId);
+    if (!parent) return parentId;
+    current = parent;
+  }
+  return current?.id ?? id;
+}
+
+/** Whether the browser gives this page a position without asking the person first. */
+export async function locationGranted(): Promise<boolean> {
+  try {
+    const status = await navigator.permissions.query({ name: "geolocation" });
+    return status.state === "granted";
+  } catch {
+    return false;
+  }
+}
+
+/** Answers a nibblet's `location_get` with where this device is now. */
+export async function answerFromDevice(
+  connection: Pick<ServerConnection, "client">,
+  nibbletId: string,
+  requestId: string,
+): Promise<void> {
+  const location = await currentFix();
+  await connection.client.nibblets.answerLocation({ id: nibbletId, requestId, location });
+}
+
+export function declineLocation(
+  connection: Pick<ServerConnection, "client">,
+  nibbletId: string,
+  requestId: string,
+): Promise<unknown> {
+  return connection.client.nibblets.answerLocation({ id: nibbletId, requestId, location: null });
 }

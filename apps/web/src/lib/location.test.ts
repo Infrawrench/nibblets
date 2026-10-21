@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { currentFix, locationUnavailable, positionErrorMessage, toFix } from "./location.ts";
+import {
+  currentFix,
+  locationUnavailable,
+  positionErrorMessage,
+  rootOf,
+  toFix,
+} from "./location.ts";
 
 const mac = "Mozilla/5.0 (Macintosh) Chrome/146 NibbletsDesktop/darwin";
 const linux = "Mozilla/5.0 (X11; Linux x86_64) Chrome/146 NibbletsDesktop/linux";
@@ -37,5 +43,18 @@ describe("sharing a location", () => {
       ),
     } as unknown as Geolocation;
     await expect(currentFix(geolocation)).rejects.toThrow(/too long/);
+  });
+
+  it("goes by the top of a sub-agent's tree", () => {
+    const nibblets = [
+      { id: "pip", parentId: null },
+      { id: "scout", parentId: "pip" },
+      { id: "scout-2", parentId: "scout" },
+    ];
+    expect(rootOf(nibblets, "scout-2")).toBe("pip");
+    expect(rootOf(nibblets, "pip")).toBe("pip");
+    // Not loaded yet: its parent is the best guess.
+    expect(rootOf([{ id: "kid", parentId: "gone" }], "kid")).toBe("gone");
+    expect(rootOf([], "nib_x")).toBe("nib_x");
   });
 });
