@@ -104,7 +104,13 @@ class FakeStore implements BankStore {
 }
 
 /** What the fake issuer's purchase requests carry, signed with a header. */
-const FakePurchase = z.object({ ref: z.string(), amount: z.string() });
+const FakePurchase = z.object({
+  ref: z.string(),
+  authorization: z.string(),
+  amount: z.string(),
+  asset: z.string(),
+  nibbletCard: z.boolean(),
+});
 
 /** A card issuer that keeps its cards in memory. */
 class FakeIssuer {
@@ -175,8 +181,8 @@ class FakeIssuer {
       purchases: {
         read: (request) => {
           if (request.headers.get("x-signed") !== "fake") return null;
-          const { ref, amount } = FakePurchase.parse(JSON.parse(request.body));
-          return { ref, amount: BigInt(amount), merchant: "A shop" };
+          const purchase = FakePurchase.parse(JSON.parse(request.body));
+          return { ...purchase, amount: BigInt(purchase.amount), merchant: "A shop" };
         },
         answer: (approved) => ({ status: 200, headers: {}, body: JSON.stringify({ approved }) }),
       },
@@ -238,11 +244,31 @@ describe("Bank", () => {
   const request = (limit: string, kind: "single_use" | "multi_use" = "single_use") =>
     bank.request("nib_1", { provider: "fake", limit, kind, purpose: "A domain" });
 
-  /** The issuer asking whether a purchase may go through; null when it isn't signed. */
-  const ask = async (ref: string, amount: string, signed = true) => {
-    const answer = await bank.purchase(["fake"], {
-      headers: new Headers(signed ? { "x-signed": "fake" } : {}),
-      body: JSON.stringify({ ref, amount }),
+  let authorizations = 0;
+  /**
+   * The issuer asking whether a purchase may go through, as a new
+   * authorisation unless `authorization` says which; null when it isn't signed.
+   */
+  const ask = async (
+    ref: string,
+    amount: string,
+    more: {
+      signed?: boolean;
+      authorization?: string;
+      asset?: string;
+      nibbletCard?: boolean;
+      banks?: string[];
+    } = {},
+  ) => {
+    const answer = await bank.purchase(more.banks ?? ["fake"], {
+      headers: new Headers(more.signed === false ? {} : { "x-signed": "fake" }),
+      body: JSON.stringify({
+        ref,
+        amount,
+        authorization: more.authorization ?? `auth_${++authorizations}`,
+        asset: more.asset ?? "USD",
+        nibbletCard: more.nibbletCard ?? true,
+      }),
     });
     return answer && z.object({ approved: z.boolean() }).parse(JSON.parse(answer.body)).approved;
   };
@@ -520,7 +546,7 @@ describe("Bank", () => {
     );
     expect(await ask("tok_1", "500")).toBe(true);
     expect(await ask("tok_1", "1")).toBe(false);
-    // A check with the issuer takes over from what was approved before it.
+    // A check with the issuer takes over from what was approved well before it.
     const c = issuer.cards.get("tok_1");
     if (c) c.spent = 0n;
     clock = new Date(clock.getTime() + 60_000);
@@ -528,18 +554,59 @@ describe("Bank", () => {
     expect(await ask("tok_1", "2000")).toBe(true);
   });
 
-  it("lets a single-use card make one purchase, after any zero-amount checks", async () => {
+  it("still counts a purchase approved just before a check the issuer left it out of", async () => {
+    await request("20.00", "multi_use");
+    expect(await ask("tok_1", "1500")).toBe(true);
+    clock = new Date(clock.getTime() + 5_000);
+    await bank.sync();
+    expect(await store.cardRow([...store.rows.keys()][0] ?? "")).toMatchObject({
+      spentMinor: "0",
+    });
+    expect(await ask("tok_1", "600")).toBe(false);
+  });
+
+  it("lets a single-use card make one purchase, which may ask for more as it goes", async () => {
     await request("10.00", "single_use");
     expect(await ask("tok_1", "0")).toBe(true);
-    expect(await ask("tok_1", "500")).toBe(true);
-    expect(await ask("tok_1", "300")).toBe(false);
+    expect(await ask("tok_1", "500", { authorization: "auth_hotel" })).toBe(true);
+    // The hotel adds a night to the same authorisation.
+    expect(await ask("tok_1", "300", { authorization: "auth_hotel" })).toBe(true);
+    expect(await ask("tok_1", "100")).toBe(false);
     expect(logs.at(-1)).toContain("it's single use, and has been used");
+    // Not past its limit, even so.
+    expect(await ask("tok_1", "300", { authorization: "auth_hotel" })).toBe(false);
+  });
+
+  it("lets through purchases on the account's other cards, but not a nibblet's it doesn't know", async () => {
+    await request("10.00", "multi_use");
+    expect(await ask("tok_staff", "99999", { nibbletCard: false })).toBe(true);
+    expect(await ask("tok_9", "100")).toBe(false);
+    expect(logs.at(-1)).toContain("it was made for a nibblet, but not by this server");
+    expect(await ask("tok_1", "100", { asset: "EUR" })).toBe(false);
+    expect(logs.at(-1)).toContain("it's in EUR, not USD");
+  });
+
+  it("finds the card at whichever bank on the account has it", async () => {
+    const plugin = issuer.plugin();
+    bank.use(
+      new Map([
+        ["fake", plugin],
+        ["fake-ops", { ...plugin, id: "fake-ops" }],
+      ]),
+      new Map(),
+    );
+    await bank.request("nib_1", {
+      provider: "fake-ops",
+      limit: "10.00",
+      kind: "multi_use",
+      purpose: "Ops",
+    });
+    expect(await ask("tok_1", "100", { banks: ["fake", "fake-ops"] })).toBe(true);
   });
 
   it("declines cards it doesn't know or has killed, and anything it can't make out", async () => {
     const { card } = await request("10.00", "multi_use");
-    expect(await ask("tok_9", "100")).toBe(false);
-    expect(await ask("tok_1", "100", false)).toBeNull();
+    expect(await ask("tok_1", "100", { signed: false })).toBeNull();
     const unreadable = await bank.purchase(["fake"], {
       headers: new Headers({ "x-signed": "fake" }),
       body: "{",

@@ -207,10 +207,11 @@ export const BankKind = z.object({
   /**
    * For a provider that can ask this server about each purchase: the
    * address to give it (null while the server can't be reached from the
-   * internet), and where to give it.
+   * internet), whether that address changes (a quick tunnel's does, each
+   * time it starts), and where to give it.
    */
   purchaseHook: z
-    .object({ url: z.string().nullable(), where: z.string() })
+    .object({ url: z.string().nullable(), changes: z.boolean(), where: z.string() })
     .nullable()
     .default(null),
 });

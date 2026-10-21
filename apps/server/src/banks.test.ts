@@ -248,12 +248,15 @@ describe("providers that ask about purchases", () => {
   it("are given the address this server is reached at, once it has one", async () => {
     const { banks, reached } = setUp();
     const hook = async () => (await banks.status()).kinds[0]?.purchaseHook;
-    expect(await hook()).toEqual({ url: null, where: "In Fake's settings." });
+    expect(await hook()).toEqual({ url: null, changes: false, where: "In Fake's settings." });
     reached.address = { url: "https://pip.nibblets.dev", via: "tunnel", proxy: null };
     expect(await hook()).toEqual({
       url: "https://pip.nibblets.dev/bank/fake/purchases",
+      changes: false,
       where: "In Fake's settings.",
     });
+    reached.address = { url: "https://a-b.trycloudflare.com", via: "quick_tunnel", proxy: null };
+    expect(await hook()).toMatchObject({ changes: true });
   });
 
   it("have a request offered to the banks on its plugin", async () => {

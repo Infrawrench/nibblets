@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronRight, Copy, CreditCard, KeyRound, Wallet } from "lucide-react";
 import {
   type BankField,
@@ -233,9 +233,7 @@ function BankForm({
             />
           </FieldRow>
         ))}
-        {kind.purchaseHook ? (
-          <PurchaseHook connection={connection} kindName={kind.name} hook={kind.purchaseHook} />
-        ) : null}
+        {kind.purchaseHook ? <PurchaseHook kindName={kind.name} hook={kind.purchaseHook} /> : null}
       </div>
       <div className="sticky bottom-0 flex flex-wrap items-center gap-1.5 border-t border-line bg-panel px-4 py-2.5">
         {onBack ? (
@@ -345,19 +343,13 @@ function FieldInput({
  * access: a reverse proxy's, or Nibblets Connect's tunnel.
  */
 function PurchaseHook({
-  connection,
   kindName,
   hook,
 }: {
-  connection: ServerConnection;
   kindName: string;
   hook: NonNullable<BankKind["purchaseHook"]>;
 }) {
   const [copied, setCopied] = useState(false);
-  const address = useQuery({
-    queryKey: keys.publicAddress(connection.id),
-    queryFn: () => connection.client.publicAddress.status({}),
-  });
   return (
     <div className="flex flex-col gap-2 rounded-md border border-line bg-surface p-3">
       <span className="text-sm font-medium">Approving each purchase</span>
@@ -380,7 +372,7 @@ function PurchaseHook({
               {copied ? "Copied" : "Copy"}
             </Button>
           </span>
-          {address.data?.via === "quick_tunnel" ? (
+          {hook.changes ? (
             <p className="text-xs text-warning">
               This is a quick tunnel's address, which changes whenever the tunnel starts again.
               Until the new one is in {kindName}, nothing gets an answer, so every purchase is

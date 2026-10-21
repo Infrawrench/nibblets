@@ -10,6 +10,7 @@ import {
   type HookResponse,
   type IssuedCard,
   type Purchase,
+  type PurchaseHook,
 } from "@nibblet/bank";
 import {
   formatAmount,
@@ -38,6 +39,12 @@ const RECOVER_AFTER_MS = 2 * 60_000;
 const GIVE_UP_AFTER_MS = 60 * 60_000;
 /** How long a killed card can stay unsettled before it's recorded as closed anyway. */
 const UNSETTLED_AFTER_MS = 24 * 60 * 60_000;
+/**
+ * How long after a purchase is approved its provider might still leave it
+ * out of what's been spent. Until a check that starts this long after it,
+ * it's counted on top, even if that's twice.
+ */
+const SETTLING_MS = 15_000;
 
 export type BankStore = Pick<
   Store,
@@ -85,10 +92,14 @@ export class Bank {
   /** Where each open card's file is in its container, as its runner last said. */
   private readonly paths = new Map<string, string>();
   /**
-   * Purchases approved on each card since it was last checked with its
-   * provider, which its `spentMinor` doesn't have yet.
+   * Purchases approved on each card while it's open: the recent ones count
+   * on top of its `spentMinor` until a check with the provider has them,
+   * and a single-use card's tell which authorisation is its one purchase.
    */
-  private readonly approved = new Map<string, { amount: bigint; at: number }[]>();
+  private readonly approved = new Map<
+    string,
+    { authorization: string; amount: bigint; at: number }[]
+  >();
   private timer: ReturnType<typeof setInterval> | null = null;
   /** Whether the server has asked it to keep cards in step, so a bank set up later starts it. */
   private running = false;
@@ -363,59 +374,89 @@ export class Bank {
   }
 
   /**
-   * Answers a provider asking whether a purchase may go through, for the
-   * first of `banks` whose provider signed the request; null when none did.
-   * It's approved only if its card is open and has room for it, and
-   * anything that goes wrong is a no, since the provider's fallback is the
-   * person's to set and could be yes.
+   * Answers a provider asking whether a purchase may go through, if any of
+   * `banks` signed the request; null when none did. Several banks can sign
+   * it (two on one Stripe account share its webhook's secret), so the card
+   * is looked for at each of them. A purchase on a nibblet's card is
+   * approved only if the card is open and has room for it, and anything
+   * that goes wrong is a no, since the provider's fallback is the person's
+   * to set and could be yes. One on a card that isn't a nibblet's is let
+   * through, to the provider's own rules.
    */
   async purchase(banks: readonly string[], request: HookRequest): Promise<HookResponse | null> {
+    const signers: string[] = [];
+    let hook: PurchaseHook | null = null;
+    let purchase: Purchase | null = null;
     for (const id of banks) {
-      const hook = this.plugins.get(id)?.purchases;
-      if (!hook) continue;
-      let purchase: Purchase | null;
+      const own = this.plugins.get(id)?.purchases;
+      if (!own) continue;
+      let read: Purchase | null;
       try {
-        purchase = hook.read(request);
+        read = own.read(request);
       } catch (err) {
         this.deps.log(`${id} asked about a purchase that couldn't be read: ${message(err)}`);
-        return hook.answer(false);
+        return own.answer(false);
       }
-      if (!purchase) continue;
-      const approved = await this.allows(id, purchase).catch((err: unknown) => {
-        this.deps.log(`couldn't check a purchase on ${id}: ${message(err)}`);
-        return false;
-      });
-      return hook.answer(approved);
+      if (!read) continue;
+      signers.push(id);
+      hook ??= own;
+      purchase ??= read;
     }
-    return null;
+    if (!hook || !purchase) return null;
+    const asked = purchase;
+    const approved = await this.allows(signers, asked).catch((err: unknown) => {
+      this.deps.log(`couldn't check a purchase on ${asked.ref}: ${message(err)}`);
+      return false;
+    });
+    return hook.answer(approved);
   }
 
-  private async allows(bankId: string, purchase: Purchase): Promise<boolean> {
-    const row = await this.deps.store.cardByRef(bankId, purchase.ref);
+  private async allows(banks: readonly string[], purchase: Purchase): Promise<boolean> {
+    let row: CardRow | null = null;
+    for (const id of banks) {
+      row = await this.deps.store.cardByRef(id, purchase.ref);
+      if (row) break;
+    }
     const money = (amount: bigint) =>
-      row ? `${formatAmount(amount, row.decimals)} ${row.asset}` : `${amount} (minor units)`;
+      row ? `${formatAmount(amount, row.decimals)} ${row.asset}` : `${amount} ${purchase.asset}`;
     const decline = (why: string) => {
       this.deps.log(
-        `declined ${money(purchase.amount)} at ${purchase.merchant} on ${row?.id ?? `${bankId} card ${purchase.ref}`}: ${why}`,
+        `declined ${money(purchase.amount)} at ${purchase.merchant} on ${row?.id ?? `card ${purchase.ref}`}: ${why}`,
       );
       return false;
     };
-    if (!row) return decline("it isn't a nibblet's card");
+    if (!row) {
+      return purchase.nibbletCard
+        ? decline("it was made for a nibblet, but not by this server")
+        : true;
+    }
     if (row.state !== "open") return decline(`it's ${row.state}`);
+    if (purchase.asset !== row.asset) return decline(`it's in ${purchase.asset}, not ${row.asset}`);
     // From here to the end nothing waits, so two purchases at once are
     // checked one after the other.
-    const since = (row.checkedAt ?? row.createdAt).getTime();
-    const recent = (this.approved.get(row.id) ?? []).filter((a) => a.at >= since);
-    const held = recent.reduce((sum, a) => sum + a.amount, 0n);
+    const approved = this.approved.get(row.id) ?? [];
+    // What the provider can't have shown at the last check: approved after
+    // it, or so shortly before that it may not have been in what it said.
+    const since = (row.checkedAt ?? row.createdAt).getTime() - SETTLING_MS;
+    const held = approved.filter((a) => a.at >= since).reduce((sum, a) => sum + a.amount, 0n);
     const spent = BigInt(row.spentMinor) + held;
-    // A zero-amount one is a merchant checking the card is real.
-    if (row.kind === "single_use" && purchase.amount > 0n && spent > 0n) {
-      return decline("it's single use, and has been used");
+    if (row.kind === "single_use" && purchase.amount > 0n) {
+      // Its one purchase may ask for more as it goes; a zero-amount request
+      // is a merchant checking the card is real.
+      const paid = approved.filter((a) => a.amount > 0n);
+      const another = paid.some((a) => a.authorization !== purchase.authorization);
+      if (another || (paid.length === 0 && spent > 0n)) {
+        return decline("it's single use, and has been used");
+      }
     }
     const left = BigInt(row.limitMinor) - spent;
     if (purchase.amount > left) return decline(`only ${money(left)} of its limit is left`);
-    recent.push({ amount: purchase.amount, at: this.now().getTime() });
-    this.approved.set(row.id, recent);
+    approved.push({
+      authorization: purchase.authorization,
+      amount: purchase.amount,
+      at: this.now().getTime(),
+    });
+    this.approved.set(row.id, approved);
     return true;
   }
 
@@ -555,6 +596,7 @@ export class Bank {
       spentMinor: usage.spent.toString(),
     });
     this.paths.delete(row.id);
+    this.approved.delete(row.id);
     // It's dead either way; a container that's asleep has no file to remove.
     // One that was closing has had its file removed already.
     if (row.state !== "closing") {

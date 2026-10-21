@@ -117,6 +117,7 @@ export class Banks {
         purchaseHook: f.purchaseHook
           ? {
               url: address.url ? `${address.url}${purchasePath(f.id)}` : null,
+              changes: address.via === "quick_tunnel",
               where: f.purchaseHook.where,
             }
           : null,

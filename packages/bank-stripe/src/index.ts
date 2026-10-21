@@ -342,7 +342,6 @@ export function stripePlugin(options: StripeOptions, deps: Pick<BankDeps, "fetch
       ? {
           purchases: stripePurchaseHook({
             secret: options.webhookSecret,
-            currency,
             version: STRIPE_VERSION,
             ...(options.now ? { now: options.now } : {}),
           }),
@@ -374,7 +373,7 @@ const CURRENCY = defineField("STRIPE_CURRENCY", "Currency", {
 const WEBHOOK_SECRET = defineField("STRIPE_WEBHOOK_SECRET", "Webhook signing secret", {
   secret: true,
   placeholder: "whsec_…",
-  hint: "The real-time authorizations webhook's, from Stripe's Issuing settings. With it, this server approves each purchase, and only if its card is open and has room for it.",
+  hint: "The real-time authorizations webhook's, from Stripe's Issuing settings. With it, this server approves each purchase on a nibblet's card, and only if the card is open and has room for it. Purchases on the account's other cards go through as they would without it.",
 });
 
 export const stripe = defineBankFactory({
@@ -385,7 +384,7 @@ export const stripe = defineBankFactory({
   fields: [API_KEY, CARDHOLDER_ID, CURRENCY, WEBHOOK_SECRET],
   purchaseHook: {
     where:
-      "In Stripe's Issuing settings (dashboard.stripe.com/account/issuing), make this the real-time authorizations webhook, and have Stripe decline when it doesn't answer, so nothing goes through while this server can't be reached. Then paste the webhook's signing secret into the form.",
+      "In Stripe's Issuing settings (dashboard.stripe.com/account/issuing), make this the real-time authorizations webhook, and have Stripe decline when it doesn't answer, so nothing goes through while this server can't be reached. Stripe then asks about every card on the account; this server only judges nibblets' cards. Paste the webhook's signing secret into the form, and into any other Stripe bank on the same account.",
   },
   fromSettings(settings: BankSettingValues, deps: BankDeps) {
     if (!optionalSetting(settings, API_KEY)) return null;

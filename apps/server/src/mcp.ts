@@ -14,6 +14,7 @@ import {
 import { Cron } from "croner";
 import type { Context } from "hono";
 import { z } from "zod";
+import type { Decision } from "./approvals.ts";
 import type { Bank } from "./bank.ts";
 import type { Conductor } from "./conductor.ts";
 import type { Connect } from "./connect.ts";
@@ -22,7 +23,7 @@ import { describeHeartbeat } from "./context.ts";
 import type { Scheduler } from "./scheduler.ts";
 import { toNibblet, type Store } from "./store.ts";
 
-interface ToolDeps {
+export interface ToolDeps {
   store: Store;
   conductor: Conductor;
   scheduler: Scheduler;
@@ -44,7 +45,7 @@ function validCron(pattern: string, timezone: string): string | null {
 }
 
 /** The nibblet tools, scoped to the nibblet whose token made the call. */
-function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
+export function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
   const { store, conductor, scheduler, notifier, connect, bank } = deps;
   const server = new McpServer({ name: "nibblet", version: "0.1.0" });
   // A plain one isn't told it's a nibblet.
@@ -395,6 +396,16 @@ function describeCard(card: Card, path: string | null) {
   };
 }
 
+/**
+ * Payments waiting for a person to verify them, by nibblet and card, so a
+ * `card_verify` that returned before they'd finished can be waited on again.
+ */
+const verifications = new Map<string, Promise<Decision>>();
+/** How long one call waits for them: inside harnesses' tool timeouts (Codex's is a minute). */
+const VERIFY_WAIT_MS = 40_000;
+/** How long an answer the nibblet hasn't asked for is kept. */
+const VERIFY_KEEP_MS = 10 * 60_000;
+
 /** A tool's error as text the agent can act on, rather than a failed call. */
 /** A card tool's result, or its refusal as a tool error the agent can tell from success. */
 async function answer(work: () => Promise<ReturnType<typeof text>>) {
@@ -496,11 +507,37 @@ function registerCardTools(server: McpServer, nibblet: Nibblet, deps: ToolDeps):
       }),
   );
 
+  /** Waits a while for the person to verify a payment, and says how it went. */
+  async function verified(cardId: string, decision: Promise<Decision>) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const outcome = await Promise.race([
+      decision,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), VERIFY_WAIT_MS);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (!outcome) {
+      return text(
+        `Your person hasn't finished yet. Leave the page as it is, and call card_verify_wait with card ${cardId} to keep waiting.`,
+      );
+    }
+    verifications.delete(`${nibblet.id}:${cardId}`);
+    if (outcome.approved) {
+      return text(
+        "Your person says it's done. Look at the page to see whether the payment went through, and carry on.",
+      );
+    }
+    throw new RpcError(
+      "conflict",
+      `Your person didn't verify it${outcome.reason ? `: ${outcome.reason}` : ""}. Don't try to get past the verification yourself; tell them the payment didn't go through, unless the page shows it did.`,
+    );
+  }
+
   server.registerTool(
     "card_verify",
     {
       description:
-        "When a checkout stops to verify a card payment (3-D Secure: a code sent by text or email, or the bank's own approval page), call this and leave the page as it is: don't try to get past it yourself. Your person is told, opens your browser and does it there, so the code never comes to you. It returns once they say it's done, or that they couldn't; then look at the page and carry on, or tell them the payment didn't go through.",
+        "When a checkout stops to verify a card payment (3-D Secure: a code sent by text or email, or the bank's own approval page), call this and leave the page as it is: don't try to get past it yourself. Your person is told, opens your browser and does it there, so the code never comes to you. It returns when they say it's done or that they couldn't, or after a while if they're still at it, when you call card_verify_wait to keep waiting. Then look at the page and carry on, or tell them the payment didn't go through.",
       inputSchema: {
         card: z.string().describe("The card being paid with, e.g. card_…"),
         merchant: z.string().min(1).max(100).describe("Who the payment is to"),
@@ -513,17 +550,22 @@ function registerCardTools(server: McpServer, nibblet: Nibblet, deps: ToolDeps):
     },
     ({ card: id, merchant, asks }) =>
       answer(async () => {
+        const key = `${nibblet.id}:${id}`;
+        const waiting = verifications.get(key);
+        if (waiting) return verified(id, waiting);
         const card = (await bank.cards(nibblet.id)).find((c) => c.id === id);
         if (!card || card.state !== "open") {
           throw new RpcError("not_found", `You have no open card ${id}`);
         }
-        // What the notification to their devices says.
+        // What the notification to their devices says, until they've answered.
+        const before = await store.getNibblet(nibblet.id);
+        const status = `Needs you to verify a payment to ${merchant} in its browser`.slice(0, 80);
         await store.updateNibblet(nibblet.id, {
-          statusText: `Needs you to verify a payment to ${merchant} in its browser`.slice(0, 80),
+          statusText: status,
           statusEmoji: null,
           statusUpdatedAt: new Date(),
         });
-        const decision = await conductor.approvals.request(
+        const decision = conductor.approvals.request(
           nibblet.id,
           conductor.activeTurnId(nibblet.id),
           {
@@ -532,15 +574,43 @@ function registerCardTools(server: McpServer, nibblet: Nibblet, deps: ToolDeps):
             input: { card: card.id, display: card.display, merchant, asks },
           },
         );
-        if (decision.approved) {
-          return text(
-            "Your person says it's done. Look at the page to see whether the payment went through, and carry on.",
+        verifications.set(key, decision);
+        void decision
+          .finally(async () => {
+            // Forgotten after a while if the nibblet never asks how it went.
+            setTimeout(() => {
+              if (verifications.get(key) === decision) verifications.delete(key);
+            }, VERIFY_KEEP_MS).unref();
+            const now = await store.getNibblet(nibblet.id);
+            if (now.statusText !== status) return;
+            await store.updateNibblet(nibblet.id, {
+              statusText: before.statusText,
+              statusEmoji: before.statusEmoji,
+              statusUpdatedAt: before.statusUpdatedAt ? new Date(before.statusUpdatedAt) : null,
+            });
+          })
+          .catch(() => undefined);
+        return verified(card.id, decision);
+      }),
+  );
+
+  server.registerTool(
+    "card_verify_wait",
+    {
+      description:
+        "Keep waiting for your person to verify a payment, when card_verify said they hadn't finished yet. Leave the page as it is meanwhile.",
+      inputSchema: { card: z.string().describe("The card card_verify was called with") },
+    },
+    ({ card }) =>
+      answer(async () => {
+        const waiting = verifications.get(`${nibblet.id}:${card}`);
+        if (!waiting) {
+          throw new RpcError(
+            "not_found",
+            `Nothing is waiting to be verified on ${card}. If the page still asks, call card_verify.`,
           );
         }
-        throw new RpcError(
-          "conflict",
-          `Your person didn't verify it${decision.reason ? `: ${decision.reason}` : ""}. Don't try to get past the verification yourself; tell them the payment didn't go through, unless the page shows it did.`,
-        );
+        return verified(card, waiting);
       }),
   );
 }

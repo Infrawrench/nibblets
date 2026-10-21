@@ -73,8 +73,10 @@ export interface BankPlugin {
 
 /**
  * The provider asking whether a purchase may go through, as it happens.
- * The server answers no unless the card is open and the purchase fits
- * what's left on it, and no to anything it can't make out.
+ * On a nibblets card, the server answers no unless the card is open and
+ * the purchase fits what's left on it, and no to anything it can't make
+ * out. A provider may ask about every card on the account, so purchases on
+ * cards that aren't nibblets' are let through, to the provider's own rules.
  */
 export interface PurchaseHook {
   /**
@@ -102,10 +104,24 @@ export interface HookResponse {
 export interface Purchase {
   /** The provider's id for the card (`IssuedCard.ref`). */
   ref: string;
-  /** In the card's asset's smallest unit. */
+  /**
+   * The provider's id for the authorisation. A merchant can ask for more on
+   * one it already has (a tip, a hotel stay running on), as another request
+   * with the same id.
+   */
+  authorization: string;
+  /** What this request adds, in `asset`'s smallest unit. */
   amount: bigint;
+  /** Its asset's code, e.g. `USD`. */
+  asset: string;
   /** Who it's at, for the log. */
   merchant: string;
+  /**
+   * Whether the provider's card says it was made for a nibblet (Stripe's
+   * metadata, say), so one this server doesn't know is declined rather
+   * than taken for someone else's.
+   */
+  nibbletCard: boolean;
 }
 
 /**

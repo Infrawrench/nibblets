@@ -323,8 +323,9 @@ export function createMockServer(): ServerConnection {
       instrument: "card",
       purchaseHook: {
         url: null,
+        changes: false,
         where:
-          "In Stripe's Issuing settings (dashboard.stripe.com/account/issuing), make this the real-time authorizations webhook, and have Stripe decline when it doesn't answer, so nothing goes through while this server can't be reached. Then paste the webhook's signing secret into the form.",
+          "In Stripe's Issuing settings (dashboard.stripe.com/account/issuing), make this the real-time authorizations webhook, and have Stripe decline when it doesn't answer, so nothing goes through while this server can't be reached. Stripe then asks about every card on the account; this server only judges nibblets' cards. Paste the webhook's signing secret into the form, and into any other Stripe bank on the same account.",
       },
       fields: [
         field("STRIPE_API_KEY", "API key", {
@@ -350,7 +351,7 @@ export function createMockServer(): ServerConnection {
         field("STRIPE_WEBHOOK_SECRET", "Webhook signing secret", {
           secret: true,
           placeholder: "whsec_…",
-          hint: "The real-time authorizations webhook's, from Stripe's Issuing settings. With it, this server approves each purchase, and only if its card is open and has room for it.",
+          hint: "The real-time authorizations webhook's, from Stripe's Issuing settings. With it, this server approves each purchase on a nibblet's card, and only if the card is open and has room for it. Purchases on the account's other cards go through as they would without it.",
         }),
       ],
     },

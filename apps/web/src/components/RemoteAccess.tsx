@@ -1,5 +1,5 @@
 import { openWeb } from "../lib/links.ts";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Globe, Loader2, Network, Unplug, Wifi } from "lucide-react";
 import {
@@ -291,6 +291,16 @@ function ReverseProxyRow({ connection }: { connection: ServerConnection }) {
     queryKey: key,
     queryFn: () => connection.client.publicAddress.status({}),
   });
+  // The account card above keeps the link's status fresh; when its tunnel
+  // comes, goes or moves, so does the address, unless a reverse proxy's set.
+  const link = useQuery({
+    queryKey: keys.connect(connection.id),
+    queryFn: () => connection.client.connect.status({}),
+  });
+  const tunnel = link.data?.state === "linked" ? link.data.routes.tunnel : null;
+  useEffect(() => {
+    void qc.invalidateQueries({ queryKey: key });
+  }, [tunnel]);
   const [draft, setDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -10,7 +10,10 @@ const AuthorizationRequest = z.object({
   data: z.object({
     object: z.object({
       id: z.string(),
-      card: z.object({ id: z.string() }),
+      card: z.object({
+        id: z.string(),
+        metadata: z.record(z.string(), z.string()).optional(),
+      }),
       pending_request: z.object({ amount: z.number().int().min(0), currency: z.string() }),
       merchant_data: z.object({ name: z.string().nullable() }).optional(),
     }),
@@ -20,7 +23,6 @@ const AuthorizationRequest = z.object({
 export interface PurchaseHookOptions {
   /** The webhook's signing secret, `whsec_…`. */
   secret: string;
-  currency: string;
   /** The Stripe-Version the answer is in. */
   version: string;
   now?: () => Date;
@@ -28,9 +30,10 @@ export interface PurchaseHookOptions {
 
 /**
  * Stripe's real-time authorizations: Stripe asks before each purchase on
- * one of the account's cards, signed with the webhook's secret, and waits
- * two seconds for `{ approved }` before falling back to the account's own
- * setting (which should be to decline).
+ * any of the account's cards, nibblets' or not, signed with the webhook's
+ * secret, and waits two seconds for `{ approved }` before falling back to
+ * the account's own setting (which should be to decline). One account has
+ * one such webhook, so every bank on the account shares its secret.
  */
 export function stripePurchaseHook(options: PurchaseHookOptions): PurchaseHook {
   const now = options.now ?? (() => new Date());
@@ -55,16 +58,15 @@ export function stripePurchaseHook(options: PurchaseHookOptions): PurchaseHook {
     read(request): Purchase | null {
       if (!signed(request)) return null;
       const event = AuthorizationRequest.parse(JSON.parse(request.body));
-      const { card, pending_request: pending, merchant_data: merchant } = event.data.object;
-      if (pending.currency !== options.currency) {
-        throw new Error(
-          `Stripe asked about a purchase in ${pending.currency} on a card in ${options.currency}`,
-        );
-      }
+      const { id, card, pending_request: pending, merchant_data: merchant } = event.data.object;
       return {
         ref: card.id,
+        authorization: id,
+        // What Stripe will hold on top of what it already has for this authorisation.
         amount: BigInt(pending.amount),
+        asset: pending.currency.toUpperCase(),
         merchant: merchant?.name ?? "an unnamed merchant",
+        nibbletCard: card.metadata?.nibbletCard !== undefined,
       };
     },
 

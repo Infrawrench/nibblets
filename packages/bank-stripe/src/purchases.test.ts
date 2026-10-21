@@ -9,12 +9,18 @@ const nowSeconds = now.getTime() / 1000;
 
 const hook = stripePurchaseHook({
   secret: SECRET,
-  currency: "usd",
   version: STRIPE_VERSION,
   now: () => now,
 });
 
-function event(more: { type?: string; currency?: string; amount?: number } = {}) {
+function event(
+  more: {
+    type?: string;
+    currency?: string;
+    amount?: number;
+    metadata?: Record<string, string>;
+  } = {},
+) {
   return JSON.stringify({
     id: "evt_1",
     object: "event",
@@ -25,7 +31,12 @@ function event(more: { type?: string; currency?: string; amount?: number } = {})
         object: "issuing.authorization",
         amount: 0,
         approved: false,
-        card: { id: "ic_1", object: "issuing.card", last4: "4242" },
+        card: {
+          id: "ic_1",
+          object: "issuing.card",
+          last4: "4242",
+          metadata: more.metadata ?? { nibbletCard: "card_1", nibblet: "nib_1" },
+        },
         merchant_data: { name: "Rocket Rides", category: "taxicabs_limousines" },
         pending_request: {
           amount: more.amount ?? 1250,
@@ -51,9 +62,17 @@ describe("stripe purchases", () => {
   it("reads a signed authorization request", () => {
     expect(hook.read(signed(event()))).toEqual({
       ref: "ic_1",
+      authorization: "iauth_1",
       amount: 1250n,
+      asset: "USD",
       merchant: "Rocket Rides",
+      nibbletCard: true,
     });
+  });
+
+  it("tells a nibblet's card by its metadata, and passes the currency on", () => {
+    const other = hook.read(signed(event({ metadata: {}, currency: "eur" })));
+    expect(other).toMatchObject({ nibbletCard: false, asset: "EUR" });
   });
 
   it("takes any of several signatures, as Stripe sends while a secret's being rolled", () => {
@@ -79,7 +98,7 @@ describe("stripe purchases", () => {
 
   it("throws on a signed request it can't answer, so the server declines it", () => {
     expect(() => hook.read(signed(event({ type: "issuing_card.created" })))).toThrow();
-    expect(() => hook.read(signed(event({ currency: "eur" })))).toThrow(/eur/);
+    expect(() => hook.read(signed("not json"))).toThrow();
   });
 
   it("answers in the shape and version Stripe wants", () => {
