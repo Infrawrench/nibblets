@@ -19,6 +19,7 @@ import { Button } from "./ui/Button.tsx";
 import { FieldRow, Textarea } from "./ui/Field.tsx";
 import { Switch } from "./ui/Switch.tsx";
 import { NibbletTools, type ToolsValue } from "./tools/NibbletTools.tsx";
+import { PromptNameField } from "./PromptNameField.tsx";
 import { NewNibbletVaults } from "./onepassword/OnePasswordSection.tsx";
 import { keys, useServers, type System } from "../lib/servers.tsx";
 import { nextHamsterName } from "../lib/hamsterNames.ts";
@@ -47,6 +48,8 @@ export function CreateNibbletDialog({
   });
   const [effort, setEffort] = useState<Effort>("medium");
   const [browser, setBrowser] = useState(true);
+  const [promptName, setPromptName] = useState<string | null>(null);
+  const [plain, setPlain] = useState(false);
   const [vaults, setVaults] = useState<VaultGrant[]>([]);
   const [tools, setTools] = useState<ToolsValue>({
     hostTools: [],
@@ -70,6 +73,8 @@ export function CreateNibbletDialog({
       .map((n) => n.name);
     setName(nextHamsterName(taken));
     setMessage("");
+    setPromptName(null);
+    setPlain(false);
     setTools({ hostTools: [], cliCredentials: [], mcpServers: [], toolApprovals: [] });
     setError(null);
   }, [open]);
@@ -97,6 +102,8 @@ export function CreateNibbletDialog({
         harness: choice.harness,
         model: choice.model,
         effort,
+        promptName: promptName?.trim() ?? null,
+        plain,
         browser,
         ...tools,
         ...(message.trim() ? { message: message.trim() } : {}),
@@ -187,6 +194,13 @@ export function CreateNibbletDialog({
             hint="A Chromium, and a desktop for other apps, that it and you can both drive."
           >
             <Switch checked={browser} onChange={setBrowser} label="Browser" />
+          </FieldRow>
+          <PromptNameField value={promptName} onChange={setPromptName} />
+          <FieldRow
+            label="Plain"
+            hint="It isn't told it's a hamster, and keeps emoji and cute stuff out of its replies."
+          >
+            <Switch checked={plain} onChange={setPlain} label="Plain" />
           </FieldRow>
           {target ? (
             <>

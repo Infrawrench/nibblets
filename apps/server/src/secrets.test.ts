@@ -44,6 +44,8 @@ describe("toNibblet", () => {
       model: "claude-haiku-5-5",
       effort: "low",
       instructions: "",
+      promptName: null,
+      plain: false,
       parentId: null,
       status: "idle",
       statusDetail: null,
