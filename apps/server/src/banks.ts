@@ -10,6 +10,8 @@ import {
   type BankPlugin,
   type BankPluginFactory,
   type BankSettingValues,
+  type HookRequest,
+  type HookResponse,
   type ResolvedBank,
   type SavedBank,
 } from "@nibblet/bank";
@@ -21,12 +23,15 @@ import {
   BankName,
   BankProviderId,
   BankSettings,
+  ProxyUrl,
   RpcError,
   type BankStatus,
+  type PublicAddress,
 } from "@nibblet/protocol";
 import { z } from "zod";
 import type { Bank } from "./bank.ts";
 import type { CardRow, Store } from "./store.ts";
+import type { Tunnel } from "./tunnel.ts";
 
 /**
  * Every bank plugin the server knows. Banks are set up with them in
@@ -38,15 +43,19 @@ import type { CardRow, Store } from "./store.ts";
 export const BANK_PLUGINS: readonly BankPluginFactory[] = [slash, stripe, bitcoin, ethereum];
 
 const SETTING = "banks";
+/** The person's reverse proxy's address, if the server is behind one. */
+const PROXY_SETTING = "publicProxy";
 const Saved = z.array(
   z.object({ id: BankProviderId, kind: BankProviderId, name: BankName, settings: BankSettings }),
 );
 
 export interface BanksDeps {
-  store: Pick<Store, "getSetting" | "setSetting"> & {
+  store: Pick<Store, "getSetting" | "setSetting" | "deleteSetting"> & {
     liveCards(): Promise<readonly Pick<CardRow, "provider">[]>;
   };
-  bank: Pick<Bank, "status" | "use">;
+  bank: Pick<Bank, "status" | "use" | "purchase">;
+  /** Linking to Nibblets Connect runs it, which reaches this server from the internet. */
+  tunnel: Pick<Tunnel, "current">;
   env: BankSettingValues;
   factories?: readonly BankPluginFactory[];
   plugin?: BankDeps;
@@ -74,6 +83,8 @@ export class Banks {
   private readonly log: (message: string) => void;
   /** One change at a time, so two saves can't each write over the other's. */
   private queue: Promise<unknown> = Promise.resolve();
+  /** The banks as last loaded, to know which are on which plugin. */
+  private loaded: readonly ResolvedBank[] = [];
 
   constructor(deps: BanksDeps) {
     this.deps = deps;
@@ -84,26 +95,36 @@ export class Banks {
 
   /** Loads every bank as it's set up now into the `Bank`. */
   async load(): Promise<void> {
-    const { plugins, errors } = loadBankPlugins(this.factories, await this.banks(), this.plugin);
+    const banks = await this.banks();
+    const { plugins, errors } = loadBankPlugins(this.factories, banks, this.plugin);
+    this.loaded = banks;
     for (const plugin of plugins.values()) console.log(`bank: ${plugin.label} is set up`);
     for (const [id, problem] of errors) this.log(`${id} isn't set up: ${problem}`);
     this.deps.bank.use(plugins, errors);
   }
 
   async status(): Promise<BankStatus> {
-    const [health, banks, live] = await Promise.all([
+    const [health, banks, live, address] = await Promise.all([
       this.deps.bank.status(),
       this.banks(),
       this.deps.store.liveCards(),
+      this.publicAddress(),
     ]);
     return {
       ...health,
+      publicAddress: address,
       kinds: this.factories.map((f) => ({
         id: f.id,
         name: f.name,
         about: f.about,
         instrument: f.instrument,
         fields: [...f.fields],
+        purchaseHook: f.purchaseHook
+          ? {
+              url: address.url ? `${address.url}${purchasePath(f.id)}` : null,
+              where: f.purchaseHook.where,
+            }
+          : null,
       })),
       banks: banks.map((b) => ({
         id: b.id,
@@ -205,6 +226,45 @@ export class Banks {
     });
   }
 
+  /**
+   * Answers a provider asking about a purchase at `purchasePath(kind)`;
+   * null when no bank on that plugin signed it.
+   */
+  purchase(kind: string, request: HookRequest): Promise<HookResponse | null> {
+    const ids = this.loaded.filter((b) => b.kind === kind).map((b) => b.id);
+    return this.deps.bank.purchase(ids, request);
+  }
+
+  /**
+   * How providers reach this server from the internet: the person's own
+   * reverse proxy if they've said it's behind one, else Nibblets Connect's
+   * tunnel while it's up.
+   */
+  async publicAddress(): Promise<PublicAddress> {
+    const proxy = await this.deps.store.getSetting(
+      PROXY_SETTING,
+      (v) => ProxyUrl.nullable().parse(v),
+      null,
+    );
+    if (proxy) return { url: proxy, via: "proxy", proxy };
+    const tunnel = this.deps.tunnel.current();
+    if (tunnel.state === "up" && tunnel.url) {
+      return {
+        url: tunnel.url.replace(/\/+$/, ""),
+        via: tunnel.mode === "quick" ? "quick_tunnel" : "tunnel",
+        proxy: null,
+      };
+    }
+    return { url: null, via: null, proxy: null };
+  }
+
+  /** Says this server is behind a reverse proxy at `url`, or (null) that it isn't. */
+  async setProxy(url: string | null): Promise<BankStatus> {
+    if (url) await this.deps.store.setSetting(PROXY_SETTING, url);
+    else await this.deps.store.deleteSetting(PROXY_SETTING);
+    return this.status();
+  }
+
   private build(factory: BankPluginFactory, settings: BankSettings): BankPlugin {
     let plugin: BankPlugin | null;
     try {
@@ -245,6 +305,11 @@ export class Banks {
     this.queue = next.catch(() => undefined);
     return next;
   }
+}
+
+/** Where a plugin's providers ask about purchases. */
+export function purchasePath(kind: string): string {
+  return `/bank/${kind}/purchases`;
 }
 
 /** "Travel (Slash)", or just "Slash". */

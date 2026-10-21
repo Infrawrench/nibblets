@@ -372,7 +372,7 @@ function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
     },
   );
 
-  if (bank.enabled) registerCardTools(server, nibblet, bank);
+  if (bank.enabled) registerCardTools(server, nibblet, deps);
 
   return server;
 }
@@ -406,7 +406,8 @@ async function answer(work: () => Promise<ReturnType<typeof text>>) {
   }
 }
 
-function registerCardTools(server: McpServer, nibblet: Nibblet, bank: Bank): void {
+function registerCardTools(server: McpServer, nibblet: Nibblet, deps: ToolDeps): void {
+  const { bank, conductor, store } = deps;
   const banks = bank.providers();
   server.registerTool(
     "card_request",
@@ -491,6 +492,54 @@ function registerCardTools(server: McpServer, nibblet: Nibblet, bank: Bank): voi
         }
         return text(
           `Killed ${card.id} (${card.display}). ${formatAmount(card.spent, card.asset.decimals)} ${card.asset.code} was spent on it.`,
+        );
+      }),
+  );
+
+  server.registerTool(
+    "card_verify",
+    {
+      description:
+        "When a checkout stops to verify a card payment (3-D Secure: a code sent by text or email, or the bank's own approval page), call this and leave the page as it is: don't try to get past it yourself. Your person is told, opens your browser and does it there, so the code never comes to you. It returns once they say it's done, or that they couldn't; then look at the page and carry on, or tell them the payment didn't go through.",
+      inputSchema: {
+        card: z.string().describe("The card being paid with, e.g. card_…"),
+        merchant: z.string().min(1).max(100).describe("Who the payment is to"),
+        asks: z
+          .string()
+          .min(1)
+          .max(200)
+          .describe("What the page asks for, e.g. 'A code texted to the phone ending 12'"),
+      },
+    },
+    ({ card: id, merchant, asks }) =>
+      answer(async () => {
+        const card = (await bank.cards(nibblet.id)).find((c) => c.id === id);
+        if (!card || card.state !== "open") {
+          throw new RpcError("not_found", `You have no open card ${id}`);
+        }
+        // What the notification to their devices says.
+        await store.updateNibblet(nibblet.id, {
+          statusText: `Needs you to verify a payment to ${merchant} in its browser`.slice(0, 80),
+          statusEmoji: null,
+          statusUpdatedAt: new Date(),
+        });
+        const decision = await conductor.approvals.request(
+          nibblet.id,
+          conductor.activeTurnId(nibblet.id),
+          {
+            server: "nibblet",
+            tool: "card_verify",
+            input: { card: card.id, display: card.display, merchant, asks },
+          },
+        );
+        if (decision.approved) {
+          return text(
+            "Your person says it's done. Look at the page to see whether the payment went through, and carry on.",
+          );
+        }
+        throw new RpcError(
+          "conflict",
+          `Your person didn't verify it${decision.reason ? `: ${decision.reason}` : ""}. Don't try to get past the verification yourself; tell them the payment didn't go through, unless the page shows it did.`,
         );
       }),
   );

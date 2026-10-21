@@ -6,7 +6,10 @@ import {
   type BudgetCard,
   type CardRef,
   type CardUsage,
+  type HookRequest,
+  type HookResponse,
   type IssuedCard,
+  type Purchase,
 } from "@nibblet/bank";
 import {
   formatAmount,
@@ -38,7 +41,14 @@ const UNSETTLED_AFTER_MS = 24 * 60 * 60_000;
 
 export type BankStore = Pick<
   Store,
-  "getNibblet" | "cardsOf" | "cardRow" | "createCard" | "updateCard" | "deleteCard" | "liveCards"
+  | "getNibblet"
+  | "cardsOf"
+  | "cardRow"
+  | "cardByRef"
+  | "createCard"
+  | "updateCard"
+  | "deleteCard"
+  | "liveCards"
 >;
 
 export interface BankDeps {
@@ -74,6 +84,11 @@ export class Bank {
   private readonly issuing = new Set<string>();
   /** Where each open card's file is in its container, as its runner last said. */
   private readonly paths = new Map<string, string>();
+  /**
+   * Purchases approved on each card since it was last checked with its
+   * provider, which its `spentMinor` doesn't have yet.
+   */
+  private readonly approved = new Map<string, { amount: bigint; at: number }[]>();
   private timer: ReturnType<typeof setInterval> | null = null;
   /** Whether the server has asked it to keep cards in step, so a bank set up later starts it. */
   private running = false;
@@ -124,6 +139,7 @@ export class Bank {
           asset: plugin.asset,
           instrument: plugin.instrument,
           fundAt: plugin.fundAt,
+          approvesPurchases: plugin.purchases !== undefined,
         };
         try {
           const balance = await plugin.balance();
@@ -347,6 +363,63 @@ export class Bank {
   }
 
   /**
+   * Answers a provider asking whether a purchase may go through, for the
+   * first of `banks` whose provider signed the request; null when none did.
+   * It's approved only if its card is open and has room for it, and
+   * anything that goes wrong is a no, since the provider's fallback is the
+   * person's to set and could be yes.
+   */
+  async purchase(banks: readonly string[], request: HookRequest): Promise<HookResponse | null> {
+    for (const id of banks) {
+      const hook = this.plugins.get(id)?.purchases;
+      if (!hook) continue;
+      let purchase: Purchase | null;
+      try {
+        purchase = hook.read(request);
+      } catch (err) {
+        this.deps.log(`${id} asked about a purchase that couldn't be read: ${message(err)}`);
+        return hook.answer(false);
+      }
+      if (!purchase) continue;
+      const approved = await this.allows(id, purchase).catch((err: unknown) => {
+        this.deps.log(`couldn't check a purchase on ${id}: ${message(err)}`);
+        return false;
+      });
+      return hook.answer(approved);
+    }
+    return null;
+  }
+
+  private async allows(bankId: string, purchase: Purchase): Promise<boolean> {
+    const row = await this.deps.store.cardByRef(bankId, purchase.ref);
+    const money = (amount: bigint) =>
+      row ? `${formatAmount(amount, row.decimals)} ${row.asset}` : `${amount} (minor units)`;
+    const decline = (why: string) => {
+      this.deps.log(
+        `declined ${money(purchase.amount)} at ${purchase.merchant} on ${row?.id ?? `${bankId} card ${purchase.ref}`}: ${why}`,
+      );
+      return false;
+    };
+    if (!row) return decline("it isn't a nibblet's card");
+    if (row.state !== "open") return decline(`it's ${row.state}`);
+    // From here to the end nothing waits, so two purchases at once are
+    // checked one after the other.
+    const since = (row.checkedAt ?? row.createdAt).getTime();
+    const recent = (this.approved.get(row.id) ?? []).filter((a) => a.at >= since);
+    const held = recent.reduce((sum, a) => sum + a.amount, 0n);
+    const spent = BigInt(row.spentMinor) + held;
+    // A zero-amount one is a merchant checking the card is real.
+    if (row.kind === "single_use" && purchase.amount > 0n && spent > 0n) {
+      return decline("it's single use, and has been used");
+    }
+    const left = BigInt(row.limitMinor) - spent;
+    if (purchase.amount > left) return decline(`only ${money(left)} of its limit is left`);
+    recent.push({ amount: purchase.amount, at: this.now().getTime() });
+    this.approved.set(row.id, recent);
+    return true;
+  }
+
+  /**
    * Checks every card that isn't closed with its provider: what's been
    * spent, whether the provider closed it, closes single-use cards that have
    * been used, finishes closing ones that weren't settled, and finds out
@@ -391,6 +464,8 @@ export class Bank {
             return;
           }
           if (current.state !== "open") return;
+          // Purchases approved from here on may not be in what the provider says.
+          const asOf = this.now();
           const usage = await plugin.inspect(cardRef(current));
           if (!usage.open) {
             await this.record(current, usage, "provider");
@@ -400,7 +475,7 @@ export class Bank {
             const spent = usage.spent.toString();
             await this.deps.store.updateCard(current.id, {
               spentMinor: spent,
-              checkedAt: this.now(),
+              checkedAt: asOf,
             });
             if (spent !== current.spentMinor) this.changed(current.nibbletId);
           }

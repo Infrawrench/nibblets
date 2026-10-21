@@ -4,6 +4,7 @@ import {
   BankProviderId,
   BankSettings,
   BankStatus,
+  ProxyUrl,
   Card,
   SpendingAllowance,
 } from "./bank.ts";
@@ -198,6 +199,11 @@ export const contract = {
     ),
     /** Forgets a bank's saved settings. Refused while it has cards that aren't closed. */
     remove: procedure(z.object({ id: BankProviderId }), BankStatus),
+    /**
+     * The address of the person's reverse proxy, if this server is behind
+     * one, for providers to reach it at; null to use Nibblets Connect's tunnel.
+     */
+    setProxy: procedure(z.object({ url: ProxyUrl.nullable() }), BankStatus),
   },
   snapshots: {
     /** A nibblet's snapshots, newest first, and where it stands among them. */

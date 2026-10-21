@@ -64,7 +64,8 @@ async function main(): Promise<void> {
     publish: (message) => bus.publish(message),
     log: (message) => console.warn(`bank: ${message}`),
   });
-  const banks = new Banks({ store, bank, env: process.env });
+  const tunnel = new Tunnel(docker, store, config);
+  const banks = new Banks({ store, bank, tunnel, env: process.env });
   await banks.load();
   conductor.bank = bank;
   const scheduler = new Scheduler(store, conductor);
@@ -76,7 +77,6 @@ async function main(): Promise<void> {
     scheduler,
     dataDir: config.NIBBLET_DATA_DIR,
   });
-  const tunnel = new Tunnel(docker, store, config);
   const harnessUpdates = new HarnessUpdater({ store, docker, log: (m) => console.log(m) });
   const appUpdates = new AppUpdater({
     config,

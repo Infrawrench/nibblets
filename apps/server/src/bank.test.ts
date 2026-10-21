@@ -14,6 +14,7 @@ import {
   type SpendingLimit,
 } from "@nibblet/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { Bank, type BankStore } from "./bank.ts";
 import type { CardRow } from "./store.ts";
 
@@ -79,6 +80,9 @@ class FakeStore implements BankStore {
     if (!row) throw new RpcError("not_found", `No card ${id}`);
     return row;
   }
+  async cardByRef(provider: string, ref: string) {
+    return [...this.rows.values()].find((r) => r.provider === provider && r.ref === ref) ?? null;
+  }
   async createCard(input: Parameters<BankStore["createCard"]>[0]) {
     const row: CardRow = {
       spentMinor: "0",
@@ -98,6 +102,9 @@ class FakeStore implements BankStore {
     return row;
   }
 }
+
+/** What the fake issuer's purchase requests carry, signed with a header. */
+const FakePurchase = z.object({ ref: z.string(), amount: z.string() });
 
 /** A card issuer that keeps its cards in memory. */
 class FakeIssuer {
@@ -165,6 +172,14 @@ class FakeIssuer {
         c.open = false;
         return { open: false, spent: c.spent, used: c.spent > 0n, settled: !this.unsettled };
       },
+      purchases: {
+        read: (request) => {
+          if (request.headers.get("x-signed") !== "fake") return null;
+          const { ref, amount } = FakePurchase.parse(JSON.parse(request.body));
+          return { ref, amount: BigInt(amount), merchant: "A shop" };
+        },
+        answer: (approved) => ({ status: 200, headers: {}, body: JSON.stringify({ approved }) }),
+      },
     });
   }
 
@@ -222,6 +237,15 @@ describe("Bank", () => {
 
   const request = (limit: string, kind: "single_use" | "multi_use" = "single_use") =>
     bank.request("nib_1", { provider: "fake", limit, kind, purpose: "A domain" });
+
+  /** The issuer asking whether a purchase may go through; null when it isn't signed. */
+  const ask = async (ref: string, amount: string, signed = true) => {
+    const answer = await bank.purchase(["fake"], {
+      headers: new Headers(signed ? { "x-signed": "fake" } : {}),
+      body: JSON.stringify({ ref, amount }),
+    });
+    return answer && z.object({ approved: z.boolean() }).parse(JSON.parse(answer.body)).approved;
+  };
 
   it("makes a card within the limit and writes its file", async () => {
     const { card, path, details } = await request("20.00");
@@ -463,6 +487,7 @@ describe("Bank", () => {
           detail: null,
           balance: "100000",
           fundAt: null,
+          approvesPurchases: true,
         },
       ],
       problems: [{ id: "slash", detail: "API key is needed" }],
@@ -483,6 +508,50 @@ describe("Bank", () => {
     expect(later.enabled).toBe(true);
     expect(later.providers().map((p) => p.id)).toEqual(["fake"]);
     expect(published).toEqual([{ type: "bank_changed" }]);
+  });
+
+  it("approves purchases on an open card while they fit what's left on it", async () => {
+    await request("20.00", "multi_use");
+    expect(await ask("tok_1", "1500")).toBe(true);
+    // The first isn't in what the issuer says yet, but it's counted.
+    expect(await ask("tok_1", "600")).toBe(false);
+    expect(logs.at(-1)).toMatch(
+      /declined 6\.00 USD at A shop on card_.*only 5\.00 USD of its limit is left/,
+    );
+    expect(await ask("tok_1", "500")).toBe(true);
+    expect(await ask("tok_1", "1")).toBe(false);
+    // A check with the issuer takes over from what was approved before it.
+    const c = issuer.cards.get("tok_1");
+    if (c) c.spent = 0n;
+    clock = new Date(clock.getTime() + 60_000);
+    await bank.sync();
+    expect(await ask("tok_1", "2000")).toBe(true);
+  });
+
+  it("lets a single-use card make one purchase, after any zero-amount checks", async () => {
+    await request("10.00", "single_use");
+    expect(await ask("tok_1", "0")).toBe(true);
+    expect(await ask("tok_1", "500")).toBe(true);
+    expect(await ask("tok_1", "300")).toBe(false);
+    expect(logs.at(-1)).toContain("it's single use, and has been used");
+  });
+
+  it("declines cards it doesn't know or has killed, and anything it can't make out", async () => {
+    const { card } = await request("10.00", "multi_use");
+    expect(await ask("tok_9", "100")).toBe(false);
+    expect(await ask("tok_1", "100", false)).toBeNull();
+    const unreadable = await bank.purchase(["fake"], {
+      headers: new Headers({ "x-signed": "fake" }),
+      body: "{",
+    });
+    expect(unreadable?.body).toBe(JSON.stringify({ approved: false }));
+    vi.spyOn(store, "cardByRef").mockRejectedValueOnce(new Error("database down"));
+    expect(await ask("tok_1", "100")).toBe(false);
+    expect(logs.at(-1)).toContain("database down");
+    await bank.kill(card.id, "user");
+    expect(await ask("tok_1", "100")).toBe(false);
+    expect(logs.at(-1)).toContain("it's closed");
+    expect(await bank.purchase(["other"], { headers: new Headers(), body: "" })).toBeNull();
   });
 
   it("starts checking cards once a bank's set up, if there was none when it started", async () => {

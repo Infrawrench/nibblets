@@ -14,6 +14,7 @@ import {
 } from "@nibblet/bank";
 import type { CardSecret } from "@nibblet/protocol";
 import { z } from "zod";
+import { stripePurchaseHook } from "./purchases.ts";
 
 /**
  * Virtual cards from Stripe Issuing, on the person's own Stripe account, for
@@ -26,6 +27,8 @@ import { z } from "zod";
  * Settings (see `fields`): a secret or restricted key that can manage
  * Issuing cards, the cardholder cards are made for (whose billing address
  * the nibblet is given), and the currency of the account's Issuing balance.
+ * With the signing secret of the account's real-time authorizations
+ * webhook, Stripe asks the server before each purchase (`purchases.ts`).
  */
 
 export const STRIPE_API = "https://api.stripe.com";
@@ -98,6 +101,9 @@ export interface StripeOptions {
   apiKey: string;
   cardholderId: string;
   currency?: Currency;
+  /** The real-time authorizations webhook's signing secret, to answer it. */
+  webhookSecret?: string;
+  now?: () => Date;
 }
 
 /** A whole number of cents for Stripe. */
@@ -179,7 +185,8 @@ export function stripePlugin(options: StripeOptions, deps: Pick<BankDeps, "fetch
         await call("GET", path, { ...params, limit: 100, starting_after: after }),
       );
       for (const item of page.data) sum += item.amount;
-      count += page.data.length;
+      // A zero-amount authorisation is a merchant checking the card is real.
+      count += page.data.filter((item) => item.amount !== 0).length;
       after = page.data.at(-1)?.id;
       if (!page.has_more || !after) return { sum, count };
     }
@@ -330,6 +337,17 @@ export function stripePlugin(options: StripeOptions, deps: Pick<BankDeps, "fetch
       if (current.status !== "canceled") await cancel(card.ref);
       return { ...(await usage(card)), open: false, settled: true };
     },
+
+    ...(options.webhookSecret
+      ? {
+          purchases: stripePurchaseHook({
+            secret: options.webhookSecret,
+            currency,
+            version: STRIPE_VERSION,
+            ...(options.now ? { now: options.now } : {}),
+          }),
+        }
+      : {}),
   });
 }
 
@@ -353,13 +371,22 @@ const CURRENCY = defineField("STRIPE_CURRENCY", "Currency", {
   ],
   hint: "Your Issuing balance's currency. US dollars if it's blank.",
 });
+const WEBHOOK_SECRET = defineField("STRIPE_WEBHOOK_SECRET", "Webhook signing secret", {
+  secret: true,
+  placeholder: "whsec_…",
+  hint: "The real-time authorizations webhook's, from Stripe's Issuing settings. With it, this server approves each purchase, and only if its card is open and has room for it.",
+});
 
 export const stripe = defineBankFactory({
   id: "stripe",
   name: "Stripe",
   about: "Virtual cards from Stripe Issuing, on your Stripe account.",
   instrument: "card",
-  fields: [API_KEY, CARDHOLDER_ID, CURRENCY],
+  fields: [API_KEY, CARDHOLDER_ID, CURRENCY, WEBHOOK_SECRET],
+  purchaseHook: {
+    where:
+      "In Stripe's Issuing settings (dashboard.stripe.com/account/issuing), make this the real-time authorizations webhook, and have Stripe decline when it doesn't answer, so nothing goes through while this server can't be reached. Then paste the webhook's signing secret into the form.",
+  },
   fromSettings(settings: BankSettingValues, deps: BankDeps) {
     if (!optionalSetting(settings, API_KEY)) return null;
     const apiKey = requireSetting(settings, API_KEY);
@@ -374,6 +401,18 @@ export const stripe = defineBankFactory({
     if (currency !== undefined && !isCurrency(currency)) {
       throw new Error(`${CURRENCY.label} should be one of ${CURRENCIES.join(", ")}`);
     }
-    return stripePlugin({ apiKey, cardholderId, ...(currency ? { currency } : {}) }, deps);
+    const webhookSecret = optionalSetting(settings, WEBHOOK_SECRET);
+    if (webhookSecret !== undefined && !webhookSecret.startsWith("whsec_")) {
+      throw new Error(`${WEBHOOK_SECRET.label} should start with whsec_`);
+    }
+    return stripePlugin(
+      {
+        apiKey,
+        cardholderId,
+        ...(currency ? { currency } : {}),
+        ...(webhookSecret ? { webhookSecret } : {}),
+      },
+      deps,
+    );
   },
 });

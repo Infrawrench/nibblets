@@ -56,6 +56,7 @@ export function BankSection({ connection }: { connection: ServerConnection }) {
           key={bank.id}
           bank={bank}
           kindName={kinds.find((k) => k.id === bank.kind)?.name ?? bank.kind}
+          canApprove={kinds.find((k) => k.id === bank.kind)?.purchaseHook != null}
           provider={status.data?.providers.find((p) => p.id === bank.id) ?? null}
           problem={status.data?.problems.find((p) => p.id === bank.id)?.detail ?? null}
           onEdit={() => open(bank.id)}
@@ -65,6 +66,7 @@ export function BankSection({ connection }: { connection: ServerConnection }) {
         connection={connection}
         kinds={kinds}
         banks={banks}
+        publicAddress={status.data?.publicAddress ?? { url: null, via: null, proxy: null }}
         chosen={dialog}
         onClose={() => setDialog(undefined)}
       />
@@ -75,6 +77,7 @@ export function BankSection({ connection }: { connection: ServerConnection }) {
 function BankRow({
   bank,
   kindName,
+  canApprove,
   provider,
   problem,
   onEdit,
@@ -82,6 +85,8 @@ function BankRow({
   bank: BankSetup;
   /** Its plugin's name, "Slash". */
   kindName: string;
+  /** Whether its provider can ask this server about each purchase. */
+  canApprove: boolean;
   provider: BankProvider | null;
   /** Why its settings don't load, if they don't. */
   problem: string | null;
@@ -133,6 +138,13 @@ function BankRow({
               <Copy />
             </button>
             {copied ? <span className="shrink-0">Copied</span> : null}
+          </span>
+        ) : null}
+        {ready && provider.approvesPurchases ? (
+          <span className="text-2xs text-faint">Asks this server before each purchase</span>
+        ) : ready && canApprove ? (
+          <span className="text-2xs text-warning">
+            Purchases aren't checked here yet: Edit to set that up
           </span>
         ) : null}
         {bank.source === "env" ? (

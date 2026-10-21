@@ -14,6 +14,7 @@ import {
   type BankField,
   type BankKind,
   type BankProvider,
+  type PublicAddress,
   type BankSettings,
   type Card,
   type Contract,
@@ -299,6 +300,7 @@ export function createMockServer(): ServerConnection {
       name: "Slash",
       about: "Virtual cards in US dollars, on your Slash business account.",
       instrument: "card",
+      purchaseHook: null,
       fields: [
         field("SLASH_API_KEY", "API key", {
           required: true,
@@ -319,6 +321,11 @@ export function createMockServer(): ServerConnection {
       name: "Stripe",
       about: "Virtual cards from Stripe Issuing, on your Stripe account.",
       instrument: "card",
+      purchaseHook: {
+        url: null,
+        where:
+          "In Stripe's Issuing settings (dashboard.stripe.com/account/issuing), make this the real-time authorizations webhook, and have Stripe decline when it doesn't answer, so nothing goes through while this server can't be reached. Then paste the webhook's signing secret into the form.",
+      },
       fields: [
         field("STRIPE_API_KEY", "API key", {
           required: true,
@@ -340,6 +347,11 @@ export function createMockServer(): ServerConnection {
           ],
           hint: "Your Issuing balance's currency. US dollars if it's blank.",
         }),
+        field("STRIPE_WEBHOOK_SECRET", "Webhook signing secret", {
+          secret: true,
+          placeholder: "whsec_…",
+          hint: "The real-time authorizations webhook's, from Stripe's Issuing settings. With it, this server approves each purchase, and only if its card is open and has room for it.",
+        }),
       ],
     },
     {
@@ -347,6 +359,7 @@ export function createMockServer(): ServerConnection {
       name: "Bitcoin",
       about: "A treasury wallet that funds a fresh wallet for each card, with exactly its limit.",
       instrument: "wallet",
+      purchaseHook: null,
       fields: [
         field("BITCOIN_NETWORK", "Network", {
           required: true,
@@ -383,6 +396,7 @@ export function createMockServer(): ServerConnection {
       about:
         "A treasury account on Ethereum or another EVM chain, funding a fresh account for each card.",
       instrument: "wallet",
+      purchaseHook: null,
       fields: [
         field("ETHEREUM_TREASURY_KEY", "Treasury key", {
           required: true,
@@ -433,7 +447,19 @@ export function createMockServer(): ServerConnection {
   const bankProvider = (bank: (typeof mockBanks)[number]): BankProvider => {
     const { id, settings } = bank;
     const named = (label: string) => (bank.name ? `${bank.name} · ${label}` : label);
-    const base = { id, state: "ready" as const, detail: null };
+    const base = { id, state: "ready" as const, detail: null, approvesPurchases: false };
+    if (bank.kind === "stripe") {
+      const currency = settings.STRIPE_CURRENCY ?? "usd";
+      return {
+        ...base,
+        label: named(settings.STRIPE_API_KEY?.includes("_test_") ? "Stripe (test mode)" : "Stripe"),
+        asset: { code: currency.toUpperCase(), decimals: 2 },
+        instrument: "card",
+        balance: bankBalances.get(id) ?? "50000",
+        fundAt: null,
+        approvesPurchases: Boolean(settings.STRIPE_WEBHOOK_SECRET),
+      };
+    }
     if (bank.kind === "slash") {
       return {
         ...base,
@@ -472,10 +498,27 @@ export function createMockServer(): ServerConnection {
   };
   const liveCardsAt = (id: string) =>
     cards.filter((c) => c.provider === id && c.state !== "closed").length;
+  /** The reverse proxy the person said this server is behind, if any; else the Connect tunnel's address. */
+  let mockProxy: string | null = null;
+  const publicAddress = (): PublicAddress =>
+    mockProxy
+      ? { url: mockProxy, via: "proxy", proxy: mockProxy }
+      : { url: "https://studio.nibblets.dev", via: "tunnel", proxy: null };
   const bankStatus = () => ({
     providers: mockBanks.map(bankProvider),
     problems: [],
-    kinds: bankKinds,
+    publicAddress: publicAddress(),
+    kinds: bankKinds.map((k) =>
+      k.purchaseHook
+        ? {
+            ...k,
+            purchaseHook: {
+              ...k.purchaseHook,
+              url: `${publicAddress().url}/bank/${k.id}/purchases`,
+            },
+          }
+        : k,
+    ),
     banks: mockBanks.map((bank) => {
       const fields = bankKinds.find((k) => k.id === bank.kind)?.fields ?? [];
       return {
@@ -724,6 +767,23 @@ export function createMockServer(): ServerConnection {
       createdAt: ago(9),
       level: "warning",
       text: "The browser session was restarted after Chromium stopped responding.",
+    },
+    {
+      type: "approval",
+      id: "v1",
+      turnId: "turn-3",
+      createdAt: ago(1),
+      server: "nibblet",
+      tool: "card_verify",
+      input: {
+        card: "card_flights",
+        display: "•••• 4821",
+        merchant: "British Airways",
+        asks: "A code texted to the phone ending 12",
+      },
+      status: "pending",
+      reason: null,
+      decidedAt: null,
     },
   ];
   for (const item of seed) store("pip", item);
@@ -1351,6 +1411,11 @@ export function createMockServer(): ServerConnection {
         }
         mockBanks.splice(at, 1);
         push({ type: "bank_changed" });
+        return bankStatus();
+      },
+      setProxy: async ({ url }) => {
+        await pause(300);
+        mockProxy = url;
         return bankStatus();
       },
     },

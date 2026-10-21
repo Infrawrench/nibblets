@@ -278,6 +278,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       kill: ({ id }) => s.bank.kill(id, "user"),
       configure: (change) => s.banks.configure(change),
       remove: ({ id }) => s.banks.remove(id),
+      setProxy: ({ url }) => s.banks.setProxy(url),
     },
     snapshots: {
       list: ({ nibbletId }) => s.snapshots.list(nibbletId),
