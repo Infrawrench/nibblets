@@ -40,6 +40,13 @@ export function apiKeyProvider(opts: {
   };
 }
 
+/** Auth for Anthropic's Messages API, and the APIs that copy it (DeepSeek's). */
+export function anthropicStyleAuthorise(headers: Headers, apiKey: string): void {
+  headers.delete("authorization");
+  headers.set("x-api-key", apiKey);
+  if (!headers.has("anthropic-version")) headers.set("anthropic-version", "2023-06-01");
+}
+
 /** Anthropic's API on a Console API key, instead of a Claude subscription. */
 export function anthropicKeyProvider(
   key: string | null,
@@ -50,11 +57,7 @@ export function anthropicKeyProvider(
     key,
     upstreamBase,
     envName: "NIBBLET_ANTHROPIC_API_KEY",
-    authorise(headers, apiKey) {
-      headers.delete("authorization");
-      headers.set("x-api-key", apiKey);
-      if (!headers.has("anthropic-version")) headers.set("anthropic-version", "2023-06-01");
-    },
+    authorise: anthropicStyleAuthorise,
   });
 }
 

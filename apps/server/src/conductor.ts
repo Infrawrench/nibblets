@@ -1150,24 +1150,52 @@ export class Conductor {
 
   /**
    * When a nibblet that has spent its monthly budget on an API key can carry
-   * on (the start of next month), or null if it hasn't, or isn't on one.
+   * on (the start of next month). Null if it hasn't, or its turns don't go
+   * through an API key. Undefined if that can't be told just now (the proxy
+   * or the database didn't answer); the proxy checks every request itself,
+   * so the turn can go ahead and find out.
    */
-  private async budgetSpent(nibblet: Nibblet): Promise<Date | null> {
-    const provider = billedProviderFor(nibblet);
-    if (!provider || !(await this.providerLimits.onApiKey(provider))) return null;
-    const status = await this.budgets.status(nibblet.id);
-    return status.allowed ? null : new Date(status.resetsAt);
+  private async budgetSpent(nibblet: Nibblet): Promise<Date | null | undefined> {
+    try {
+      const provider = billedProviderFor(nibblet);
+      if (!provider) return null;
+      const keyed = await this.providerLimits.onApiKey(provider);
+      if (keyed !== true) return keyed === false ? null : undefined;
+      const status = await this.budgets.status(nibblet.id);
+      if (status.allowed) return null;
+      // OpenCode on the host's own login goes straight to its provider, not through the proxy.
+      if (nibblet.harness === "opencode") {
+        const login = await hostLoginFor(this.config, "opencode", {
+          model: nibblet.model,
+          warn: () => {},
+        });
+        if (login) return null;
+      }
+      return new Date(status.resetsAt);
+    } catch (err) {
+      console.warn(`couldn't check ${nibblet.id}'s budget`, err);
+      return undefined;
+    }
   }
 
   /**
-   * A nibblet's budget changed: whatever was waiting on it (it, and its
-   * sub-agents, which spend it too) carries on if there's room now.
+   * Lets nibblets waiting on a spent budget carry on if they now can: the
+   * budget was raised, or they no longer spend it (another model or harness,
+   * or the proxy back on a subscription). Only those sharing `nibbletId`'s
+   * budget, or every one.
    */
-  async budgetChanged(nibbletId: string): Promise<void> {
-    if (!(await this.budgets.status(nibbletId)).allowed) return;
+  async recheckBudgetWaits(nibbletId?: string): Promise<void> {
+    const owner = nibbletId ? await this.budgets.owner(nibbletId).catch(() => null) : null;
+    if (nibbletId && !owner) return;
     for (const id of this.limits.waitingFor("budget")) {
-      const owner = await this.budgets.owner(id).catch(() => null);
-      if (owner?.id === nibbletId) await this.limits.end(id, "resumed");
+      try {
+        if (owner && (await this.budgets.owner(id)).id !== owner.id) continue;
+        if ((await this.budgetSpent(await this.store.getNibblet(id))) === null) {
+          await this.limits.end(id, "resumed");
+        }
+      } catch (err) {
+        console.warn(`couldn't recheck ${id}'s budget wait`, err);
+      }
     }
   }
 

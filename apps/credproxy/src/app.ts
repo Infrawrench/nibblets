@@ -2,8 +2,8 @@ import { placeholderCodexAuth, placeholderCodexRefresh, placeholderJwt } from "@
 import { proxyKeyOwner } from "@nibblet/protocol/proxy-key";
 import { timingSafeEqual } from "node:crypto";
 import { Hono, type Context } from "hono";
-import { budgetSpentMessage, type BudgetClient } from "./budgets.ts";
-import { meter, type Dialect } from "./meter.ts";
+import { budgetSpentMessage, type BudgetGate } from "./budgets.ts";
+import { estimateRequest, meter, type Dialect } from "./meter.ts";
 import { jwtClaims } from "./providers/provider.ts";
 import type { ApiKeyProvider } from "./providers/apikey.ts";
 import { anthropicLimit, openaiLimit } from "./limits.ts";
@@ -25,7 +25,7 @@ export interface AppOptions {
   /** Called with a pushed document; returns false when the provider has no keychain source. */
   push(provider: "anthropic" | "openai", text: string): boolean;
   /** Nibblets' budgets for API-key usage, which the server keeps. */
-  budgets: BudgetClient;
+  budgets: BudgetGate;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -223,8 +223,8 @@ export function createApp(opts: AppOptions) {
 
   // An API key: no refresh to retry with and no subscription limit to note.
   // It costs money, though, so each request is checked against its nibblet's
-  // budget first, and the response's usage is read on its way through and
-  // reported to the server.
+  // budget first (counting its requests still under way), and the
+  // response's usage is read on its way through and reported to the server.
   const forwardKey = (prefix: string, provider: ApiKeyProvider) => async (c: Context) => {
     const req = c.req.raw;
     const runner = runnerOf(req.headers, opts.key);
@@ -249,8 +249,11 @@ export function createApp(opts: AppOptions) {
     }
     const dialect: Dialect = provider.id === "openai" ? "openai" : "anthropic";
     try {
-      const budget = await opts.budgets.check(nibbletId);
-      if (!budget.allowed) return c.json(budgetError(dialect, budgetSpentMessage(budget)), 402);
+      const verdict = await opts.budgets.check(nibbletId);
+      if (!verdict.allowed) {
+        const message = budgetSpentMessage(verdict.status, verdict.spentUsd);
+        return c.json(budgetError(dialect, message), 402);
+      }
     } catch (err) {
       return c.json(
         {
@@ -282,19 +285,34 @@ export function createApp(opts: AppOptions) {
     headers.set("accept-encoding", "identity");
     provider.authorise(headers, key);
     const body = req.method === "GET" || req.method === "HEAD" ? null : await req.arrayBuffer();
-    const res = await doFetch(target, { method: req.method, headers, body, redirect: "manual" });
+    const estimate = estimateRequest(dialect, req.method, url.pathname, body);
+    // Counted from now, so requests running at once see each other.
+    const spending = opts.budgets.begin(nibbletId, provider.id, estimate);
+    let res: Response;
+    try {
+      res = await doFetch(target, { method: req.method, headers, body, redirect: "manual" });
+    } catch (err) {
+      spending.finish(null);
+      throw err;
+    }
     const out = new Headers(res.headers);
     for (const h of [...HOP_BY_HOP, "content-encoding"]) out.delete(h);
-    const metered =
-      res.body &&
-      meter(res.body, dialect, res.headers.get("content-type"), (used) => {
-        if (!used) return;
-        opts.budgets
-          .report({ nibbletId, provider: provider.id, ...used })
-          .catch((err: unknown) =>
-            console.error(`couldn't report ${nibbletId}'s usage: ${String(err)}`),
-          );
+    // A refused request costs nothing.
+    if (!res.ok || !res.body) {
+      spending.finish(null);
+      return new Response(res.body, {
+        status: res.status,
+        statusText: res.statusText,
+        headers: out,
       });
+    }
+    const metered = meter(res.body, {
+      dialect,
+      contentType: res.headers.get("content-type"),
+      estimate,
+      progress: spending.progress,
+      done: spending.finish,
+    });
     return new Response(metered, { status: res.status, statusText: res.statusText, headers: out });
   };
 

@@ -88,6 +88,8 @@ const SETTING = "limitWaits";
 const STATUS_TTL_MS = 15_000;
 
 interface ProxyView {
+  /** Whether the proxy answered; nothing below is known if it didn't. */
+  known: boolean;
   until: Map<LimitProvider, Date>;
   /** Providers the proxy reaches on an API key rather than a subscription. */
   keyed: Set<BilledProvider>;
@@ -109,9 +111,13 @@ export class ProviderLimits {
     return until && until.getTime() > Date.now() ? until : null;
   }
 
-  /** Whether the proxy reaches this provider on an API key, so its usage costs money. */
-  async onApiKey(provider: BilledProvider): Promise<boolean> {
-    return (await this.view()).keyed.has(provider);
+  /**
+   * Whether the proxy reaches this provider on an API key, so its usage
+   * costs money; null when the proxy couldn't be asked.
+   */
+  async onApiKey(provider: BilledProvider): Promise<boolean | null> {
+    const view = await this.view();
+    return view.known ? view.keyed.has(provider) : null;
   }
 
   private async view(): Promise<ProxyView> {
@@ -128,14 +134,16 @@ export class ProviderLimits {
   }
 
   private async load(): Promise<ProxyView> {
-    const out: ProxyView = { until: new Map(), keyed: new Set() };
+    const out: ProxyView = { known: false, until: new Map(), keyed: new Set() };
     try {
       const res = await this.fetchImpl(`${this.config.CREDPROXY_URL}/status`, {
         headers: { authorization: `Bearer ${this.config.CREDPROXY_ADMIN_KEY}` },
         signal: AbortSignal.timeout(3000),
       });
       if (!res.ok) return out;
-      for (const status of z.array(CredentialStatus).parse(await res.json())) {
+      const statuses = z.array(CredentialStatus).parse(await res.json());
+      out.known = true;
+      for (const status of statuses) {
         if (status.source === "env") out.keyed.add(status.provider);
         // DeepSeek is an API key, with no subscription limit to wait out.
         if (status.limitedUntil && status.provider !== "deepseek")

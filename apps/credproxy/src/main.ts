@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { serve } from "@hono/node-server";
 import { z } from "zod";
 import { createApp } from "./app.ts";
-import { serverBudgets } from "./budgets.ts";
+import { BudgetGate, serverBudgets } from "./budgets.ts";
 import { anthropicProvider } from "./providers/anthropic.ts";
 import { anthropicKeyProvider, openaiKeyProvider } from "./providers/apikey.ts";
 import { deepseekProvider } from "./providers/deepseek.ts";
@@ -100,7 +100,9 @@ const app = createApp({
   anthropic,
   openai,
   deepseek,
-  budgets: serverBudgets({ serverUrl: env.NIBBLET_SERVER_URL, adminKey: env.CREDPROXY_ADMIN_KEY }),
+  budgets: new BudgetGate(
+    serverBudgets({ serverUrl: env.NIBBLET_SERVER_URL, adminKey: env.CREDPROXY_ADMIN_KEY }),
+  ),
   push(provider, text) {
     const keychain = keychains.get(provider);
     if (!keychain) return false;

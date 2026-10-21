@@ -136,6 +136,9 @@ async function main(): Promise<void> {
     );
   prune();
   const pruning = setInterval(prune, 24 * 60 * 60_000);
+  // Budget waits end when the month turns, or when a setting changes here;
+  // this catches the rest, such as the proxy going back to a subscription.
+  const budgetSweep = setInterval(() => void conductor.recheckBudgetWaits(), 5 * 60_000);
   // The tunnel follows the Connect link: on with it, off without.
   await central.restore();
 
@@ -144,6 +147,7 @@ async function main(): Promise<void> {
     snapshots.stop();
     harnessUpdates.stop();
     clearInterval(pruning);
+    clearInterval(budgetSweep);
     central.stop();
     tunnel.stop();
     process.exit(0);

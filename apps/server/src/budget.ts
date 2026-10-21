@@ -6,8 +6,8 @@ import {
   type BudgetStatus,
   type Nibblet,
 } from "@nibblet/protocol";
-import { timingSafeEqual } from "node:crypto";
 import type { Hono } from "hono";
+import { bearerToken, safeEqual } from "./auth.ts";
 import type { Config } from "./config.ts";
 import type { Store } from "./store.ts";
 
@@ -75,11 +75,8 @@ export function mountBudgets(
   app: Hono,
   deps: { config: Pick<Config, "CREDPROXY_ADMIN_KEY">; budgets: Budgets },
 ): void {
-  const authorised = (header: string | undefined) => {
-    const given = Buffer.from(/^Bearer\s+(.+)$/i.exec(header ?? "")?.[1]?.trim() ?? "");
-    const want = Buffer.from(deps.config.CREDPROXY_ADMIN_KEY);
-    return given.length === want.length && timingSafeEqual(given, want);
-  };
+  const authorised = (header: string | undefined) =>
+    safeEqual(bearerToken(header), deps.config.CREDPROXY_ADMIN_KEY);
 
   app.get("/credproxy/budget/:id", async (c) => {
     if (!authorised(c.req.header("authorization"))) return c.json({ error: "unauthorized" }, 401);

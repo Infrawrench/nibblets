@@ -11,7 +11,7 @@ import {
   presentsKey,
   runnerOf,
 } from "../src/app.ts";
-import { serverBudgets, type BudgetClient } from "../src/budgets.ts";
+import { BudgetGate, serverBudgets, type BudgetClient } from "../src/budgets.ts";
 import { anthropicProvider, mergeBetas } from "../src/providers/anthropic.ts";
 import { anthropicKeyProvider, openaiKeyProvider } from "../src/providers/apikey.ts";
 import { deepseekProvider } from "../src/providers/deepseek.ts";
@@ -26,30 +26,35 @@ const HOUR = 60 * 60 * 1000;
 /** What a nibblet's container presents: the shared secret, signed for it. */
 const NIB_KEY = nibbletProxyKey(KEY, "nib_a");
 
-function fakeBudgets(
-  status: Partial<BudgetStatus> = {},
-): BudgetClient & { reports: MeteredRequest[]; checked: string[] } {
+/** A server that knows `status` for every nibblet, and adds nothing up. */
+function fakeServer(status: Partial<BudgetStatus> = {}) {
   const reports: MeteredRequest[] = [];
   const checked: string[] = [];
-  return {
-    reports,
-    checked,
+  const answer = (nibbletId: string): BudgetStatus => ({
+    nibbletId,
+    budgetUsd: null,
+    spentUsd: 0,
+    month: "2026-10",
+    resetsAt: "2026-11-01T00:00:00.000Z",
+    allowed: true,
+    ...status,
+  });
+  const client: BudgetClient = {
     async check(nibbletId) {
       checked.push(nibbletId);
-      return {
-        nibbletId,
-        budgetUsd: null,
-        spentUsd: 0,
-        month: "2026-10",
-        resetsAt: "2026-11-01T00:00:00.000Z",
-        allowed: true,
-        ...status,
-      };
+      return answer(nibbletId);
     },
     async report(request) {
       reports.push(request);
+      return answer(request.nibbletId);
     },
   };
+  return { client, reports, checked };
+}
+
+function fakeBudgets(status: Partial<BudgetStatus> = {}) {
+  const server = fakeServer(status);
+  return { ...server, gate: new BudgetGate(server.client, { retryMs: 1, log: () => {} }) };
 }
 
 function claudeDoc(access: string, refresh: string, expiresAt: number) {
@@ -272,7 +277,7 @@ describe("proxy", () => {
       openai,
       deepseek: deepseekProvider(deepseekKey, "https://deepseek.test/anthropic"),
       push: () => false,
-      budgets: fakeBudgets(),
+      budgets: fakeBudgets().gate,
       fetch,
     });
     return { app, fetch };
@@ -438,7 +443,7 @@ describe("proxy on API keys", () => {
       openai: openaiKeyProvider("sk-openai-key", "https://openai.test/v1"),
       deepseek: deepseekProvider(null),
       push: () => false,
-      budgets,
+      budgets: budgets.gate,
       fetch,
     });
     return { app, fetch, budgets };
@@ -527,7 +532,7 @@ describe("proxy on API keys", () => {
       openai: openaiKeyProvider(null),
       deepseek: deepseekProvider(null),
       push: () => false,
-      budgets: fakeBudgets(),
+      budgets: fakeBudgets().gate,
     }).request("/anthropic/v1/messages", {
       method: "POST",
       headers: { "x-api-key": NIB_KEY },
@@ -570,7 +575,7 @@ describe("proxy on API keys", () => {
 
   it("refuses rather than spends when the budget can't be checked", async () => {
     const budgets = fakeBudgets();
-    budgets.check = async () => {
+    budgets.client.check = async () => {
       throw new Error("connection refused");
     };
     const { app, fetch } = setup(() => new Response("{}"), budgets);
@@ -704,6 +709,20 @@ describe("proxy on API keys", () => {
     await reader?.read();
     await reader?.cancel();
     expect(budgets.reports[0]?.usage.inputTokens).toBe(40000);
+  });
+
+  it("counts nothing for a request the API refused", async () => {
+    const { app, budgets } = setup(() =>
+      Response.json({ type: "error", error: { type: "overloaded_error" } }, { status: 529 }),
+    );
+    const res = await app.request("/anthropic/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": NIB_KEY },
+      body: JSON.stringify({ model: "claude-opus-5-5", messages: [] }),
+    });
+    expect(res.status).toBe(529);
+    await res.text();
+    expect(budgets.reports).toEqual([]);
   });
 });
 

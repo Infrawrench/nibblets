@@ -161,6 +161,10 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
           // A different harness can't resume the old one's session.
           ...(harnessChanged ? { harnessSessionId: null } : {}),
         });
+        // A raised budget, or a move off the API key it was spent on, lets
+        // whatever waits on it carry on; before a restart, which returns early.
+        if (patch.monthlyBudgetUsd !== undefined || harnessChanged || model !== before.model)
+          await conductor.recheckBudgetWaits(id);
         // The browser, the SSH agent and Tailscale are fixed when the container is made.
         const sshBefore = before.cliCredentials.includes("ssh");
         const sshAfter = (patch.cliCredentials ?? before.cliCredentials).includes("ssh");
@@ -175,7 +179,6 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         // Asleep, it signs its machine out now rather than whenever it next wakes.
         if (tailscaleChanged && tailscale === null) void conductor.leaveTailnet(id);
         if (patch.resources) await conductor.applyResources(id, patch.resources);
-        if (patch.monthlyBudgetUsd !== undefined) await conductor.budgetChanged(id);
         await conductor.reconfigure(id);
         return updated;
       },
