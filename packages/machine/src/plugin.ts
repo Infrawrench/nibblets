@@ -85,6 +85,14 @@ export interface MachinePlugin {
    * that run Windows have it.
    */
   activateWindows?(nibbletId: string, productKey: string): Promise<"activated" | "already">;
+  /**
+   * Writes just its browser profile, as a gzipped tar rooted at `chromium/`,
+   * to `out`, for a local sign-in on the host. It must be stopped. Only
+   * plugins whose guests can have `localSignIn` have it.
+   */
+  archiveProfile?(nibbletId: string, out: Writable): Promise<void>;
+  /** Replaces its browser profile with one from `archiveProfile`. It must be stopped. */
+  restoreProfile?(nibbletId: string, archive: Readable): Promise<void>;
 }
 
 /** Everything a runner and its guard start with (`RunnerEnv & GuardEnv`). */

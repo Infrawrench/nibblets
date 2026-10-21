@@ -5,7 +5,7 @@ import { DEFAULT_MACHINE, type Heartbeat, type Nibblet } from "@nibblet/protocol
 import { HeartPulse } from "lucide-react";
 import { modelLabel, useModels } from "../../lib/models.ts";
 import type { ServerConnection } from "../../lib/connection.ts";
-import { machineLabel, useMachines } from "../../lib/machines.ts";
+import { machineLabel, useCapabilities, useMachines } from "../../lib/machines.ts";
 import { Hamster } from "../hamster/Hamster.tsx";
 import { HamsterDialog } from "../hamster/HamsterDialog.tsx";
 import { ModelPicker } from "../ModelPicker.tsx";
@@ -32,15 +32,7 @@ export function NibbletSettings({
   const navigate = useNavigate();
   const catalogue = useModels(connection);
   const machines = useMachines(connection);
-  // What its machine can do; a container can do everything, and is assumed while this loads.
-  const can = machines.backends
-    .find((b) => b.id === nibblet.machine.backend)
-    ?.guests.find((g) => g.os === nibblet.machine.guest)?.capabilities ?? {
-    browser: true,
-    tailscale: true,
-    sshAgent: true,
-    liveResources: true,
-  };
+  const can = useCapabilities(connection, nibblet);
   const [name, setName] = useState(nibblet.name);
   const [instructions, setInstructions] = useState(nibblet.instructions);
   const [promptName, setPromptName] = useState(nibblet.promptName);

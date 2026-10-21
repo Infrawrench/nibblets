@@ -19,6 +19,7 @@ import type { Banks } from "./banks.ts";
 import type { PublicAddresses } from "./public-address.ts";
 import type { MachineRegistry } from "@nibblet/machine";
 import type { Conductor } from "./conductor.ts";
+import type { Borrow } from "./borrow.ts";
 import type { HarnessModelLists } from "./opencode.ts";
 import {
   dropOverlaps,
@@ -60,6 +61,7 @@ export interface Services {
   locations: LocationRequests;
   publicAddress: PublicAddresses;
   machines: MachineRegistry;
+  borrow: Borrow;
 }
 
 const ok = { ok: true } as const;
@@ -245,6 +247,9 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         await s.locations.answer(id, requestId, location);
         return ok;
       },
+      browserBorrowStart: ({ id }) => s.borrow.start(id),
+      browserBorrowEnd: ({ id }) => s.borrow.end(id),
+      browserBorrow: async ({ id }) => s.borrow.current(id),
       decide: async ({ id, approvalId, approve, reason }) => {
         await conductor.approvals.decide(id, approvalId, approve, reason);
         return ok;

@@ -67,6 +67,17 @@ export const RUNNER_HARDENING = {
 
 /** The runner image's user home, which holds its working folder. */
 const RUNNER_HOME = "/home/nibblet";
+/** The folder the browser profile (`chromium/`) sits in, inside the guard's home. */
+const PROFILE_PARENT = `${RUNNER_HOME}/.guard/.config`;
+/** The guard owns its home and profile (uid:gid from the runner image). */
+const GUARD_OWNER = "1100:1100";
+/** Caches in the profile that rebuild themselves, so aren't worth borrowing. */
+const PROFILE_ARCHIVE_EXCLUDES = [
+  "chromium/*/Cache",
+  "chromium/*/Code Cache",
+  "chromium/*/GPUCache",
+  "chromium/*/Service Worker/CacheStorage",
+];
 /** Where a sub-agent's entry leaves its pid in its host's container (SUBAGENT_PIDS in the runner). */
 const SUBAGENT_PIDS = "/run/nibblet-subagents";
 const ENTRY = "/app/apps/runner/src/entry.ts";
@@ -78,6 +89,7 @@ const CAPABILITIES: MachineCapabilities = {
   tailscale: true,
   sshAgent: true,
   liveResources: true,
+  localSignIn: true,
 };
 
 export interface DockerMachinesOptions {
@@ -454,6 +466,67 @@ export class DockerMachines implements MachinePlugin {
   }
 
   /**
+   * Writes just the browser profile (the guard's `~/.config/chromium`), as a
+   * gzipped tar rooted at `chromium/`, to `out`. The nibblet must be stopped
+   * first (a borrow stops it), so nothing is browsing while it's copied; the
+   * caches that rebuild themselves are left out. An empty profile is made if
+   * the nibblet never browsed, so the window still opens.
+   */
+  async archiveProfile(nibbletId: string, out: Writable): Promise<void> {
+    const volume = await this.ensureHome(nibbletId);
+    // Quoted: "Code Cache" has a space, and the shell would split it.
+    const excludes = PROFILE_ARCHIVE_EXCLUDES.map((e) => `'--exclude=${e}'`).join(" ");
+    await this.inHome(
+      volume,
+      [
+        "sh",
+        "-c",
+        // The folders it makes are the guard's, as they'd be had its browser made them.
+        `mkdir -p ${PROFILE_PARENT}/chromium && ` +
+          `chown ${GUARD_OWNER} ${PROFILE_PARENT} ${PROFILE_PARENT}/chromium && ` +
+          `cd ${PROFILE_PARENT} && tar --numeric-owner ${excludes} -czf - chromium`,
+      ],
+      { readOnly: false, stdout: out },
+    );
+  }
+
+  /**
+   * Replaces the browser profile from a tar made by `archiveProfile` (rooted
+   * at `chromium/`), handing ownership back to the guard. The tar is
+   * unpacked beside the profile first and swapped in only once it's whole,
+   * so a broken or cut-off handback leaves the old profile as it was. The
+   * nibblet must be stopped; its guard clears any stale profile lock when it
+   * starts again.
+   */
+  async restoreProfile(nibbletId: string, archive: Readable): Promise<void> {
+    const volume = await this.ensureHome(nibbletId);
+    const incoming = `${PROFILE_PARENT}/.chromium-incoming`;
+    const old = `${PROFILE_PARENT}/.chromium-old`;
+    await this.inHome(
+      volume,
+      [
+        "sh",
+        "-c",
+        [
+          "set -e",
+          `mkdir -p ${PROFILE_PARENT}`,
+          `rm -rf ${incoming} ${old}`,
+          `mkdir ${incoming}`,
+          `if ! tar -C ${incoming} --no-same-owner -xzf - || [ ! -d ${incoming}/chromium ]; then`,
+          `  rm -rf ${incoming}; echo "the handed-back profile was incomplete" >&2; exit 1`,
+          "fi",
+          `chown -R ${GUARD_OWNER} ${incoming}/chromium`,
+          `chown ${GUARD_OWNER} ${PROFILE_PARENT}`,
+          `if [ -e ${PROFILE_PARENT}/chromium ]; then mv ${PROFILE_PARENT}/chromium ${old}; fi`,
+          `mv ${incoming}/chromium ${PROFILE_PARENT}/chromium`,
+          `rm -rf ${incoming} ${old}`,
+        ].join("\n"),
+      ],
+      { readOnly: false, stdin: archive },
+    );
+  }
+
+  /**
    * Runs a command as root in a throwaway container with the home volume
    * mounted, offline. It's an exec in an idle container rather than the
    * container's own command: attaching to that sends Podman the request's
@@ -502,6 +575,9 @@ export class DockerMachines implements MachinePlugin {
         stream.once("close", () => resolve());
       });
       // Ending the stream closes the command's stdin, so tar sees the end.
+      // A source that fails part-way never ends it, so the connection is
+      // dropped instead, and the command fails, rather than waiting forever.
+      io.stdin?.once("error", () => stream.destroy());
       io.stdin?.pipe(stream);
       await ended;
       const code = await exitOf(exec);

@@ -1121,6 +1121,7 @@ export function createMockServer(): ServerConnection {
     tailscale: true,
     sshAgent: false,
     liveResources: false,
+    localSignIn: false,
   };
   const ready: GuestImage = { state: "ready", detail: null, progress: null, source: "none" };
   const mockMachines: MachineBackend[] = [
@@ -1135,7 +1136,7 @@ export function createMockServer(): ServerConnection {
         {
           os: "linux",
           image: ready,
-          capabilities: { ...guestVm, sshAgent: true, liveResources: true },
+          capabilities: { ...guestVm, sshAgent: true, liveResources: true, localSignIn: true },
         },
       ],
     },
@@ -1341,6 +1342,23 @@ export function createMockServer(): ServerConnection {
           save({ ...get(id), location: { ...location, place: LONDON.place, sharedAt: now() } });
         return { ok: true };
       },
+      browserBorrowStart: async ({ id }) => ({
+        nibbletId: id,
+        state: "local" as const,
+        detail: null,
+        proxyPort: 54321,
+        onePassword: true,
+        startedAt: Date.now(),
+      }),
+      browserBorrowEnd: async ({ id }) => ({
+        nibbletId: id,
+        state: "handback" as const,
+        detail: null,
+        proxyPort: null,
+        onePassword: true,
+        startedAt: Date.now(),
+      }),
+      browserBorrow: async () => null,
       decide: async ({ id, approvalId, approve, reason }) => {
         const found = items.get(id)?.find((s) => s.item.id === approvalId)?.item;
         if (found?.type === "approval" && found.status === "pending") {

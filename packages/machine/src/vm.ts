@@ -43,6 +43,7 @@ export function vmCapabilities(guest: GuestOs): MachineCapabilities {
     tailscale: linux || guest === "windows",
     sshAgent: false,
     liveResources: false,
+    localSignIn: false,
   };
 }
 

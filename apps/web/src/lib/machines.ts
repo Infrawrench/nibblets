@@ -3,6 +3,7 @@ import {
   DEFAULT_MACHINE,
   GUEST_NAMES,
   type MachineBackend,
+  type MachineCapabilities,
   type MachineChoice,
   type MachineGuest,
 } from "@nibblet/protocol";
@@ -96,4 +97,26 @@ export function useMachines(connection: ServerConnection | null | undefined) {
   });
   const backends = query.data ?? [];
   return { backends, options: options(backends), loading: query.isLoading, refetch: query.refetch };
+}
+
+/** A container can do everything, so that's assumed while the machines load. */
+const CONTAINER_CAPABILITIES: MachineCapabilities = {
+  browser: true,
+  tailscale: true,
+  sshAgent: true,
+  liveResources: true,
+  localSignIn: true,
+};
+
+/** What a nibblet's machine can do. */
+export function useCapabilities(
+  connection: ServerConnection,
+  nibblet: { machine: MachineChoice },
+): MachineCapabilities {
+  const { backends } = useMachines(connection);
+  return (
+    backends
+      .find((b) => b.id === nibblet.machine.backend)
+      ?.guests.find((g) => g.os === nibblet.machine.guest)?.capabilities ?? CONTAINER_CAPABILITIES
+  );
 }
