@@ -8,6 +8,7 @@ import {
   type LiveMessage,
   type TerminalEvent,
 } from "@nibblet/protocol";
+import { openApiDocument } from "@nibblet/protocol/openapi";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -104,6 +105,10 @@ export function createApp(services: Services, bus: Bus) {
       return new Response(answer.body, { status: answer.status, headers: answer.headers });
     },
   );
+
+  // What the API looks like is no secret: the source is public.
+  let openapi: ReturnType<typeof openApiDocument> | null = null;
+  app.get("/api/openapi.json", (c) => c.json((openapi ??= openApiDocument(services.version))));
 
   app.post("/api/pair", async (c) => {
     const body = z

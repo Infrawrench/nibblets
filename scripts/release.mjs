@@ -37,6 +37,10 @@ for (const file of files) {
   writeFileSync(file, text.replace(/("version":\s*")[^"]+(")/, `$1${version}$2`));
 }
 
+// The API description carries the version too.
+sh("pnpm", ["openapi"]);
+files.push("apps/server/openapi.json");
+
 sh("git", ["add", ...files]);
 sh("git", ["commit", "-m", `Release ${version}`]);
 sh("git", ["push", "origin", "main"]);
