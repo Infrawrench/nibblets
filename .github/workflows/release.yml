@@ -3,7 +3,8 @@ name: Release
 # A release is a version in package.json that hasn't been tagged yet: bump it
 # (`pnpm release 0.2.0`), push to main, and this builds and publishes it. The
 # Docker images go to GHCR first, since the app pulls its own version's; then
-# the signed, notarised Mac app goes on a GitHub release tagged v<version>.
+# the signed, notarised Mac app goes on a GitHub release tagged v<version>,
+# with the server's OpenAPI description.
 # Nothing runs until the repository variable RELEASES_ENABLED is "true".
 
 on:
@@ -184,9 +185,34 @@ jobs:
             apps/desktop/dist/Nibblets-setup-*.exe
           if-no-files-found: error
 
+  openapi:
+    name: OpenAPI description
+    needs: check
+    if: needs.check.outputs.version != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter "@nibblet/server..."
+      - name: What a server serves at /api/openapi.json
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          node apps/server/src/cli.ts openapi > openapi.json
+          jq -e --arg version "$VERSION" '.info.version == $version' openapi.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openapi
+          path: openapi.json
+          if-no-files-found: error
+
   publish:
     name: Publish v${{ needs.check.outputs.version }}
-    needs: [check, manifests, desktop]
+    needs: [check, manifests, desktop, openapi]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -224,6 +250,8 @@ jobs:
             echo "- **Windows:** Nibblets-setup-x64.exe (or arm64)"
             echo "- **Linux desktop:** the AppImage or .deb for your machine"
             echo '- **Linux server or VM:** `curl -fsSL https://nibblets.dev/install.sh | bash`'
+            echo
+            echo "openapi.json describes this version's server API (OpenAPI 3.1), as a server serves it at /api/openapi.json."
             echo
             echo "Or get it from https://nibblets.dev"
           } > notes.md

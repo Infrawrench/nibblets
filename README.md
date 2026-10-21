@@ -65,7 +65,7 @@ The server and runner run TypeScript directly on Node 24, with no build step. Th
 
 ### API
 
-A running server describes its API in OpenAPI 3.1 at `/api/openapi.json`, built from what it serves: the contract's procedures (`packages/protocol`) and the plain HTTP routes, which are mounted through `Routes` (`apps/server/src/http.ts`) so each is declared once, with its description.
+A running server describes its API in OpenAPI 3.1 at `/api/openapi.json`, built from what it serves: the contract's procedures (`packages/protocol`) and the plain HTTP routes, which are mounted through `Routes` (`apps/server/src/http.ts`) so each is declared once, with its description. `node apps/server/src/cli.ts openapi` prints it without running a server, and each release attaches it as `openapi.json`.
 
 Harnesses are plugins (`packages/harness-*`) that implement `HarnessPlugin` from `@nibblet/harness`. Where nibblets run is too: `packages/machine-*` implement `@nibblet/machine`'s contracts, a container plugin for the server and a hypervisor plugin for each host OS. Credential sources in the proxy and embedding backends in the server follow the same pattern.
 
