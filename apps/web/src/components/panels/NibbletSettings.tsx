@@ -13,6 +13,7 @@ import { Button } from "../ui/Button.tsx";
 import { FieldRow, Input, SectionHeading, Textarea } from "../ui/Field.tsx";
 import { Switch } from "../ui/Switch.tsx";
 import { NibbletTools } from "../tools/NibbletTools.tsx";
+import { PromptNameField } from "../PromptNameField.tsx";
 import { NibbletVaults } from "../onepassword/OnePasswordSection.tsx";
 import { BudgetSection } from "./BudgetSection.tsx";
 import { ResourcesSection } from "./ResourcesSection.tsx";
@@ -29,6 +30,9 @@ export function NibbletSettings({
   const catalogue = useModels(connection);
   const [name, setName] = useState(nibblet.name);
   const [instructions, setInstructions] = useState(nibblet.instructions);
+  const [promptName, setPromptName] = useState(nibblet.promptName);
+  // Bumped to start the name field over from what's saved.
+  const [resets, setResets] = useState(0);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -38,10 +42,15 @@ export function NibbletSettings({
   useEffect(() => {
     setName(nibblet.name);
     setInstructions(nibblet.instructions);
+    setPromptName(nibblet.promptName);
     setSaveError(null);
   }, [nibblet.id]);
 
-  const dirty = name !== nibblet.name || instructions !== nibblet.instructions;
+  const promptNameTrimmed = promptName?.trim() ?? null;
+  const dirty =
+    name !== nibblet.name ||
+    instructions !== nibblet.instructions ||
+    promptNameTrimmed !== nibblet.promptName;
   const update = connection.client.nibblets.update;
 
   const save = async () => {
@@ -49,7 +58,12 @@ export function NibbletSettings({
     setSaving(true);
     setSaveError(null);
     try {
-      await update({ id: nibblet.id, name: name.trim(), instructions });
+      await update({
+        id: nibblet.id,
+        name: name.trim(),
+        instructions,
+        promptName: promptNameTrimmed,
+      });
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -59,6 +73,8 @@ export function NibbletSettings({
   const undo = () => {
     setName(nibblet.name);
     setInstructions(nibblet.instructions);
+    setPromptName(nibblet.promptName);
+    setResets((n) => n + 1);
     setSaveError(null);
   };
   // ⌘↩ (or Ctrl+Enter) saves from either field.
@@ -101,6 +117,12 @@ export function NibbletSettings({
           maxLength={80}
         />
       </FieldRow>
+      <PromptNameField
+        key={`${nibblet.id}:${resets}`}
+        value={promptName}
+        onChange={setPromptName}
+        onKeyDown={saveOnShortcut}
+      />
       <FieldRow
         label="Instructions"
         top
@@ -133,6 +155,16 @@ export function NibbletSettings({
           </Button>
         </div>
       ) : null}
+      <FieldRow
+        label="Plain"
+        hint="It isn't told it's a hamster, and keeps emoji and cute stuff out of its replies."
+      >
+        <Switch
+          checked={nibblet.plain}
+          onChange={(plain) => void update({ id: nibblet.id, plain })}
+          label="Plain"
+        />
+      </FieldRow>
 
       <SectionHeading>Model</SectionHeading>
       <FieldRow label="Model">

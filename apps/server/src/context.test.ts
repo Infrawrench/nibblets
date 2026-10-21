@@ -11,6 +11,8 @@ const nibblet: Nibblet = {
   model: "claude-opus-5-5",
   effort: "medium",
   instructions: "Look after the deploys.",
+  promptName: null,
+  plain: false,
   parentId: null,
   status: "idle",
   statusDetail: null,
@@ -133,6 +135,47 @@ describe("systemPrompt", () => {
     expect(prompt).toContain("[user] Hello");
     expect(prompt).toContain("[you] Hi!");
     expect(prompt).toContain("computer");
+  });
+
+  it("calls it by another name, or none, so its own never reaches the model", () => {
+    const base = { serverName: "home", memories: [], history: null, parent: null };
+    const now = new Date("2026-10-13T12:00:00Z");
+    expect(systemPrompt({ ...base, now, nibblet })).toContain("You are Pip, a nibblet");
+    const other = systemPrompt({ ...base, now, nibblet: { ...nibblet, promptName: "Ops" } });
+    expect(other).toContain("You are Ops, a nibblet");
+    expect(other).not.toContain("Pip");
+    const none = systemPrompt({ ...base, now, nibblet: { ...nibblet, promptName: "" } });
+    expect(none).toContain("You are a nibblet");
+    expect(none).not.toContain("Pip");
+  });
+
+  it("doesn't name a sub-agent's parent when the parent isn't to know its own name", () => {
+    const base = { serverName: "home", memories: [], history: null, now: new Date() };
+    const child = { ...nibblet, id: "nib_2", name: "Scout", parentId: "nib_1" };
+    expect(systemPrompt({ ...base, nibblet: child, parent: nibblet })).toContain(
+      "sent back to Pip as your result",
+    );
+    const hidden = systemPrompt({
+      ...base,
+      nibblet: child,
+      parent: { ...nibblet, promptName: "" },
+    });
+    expect(hidden).toContain("You are a sub-agent of another agent. You run in its container");
+    expect(hidden).not.toContain("Pip");
+  });
+
+  it("leaves out the hamster and the cute stuff when plain", () => {
+    const base = { serverName: "home", memories: [], history: null, parent: null, now: new Date() };
+    const playful = systemPrompt({ ...base, nibblet: { ...nibblet, statusEmoji: "🐹" } });
+    expect(playful).toContain("hamster");
+    expect(playful).toContain("🐹 Watching the deploy");
+    const plain = systemPrompt({
+      ...base,
+      nibblet: { ...nibblet, plain: true, statusEmoji: "🐹" },
+    });
+    expect(plain).toContain("You are Pip, a long-running personal agent");
+    expect(plain).not.toMatch(/hamster|nibblet|🐹/i);
+    expect(plain).toContain("no emoji");
   });
 
   it("tells it about the desktop and its apps only when it has one", () => {

@@ -17,6 +17,8 @@ const nibblet = (id: string, parentId: string | null, active: string): Nibblet =
   model: "claude-opus-5-5",
   effort: "medium",
   instructions: "",
+  promptName: null,
+  plain: false,
   parentId,
   status: "idle",
   statusDetail: null,

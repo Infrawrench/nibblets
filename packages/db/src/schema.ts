@@ -61,6 +61,9 @@ export const nibblets = pgTable("nibblets", {
     .$type<SnapshotPolicy>()
     .notNull()
     .default({ everyMinutes: 24 * 60, keep: 7 }),
+  /** Null for its own name, empty for none. */
+  promptName: text("prompt_name"),
+  plain: boolean("plain").notNull().default(false),
   browser: boolean("browser").notNull().default(true),
   hostTools: text("host_tools").array().notNull().default([]),
   cliCredentials: text("cli_credentials").array().notNull().default([]),

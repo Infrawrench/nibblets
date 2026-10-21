@@ -13,6 +13,7 @@ import {
   type TailnetNode,
   type TailscaleLogin,
   isReservedMcpName,
+  nameInPrompt,
   tailnetHostname,
   DESKTOP_VIEW_PORT,
   VIEW_PORT,
@@ -765,6 +766,7 @@ export class Conductor {
         model: task.model ?? parent.model,
         effort: parent.effort,
         instructions: task.instructions ?? "",
+        plain: parent.plain,
         // Its own window, in its own browser, beside its parent's.
         browser: parent.browser,
       },
@@ -860,7 +862,8 @@ export class Conductor {
     const row = await this.store.nibbletRow(nibbletId);
     if (!row.tailscale || row.parentId) return null;
     return {
-      hostname: row.tailscale.hostname || tailnetHostname(row.name),
+      // Its machine name is in its prompt, so it doesn't default to a name it isn't to know.
+      hostname: row.tailscale.hostname || tailnetHostname(nameInPrompt(row) ?? ""),
       ports: row.tailscale.ports,
       keyId: keyId(row.tailscale.authKey, await readTailnetOAuth(this.store)),
     };
@@ -1181,11 +1184,12 @@ export class Conductor {
     if (!pending) return;
     const ok = end.status === "completed";
     const result = ok ? turn.lastReply : (end.error ?? `Ended: ${end.status}`);
+    const name = nameInPrompt(child);
     await this.store.putItem(child.parentId, { ...pending, status: ok ? "done" : "error", result });
     await this.enqueue(
       child.parentId,
       "subagent",
-      `Sub-agent "${child.name}" (${childId}) ${ok ? "finished" : "failed"}:\n\n${result}\n\nIf there's nothing worth telling the user yet, reply with exactly ${QUIET_REPLY}.`,
+      `Sub-agent ${name ? `"${name}" ` : ""}(${childId}) ${ok ? "finished" : "failed"}:\n\n${result}\n\nIf there's nothing worth telling the user yet, reply with exactly ${QUIET_REPLY}.`,
     );
     // Its work is done; it can sleep until someone messages it directly.
     await this.stop(childId).catch(() => undefined);

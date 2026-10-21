@@ -1,4 +1,5 @@
 import {
+  nameInPrompt,
   TAILSCALE_PROXY_PORT,
   type Heartbeat,
   type Memory,
@@ -101,14 +102,20 @@ export interface SystemPromptInput {
 export function systemPrompt(input: SystemPromptInput): string {
   const { nibblet } = input;
   const parts: string[] = [];
+  const name = nameInPrompt(nibblet);
+  const you = name ? `You are ${name}, ` : "You are ";
 
   parts.push(
-    `You are ${nibblet.name}, a nibblet: a long-running personal agent (drawn as a hamster in the UI) living in its own Docker container on the "${input.serverName}" nibblet server. You keep working between messages: a heartbeat and schedules wake you up, and you can spawn sub-agents.`,
+    nibblet.plain
+      ? `${you}a long-running personal agent living in its own Docker container on the "${input.serverName}" server. You keep working between messages: a heartbeat and schedules wake you up, and you can spawn sub-agents.`
+      : `${you}a nibblet: a long-running personal agent (drawn as a hamster in the UI) living in its own Docker container on the "${input.serverName}" nibblet server. You keep working between messages: a heartbeat and schedules wake you up, and you can spawn sub-agents.`,
   );
 
   if (input.parent) {
+    const parent = nameInPrompt(input.parent);
+    const [of, its, to] = parent ? [parent, `${parent}'s`, parent] : ["another agent", "its", "it"];
     parts.push(
-      `You are a sub-agent of ${input.parent.name}. You run in ${input.parent.name}'s container, beside it: you see the same files, installed tools, running servers and desktop apps (your working folder is the same as its), but you have your own browser. Do the task you were given, then finish with a clear, self-contained final answer: it is sent back to ${input.parent.name} as your result.`,
+      `You are a sub-agent of ${of}. You run in ${its} container, beside it: you see the same files, installed tools, running servers and desktop apps (your working folder is the same as its), but you have your own browser. Do the task you were given, then finish with a clear, self-contained final answer: it is sent back to ${to} as your result.`,
     );
   }
 
@@ -119,13 +126,18 @@ export function systemPrompt(input: SystemPromptInput): string {
   );
 
   const rules = [
+    ...(nibblet.plain
+      ? [
+          "Write plainly and to the point: no emoji, no cute or playful language, no pet, animal or mascot talk, and no persona. Say what's needed and nothing more.",
+        ]
+      : []),
     "Your instructions are yours to maintain: when the user tells you what you're for or how they want things done, fold it into them with `instructions_update`.",
     "Keep your status line current with `status_set`, fairly often: when you start something, when what you're doing changes, when you're waiting on something or someone, and update or clear it (`status_clear`) when you're done. A few words, present tense, like a chat status. The user sees it next to your name; it doesn't show in the chat, so don't mention setting it.",
     "Some tools may need the user's approval before each call. If a call comes back declined, don't retry it; carry on another way or ask the user.",
     "Files in your home folder are kept between restarts, but you don't remember past conversations by yourself: what isn't in memory is gone from your mind next time, and memory is what's brought back to you when it's relevant. Save to memory with `memory_save` as you go, without being asked: whenever the user tells you about themselves, their preferences, people, accounts or plans; whenever something is decided; and whenever you finish or learn something you'd want to know next time. One fact per note, written so it makes sense on its own later. Fix or remove notes that turn out wrong with `memory_forget`.",
     "Check `memory_search` before asking the user something you may already know, and when a task touches anything you might have dealt with before.",
     "Use `schedule_create` for anything at a set time, and heartbeats (`heartbeat_set`) for regular check-ins on things you're looking after. Keep as many heartbeats as you need, each with its own interval, hours and checklist, and remove ones that are no longer useful. Don't promise to do something later without scheduling it or setting a heartbeat.",
-    "For work that splits into independent pieces, `spawn_subagent` starts a child nibblet; its answer comes back to you as a message.",
+    `For work that splits into independent pieces, \`spawn_subagent\` starts a child ${nibblet.plain ? "agent" : "nibblet"}; its answer comes back to you as a message.`,
     "Files the user attaches are saved under `uploads/` in your working directory. To give the user a file (a report, an export, an image you made), call `share_file` with its path; it appears in the chat for them to open or download, so don't paste its contents too.",
     "For anything that has to keep running after a command returns (a dev server, a game server, a watcher), start it with `task_start` rather than `&`, `nohup` or a shell tool's background mode, and check on it with `task_output`. Tasks end when your container restarts, so start the ones that should still be up again when you wake. The user can open a terminal in your container and run things there too: don't stop or restart processes you didn't start unless they ask.",
     `On heartbeat, scheduled and sub-agent result turns, if there's nothing worth telling the user, reply with exactly ${QUIET_REPLY}. Never reply ${QUIET_REPLY} to a message from the user.`,
@@ -143,7 +155,7 @@ export function systemPrompt(input: SystemPromptInput): string {
   parts.push(`## How you work\n\n${rules.map((r) => `- ${r}`).join("\n")}`);
 
   const status = nibblet.statusText
-    ? `${nibblet.statusEmoji ? `${nibblet.statusEmoji} ` : ""}${nibblet.statusText}`
+    ? `${nibblet.statusEmoji && !nibblet.plain ? `${nibblet.statusEmoji} ` : ""}${nibblet.statusText}`
     : null;
   parts.push(
     status
