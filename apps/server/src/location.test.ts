@@ -1,9 +1,12 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { connect, EMBEDDING_DIMENSIONS, migrateDb, type Db } from "@nibblet/db";
 import { sql } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Bus } from "./bus.ts";
 import { Geocoder } from "./geocode.ts";
 import { createHandlers, type Services } from "./handlers.ts";
+import { buildServer } from "./mcp.ts";
 import { Store } from "./store.ts";
 
 /** Needs Postgres with pgvector: see snapshots.test.ts. */
@@ -95,5 +98,50 @@ describe.skipIf(!url)("sharing a location with a nibblet", () => {
     expect(lookups).toHaveBeenCalledTimes(1);
     await update({ id: pip, location: null });
     expect((await store.getNibblet(pip)).location).toBeNull();
+  });
+
+  /** Calls `location_get` as the nibblet `id` would, over MCP. */
+  const ask = async (id: string) => {
+    const server = buildServer(await store.getNibblet(id), {
+      store,
+      bank: { enabled: false },
+    } as unknown as Parameters<typeof buildServer>[1]);
+    const [client, served] = InMemoryTransport.createLinkedPair();
+    await server.connect(served);
+    const mcp = new Client({ name: "test", version: "1" });
+    await mcp.connect(client);
+    const tools = (await mcp.listTools()).tools.map((t) => t.name);
+    const result = await mcp.callTool({ name: "location_get", arguments: {} });
+    await mcp.close();
+    const [first] = result.content as { type: string; text: string }[];
+    return { tools, text: first?.text ?? "" };
+  };
+
+  it("offers location_get before anything's shared, and says so", async () => {
+    const { tools, text } = await ask(pip);
+    expect(tools).toContain("location_get");
+    expect(text).toContain("hasn't shared where they are");
+  });
+
+  it("answers location_get with what was shared, for a sub-agent too", async () => {
+    await update({
+      id: pip,
+      location: { latitude: 51.5246, longitude: -0.0781, accuracyM: 35, timeZone: "Europe/London" },
+    });
+    const own = JSON.parse((await ask(pip)).text);
+    expect(own).toMatchObject({
+      place: "Shoreditch, London, England, United Kingdom",
+      timeZone: "Europe/London",
+      latitude: 51.5246,
+    });
+    expect(own.localTime).toMatch(/(GMT|BST)$/);
+    const scout = (
+      await store.createNibblet(
+        { name: "Scout", harness: "claude", model: "claude-opus-5-5", effort: "medium" },
+        pip,
+      )
+    ).nibblet.id;
+    expect(JSON.parse((await ask(scout)).text).place).toBe(own.place);
+    expect(await store.locationOf(scout)).toEqual(await store.locationOf(pip));
   });
 });

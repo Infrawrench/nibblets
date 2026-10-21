@@ -1,6 +1,13 @@
 import { defaultHamsterLook, type ActiveHours, type Nibblet } from "@nibblet/protocol";
 import { describe, expect, it } from "vitest";
-import { heartbeatInput, isQuiet, mayBeQuiet, recap, systemPrompt } from "./context.ts";
+import {
+  heartbeatInput,
+  isQuiet,
+  locationAnswer,
+  mayBeQuiet,
+  recap,
+  systemPrompt,
+} from "./context.ts";
 import { dueHeartbeat, withinActiveHours } from "./scheduler.ts";
 
 const nibblet: Nibblet = {
@@ -154,33 +161,48 @@ describe("systemPrompt", () => {
     sharedAt: "2026-10-20T08:00:00.000Z",
   };
 
-  it("tells it where its person is, and the time there", () => {
-    const prompt = systemPrompt({ ...base, nibblet, location: london });
+  it("points it at location_get once its person has shared where they are", () => {
+    const prompt = systemPrompt({ ...base, nibblet, location: true });
     expect(prompt).toContain("## Where your person is");
-    expect(prompt).toContain(
-      "They last shared where they are on 20 October 2026, from their device: Shoreditch, London, England, United Kingdom (postcode E2 7DG), at 51.5246, -0.0781, to within about 35 m.",
-    );
-    // Noon UTC is one in the afternoon in London, in BST.
-    expect(prompt).toContain("Their time zone is Europe/London, where it's Wednesday 21 October");
-    expect(prompt).toMatch(/13:00 BST now\./);
-    expect(prompt).toContain("use it for schedules and heartbeat hours");
-  });
-
-  it("gives the coordinates alone when the place couldn't be looked up", () => {
-    const prompt = systemPrompt({
-      ...base,
-      nibblet,
-      location: { ...london, place: null, accuracyM: 2400, timeZone: null },
-    });
-    expect(prompt).toContain("at 51.5246, -0.0781, to within about 2.4 km.");
-    expect(prompt).toContain("work it out from the coordinates");
-    expect(prompt).not.toContain("Their time zone");
-    expect(prompt).not.toContain("heartbeat hours");
+    expect(prompt).toContain("call `location_get`");
+    // The location itself only comes from the tool.
+    expect(prompt).not.toContain("London");
+    expect(prompt).not.toContain("51.5");
   });
 
   it("says nothing about a location nobody shared", () => {
     expect(systemPrompt({ ...base, nibblet })).not.toContain("## Where your person is");
-    expect(systemPrompt({ ...base, nibblet, location: null })).not.toContain("Where your person");
+    expect(systemPrompt({ ...base, nibblet, location: false })).not.toContain("location_get");
+  });
+
+  it("answers location_get with the place, and the time there now", () => {
+    // Noon UTC is one in the afternoon in London, in BST.
+    const answer = locationAnswer(london, new Date("2026-10-21T12:00:00Z"));
+    expect(answer).toMatchObject({
+      place: "Shoreditch, London, England, United Kingdom",
+      city: "London",
+      postcode: "E2 7DG",
+      countryCode: "GB",
+      latitude: 51.5246,
+      longitude: -0.0781,
+      accuracyMetres: 35,
+      timeZone: "Europe/London",
+      sharedAt: "2026-10-20T08:00:00.000Z",
+    });
+    expect(answer.localTime).toMatch(/^Wednesday 21 October.* 13:00 BST$/);
+    expect(answer.note).toContain("They may have moved since");
+  });
+
+  it("says what's missing when the place or time zone couldn't be had", () => {
+    const answer = locationAnswer(
+      { ...london, place: null, timeZone: null },
+      new Date("2026-10-21T12:00:00Z"),
+    );
+    expect(answer.place).toBeNull();
+    expect(answer).not.toHaveProperty("city");
+    expect(answer.localTime).toBeNull();
+    expect(answer.note).toContain("work it out from the coordinates");
+    expect(answer.note).toContain("didn't say its time zone");
   });
 
   it("includes instructions, memories, recap, and the browser rule", () => {

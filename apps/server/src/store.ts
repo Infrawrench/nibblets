@@ -23,6 +23,7 @@ import {
   type Heartbeat,
   type Memory,
   type Nibblet,
+  type NibbletLocation,
   type NibbletStatus,
   type Schedule,
   type StoredItem,
@@ -211,6 +212,23 @@ export class Store {
     const [row] = await this.db.select().from(nibblets).where(eq(nibblets.id, id));
     if (!row) throw new RpcError("not_found", `No nibblet ${id}`);
     return row;
+  }
+
+  /**
+   * Where its person is, as they last shared it: its own, or for a sub-agent
+   * without one, its parent's, or theirs. Null when none has been shared.
+   */
+  async locationOf(id: string): Promise<NibbletLocation | null> {
+    for (let next: string | null = id; next;) {
+      const [row] = await this.db
+        .select({ location: nibblets.location, parentId: nibblets.parentId })
+        .from(nibblets)
+        .where(eq(nibblets.id, next));
+      if (!row) return null;
+      if (row.location) return row.location;
+      next = row.parentId;
+    }
+    return null;
   }
 
   async getNibblet(id: string): Promise<Nibblet> {

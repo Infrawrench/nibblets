@@ -1098,12 +1098,8 @@ export class Conductor {
     const parent = nibblet.parentId
       ? await this.store.getNibblet(nibblet.parentId).catch(() => null)
       : null;
-    // A sub-agent that hasn't been given a location goes by its parent's, or theirs.
-    let location = nibblet.location;
-    for (let above = parent; !location && above;) {
-      location = above.location;
-      above = above.parentId ? await this.store.getNibblet(above.parentId).catch(() => null) : null;
-    }
+    // Only whether there is one: it asks for the rest with `location_get`.
+    const location = (await this.store.locationOf(nibbletId)) !== null;
     // A sub-agent is on the tailnet as its host container's machine.
     const host = nibblet.parentId
       ? await this.store.nibbletRow(await this.hostOf(nibblet)).catch(() => null)

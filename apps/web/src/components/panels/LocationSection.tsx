@@ -13,7 +13,7 @@ const distance = (metres: number) =>
 /**
  * Where the person is, shared from this device's location (the browser's, or
  * the desktop app's) when they ask. The server looks up the place it's in,
- * and the nibblet is told it, with their time zone, in every prompt.
+ * and the nibblet asks for it, with their time zone, with `location_get`.
  */
 export function LocationSection({
   connection,
@@ -97,8 +97,8 @@ export function LocationSection({
         <div className="flex items-center gap-2 pt-0.5">
           <p className="flex-1 text-faint">
             {location
-              ? `${nibblet.name} knows this place and your time zone. Share again when you've moved.`
-              : "Tells it where you are (your town, time zone and coordinates) for the weather, local times and what's nearby. Your server looks up the place with OpenStreetMap."}
+              ? `${nibblet.name} looks this up when it needs it. Share again when you've moved.`
+              : "Lets it look up where you are (your town, time zone and coordinates) for the weather, local times and what's nearby. Your server finds the place with OpenStreetMap."}
           </p>
           {location ? (
             <Button

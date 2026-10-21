@@ -18,7 +18,7 @@ import type { Bank } from "./bank.ts";
 import type { Conductor } from "./conductor.ts";
 import type { Connect } from "./connect.ts";
 import type { Notifier } from "./notifier.ts";
-import { describeHeartbeat } from "./context.ts";
+import { describeHeartbeat, locationAnswer } from "./context.ts";
 import type { Scheduler } from "./scheduler.ts";
 import { toNibblet, type Store } from "./store.ts";
 
@@ -44,7 +44,7 @@ function validCron(pattern: string, timezone: string): string | null {
 }
 
 /** The nibblet tools, scoped to the nibblet whose token made the call. */
-function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
+export function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
   const { store, conductor, scheduler, notifier, connect, bank } = deps;
   const server = new McpServer({ name: "nibblet", version: "0.1.0" });
   // A plain one isn't told it's a nibblet.
@@ -369,6 +369,24 @@ function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
       return json(
         children.map((c) => ({ id: c.id, name: c.name, status: c.status, detail: c.statusDetail })),
       );
+    },
+  );
+
+  // Always offered, so one shared mid-session can be asked for without a restart.
+  server.registerTool(
+    "location_get",
+    {
+      description:
+        "Where your person is, as they last shared it from their device: the neighbourhood, town, region and country, coordinates, their time zone and the time there now. Call it whenever where they are or their local time matters: the weather, opening hours, what's nearby, travel, which country's sites, prices and rules apply, or the time zone for a schedule or heartbeat. It's private: never give it to a site or a person they didn't ask you to.",
+      inputSchema: {},
+    },
+    async () => {
+      const location = await store.locationOf(nibblet.id);
+      if (!location)
+        return text(
+          "Your person hasn't shared where they are. If you need it, ask them: they can tell you, or share it from the Location section of your settings.",
+        );
+      return json(locationAnswer(location, new Date()));
     },
   );
 

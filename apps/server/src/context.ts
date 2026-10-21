@@ -1,6 +1,5 @@
 import {
   formatAmount,
-  formatCoordinates,
   nameInPrompt,
   placeLabel,
   TAILSCALE_PROXY_PORT,
@@ -95,8 +94,8 @@ export interface SystemPromptInput {
   /** Set when the harness session is fresh and has no history of its own. */
   history: ThreadItem[] | null;
   parent: Nibblet | null;
-  /** Where its person is: its own, or for a sub-agent without one, its parent's. */
-  location?: NibbletLocation | null;
+  /** Whether its person has shared where they are (for a sub-agent, with it or a parent). */
+  location?: boolean;
   now: Date;
   /** 1Password vaults shared with it, if any. */
   onePasswordVaults?: readonly SharedVault[];
@@ -178,7 +177,7 @@ export function systemPrompt(input: SystemPromptInput): string {
       : "## Your heartbeats\n\nNone yet. Set one with `heartbeat_set` once there's something worth checking on regularly.",
   );
 
-  if (input.location) parts.push(locationSection(input.location, input.now));
+  if (input.location) parts.push(LOCATION_SECTION);
 
   if (input.onePasswordVaults?.length) {
     const vaults = input.onePasswordVaults
@@ -213,40 +212,60 @@ export function systemPrompt(input: SystemPromptInput): string {
   return parts.join("\n\n");
 }
 
-function distance(metres: number): string {
-  return metres < 1000 ? `${Math.round(metres)} m` : `${(metres / 1000).toFixed(1)} km`;
-}
+/**
+ * What a nibblet whose person has shared their location is told. The
+ * location itself comes from `location_get` when it needs it, so it isn't
+ * sent with every turn.
+ */
+export const LOCATION_SECTION = `## Where your person is
 
-/** Where its person is, and their local time, as they last shared it. */
-export function locationSection(location: NibbletLocation, now: Date): string {
-  const zone = location.timeZone ?? "UTC";
-  const shared = new Date(location.sharedAt).toLocaleDateString("en-GB", {
+They've shared where they are with you. Whenever that or their local time matters (the weather, opening hours, what's nearby, travel, which country's sites, prices, units and rules apply, or the time zone for a schedule or heartbeat), call \`location_get\` for it rather than guessing, and give them times in their time zone. It's private: don't give it to a site or a person they didn't ask you to.`;
+
+/** "Wednesday 21 October at 13:36 CEST", in `timeZone`. */
+export function localTime(timeZone: string, now: Date): string {
+  return now.toLocaleString("en-GB", {
+    weekday: "long",
     day: "numeric",
     month: "long",
-    year: "numeric",
-    timeZone: zone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone,
+    timeZoneName: "short",
   });
-  const label = location.place && placeLabel(location.place);
-  const postcode = location.place?.postcode;
-  const at = `${formatCoordinates(location)}${location.accuracyM !== null ? `, to within about ${distance(location.accuracyM)}` : ""}`;
-  const where = label
-    ? `${label}${postcode ? ` (postcode ${postcode})` : ""}, at ${at}`
-    : `at ${at}. The place it's in couldn't be looked up, so work it out from the coordinates if you need it`;
-  const lines = [`They last shared where they are on ${shared}, from their device: ${where}.`];
-  if (location.timeZone) {
-    const local = now.toLocaleString("en-GB", {
-      weekday: "long",
-      day: "numeric",
-      month: "long",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-      timeZone: location.timeZone,
-      timeZoneName: "short",
-    });
-    lines.push(`Their time zone is ${location.timeZone}, where it's ${local} now.`);
-  }
-  return `## Where your person is\n\n${lines.join(" ")}\n\nUse it whenever where they are matters: the weather, local times and opening hours, what's nearby, travel, and which country's sites, prices, units and rules apply. Give them times in their time zone${location.timeZone ? ", and use it for schedules and heartbeat hours unless they ask for another" : ""}. They may have moved since they shared it; if being wrong would matter, check with them. It's private: don't give it to a site or a person they didn't ask you to.`;
+}
+
+/** What `location_get` answers: where its person is, and the time there now. */
+export function locationAnswer(location: NibbletLocation, now: Date) {
+  const { place } = location;
+  return {
+    place: place && placeLabel(place),
+    ...(place
+      ? {
+          neighbourhood: place.neighbourhood,
+          city: place.city,
+          region: place.region,
+          postcode: place.postcode,
+          country: place.country,
+          countryCode: place.countryCode,
+        }
+      : {}),
+    latitude: Number(location.latitude.toFixed(4)),
+    longitude: Number(location.longitude.toFixed(4)),
+    accuracyMetres: location.accuracyM,
+    timeZone: location.timeZone,
+    localTime: location.timeZone ? localTime(location.timeZone, now) : null,
+    sharedAt: location.sharedAt,
+    note: [
+      place
+        ? null
+        : "The place it's in couldn't be looked up; work it out from the coordinates if you need it.",
+      location.timeZone ? null : "Their device didn't say its time zone.",
+      "This is where their device was when they last shared it. They may have moved since; if being wrong would matter, check with them.",
+    ]
+      .filter(Boolean)
+      .join(" "),
+  };
 }
 
 function tailnetSection(node: TailnetNode, ports: readonly number[]): string {
