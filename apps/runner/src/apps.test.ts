@@ -244,6 +244,8 @@ describe("DesktopApps", () => {
         viewUrl: "http://127.0.0.1:7901",
         token: "t",
         scan: async () => (scans++, [foot]),
+        // As on Linux, whichever system the tests run on.
+        display: "wayland",
       });
       await apps.scan();
       const opened = await apps.launch("foot", ["notes.txt"]);

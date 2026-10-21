@@ -263,6 +263,12 @@ export const RunnerEnv = z.object({
   /** Set for a sub-agent, which uses its host container's desktop rather than starting one. */
   NIBBLET_SUBAGENT: z.enum(["0", "1"]).default("0"),
   /**
+   * Set where the entry starts the desktop itself (Windows, where it has to
+   * be started in the signed-in session), for the runner to join, as a
+   * sub-agent does.
+   */
+  NIBBLET_DESKTOP_JOIN: z.enum(["0", "1"]).default("0"),
+  /**
    * The token the container's desktop (OpenComputerUse for apps, run as the
    * agent's user on `DESKTOP_MCP_PORT` and `DESKTOP_VIEW_PORT`) takes. The
    * agent may know it: everything on the desktop is the agent's already.

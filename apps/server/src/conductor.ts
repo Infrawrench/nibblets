@@ -14,12 +14,18 @@ import {
   type TailscaleLogin,
   isReservedMcpName,
   nameInPrompt,
+  maskProductKey,
   tailnetHostname,
   DESKTOP_VIEW_PORT,
+  DEFAULT_MACHINE,
   VIEW_PORT,
+  type MachineCapabilities,
+  type MachineChoice,
   type McpServerDef,
 } from "@nibblet/protocol";
 import { nibbletProxyKey } from "@nibblet/protocol/proxy-key";
+import type { MachinePlugin, MachineRegistry } from "@nibblet/machine";
+import type { Readable, Writable } from "node:stream";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { cliLogins } from "./clilogins.ts";
@@ -42,7 +48,6 @@ import { dropOverlaps, hostTools } from "./hostmcp.ts";
 import { onePasswordLogin } from "./onepassword.ts";
 import { keyId, mintAuthKey, readTailnetOAuth } from "./tailnet-keys.ts";
 import { hostLoginFor } from "./host-login.ts";
-import { runnerName, type Orchestrator } from "./docker.ts";
 import { TerminalHub } from "./terminals.ts";
 import type { Bank } from "./bank.ts";
 import { CardFiles } from "./card-files.ts";
@@ -67,6 +72,10 @@ interface ActiveTurn extends QueuedTurn {
 }
 
 const now = () => new Date().toISOString();
+
+/** What to call a nibblet's machine when saying what happened to it. */
+const machineWord = (plugin: MachinePlugin) =>
+  plugin.kind === "vm" ? "virtual machine" : "container";
 
 /**
  * How long a stopped turn has to end before its container is restarted: the
@@ -106,7 +115,7 @@ export class Conductor {
    */
   private readonly orphans = new Map<string, Extract<ThreadItem, { type: "turn" }>>();
   private readonly store: Store;
-  private readonly docker: Orchestrator;
+  private readonly machines: MachineRegistry;
   private readonly config: Config;
   /** Gated tool calls waiting for the user. */
   readonly approvals: Approvals;
@@ -120,8 +129,8 @@ export class Conductor {
    * of one this server replaced or stopped isn't taken for a crash.
    */
   private readonly subagentRuns = new Map<string, symbol>();
-  /** Where a sub-agent's browser view is (`host:port`), as its runner said once connected. */
-  private readonly views = new Map<string, string>();
+  /** Where a sub-agent's browser view is in its host's machine, as its runner said once connected. */
+  private readonly views = new Map<string, { host: string; port: number }>();
   /** Nibblets whose machine is being signed out of the tailnet, by a container of its own. */
   private readonly leaving = new Map<string, Promise<void>>();
   /** Host containers being started for sub-agents, so siblings share one start. */
@@ -146,9 +155,9 @@ export class Conductor {
   locations: LocationRequests | null = null;
   serverName = "nibblet";
 
-  constructor(store: Store, docker: Orchestrator, config: Config) {
+  constructor(store: Store, machines: MachineRegistry, config: Config) {
     this.store = store;
-    this.docker = docker;
+    this.machines = machines;
     this.config = config;
     this.approvals = new Approvals(store, config.NIBBLET_APPROVAL_TIMEOUT_MINUTES * 60_000);
     this.providerLimits = new ProviderLimits(config);
@@ -164,11 +173,33 @@ export class Conductor {
     return this.active.get(nibbletId)?.turnId ?? null;
   }
 
-  /** Brings the database in line with Docker after a server restart. */
+  /** The plugin a nibblet's own machine comes from. */
+  private machineFor(row: { machine: MachineChoice }): MachinePlugin {
+    return this.machines.get(row.machine);
+  }
+
+  /** The plugin for the machine a nibblet runs in: its own, or for a sub-agent its host's. */
+  private async machineOf(nibbletId: string): Promise<{ host: string; plugin: MachinePlugin }> {
+    let row = await this.store.nibbletRow(nibbletId);
+    while (row.parentId) row = await this.store.nibbletRow(row.parentId);
+    return { host: row.id, plugin: this.machineFor(row) };
+  }
+
+  /** What a nibblet's own machine can do. */
+  capabilities(row: { machine: MachineChoice }): MachineCapabilities {
+    return this.machineFor(row).capabilities(row.machine.guest);
+  }
+
+  /** Whether a nibblet has a browser: it asked for one, and its machine can have one. */
+  private browserOn(row: { browser: boolean; machine: MachineChoice }): boolean {
+    return row.browser && this.machineFor(row).capabilities(row.machine.guest).browser;
+  }
+
+  /** Brings the database in line with the machines after a server restart. */
   async reconcile(): Promise<void> {
     await this.approvals.resetStale();
     await this.limits.restore();
-    const containers = await this.docker.runners();
+    const containers = await this.machines.machines();
     const all = await this.store.listNibblets();
     // A sub-agent runs in the container of the nibblet at the top of its tree.
     const hostOf = (id: string): string => {
@@ -192,7 +223,7 @@ export class Conductor {
     // container would answer for its sub-agents).
     const outdatedHosts = new Set<string>();
     for (const [id, c] of containers) {
-      if (c.running && (await this.docker.runnerOutdated(id))) outdatedHosts.add(id);
+      if (c.running && (await this.machines.get(c).outdated(id))) outdatedHosts.add(id);
     }
     const outdated = (id: string) => outdatedHosts.has(hostOf(id));
     // Running turns live in memory, so the last server lost track of any it
@@ -232,18 +263,19 @@ export class Conductor {
         await this.store.setStatus(nibblet.id, "stopped");
       }
     }
-    for (const id of containers.keys()) {
+    for (const [id, c] of containers) {
       const nibblet = all.find((n) => n.id === id);
-      // A container left from a nibblet that's since been deleted: nothing to keep.
+      const plugin = this.machines.get(c);
+      // A machine left from a nibblet that's since been deleted: nothing to keep.
       if (!nibblet) {
-        await this.docker.removeContainer(runnerName(id));
-        await this.docker.removeHome(id);
+        await plugin.discard(id);
+        await plugin.removeHome(id);
       } else if (nibblet.parentId) {
         // A sub-agent from before they ran in their parent's container.
-        await this.docker.removeContainer(runnerName(id), { graceful: true });
+        await plugin.stop(id);
       }
     }
-    await this.docker.watchRunnerExits((id, code) => void this.onContainerExit(id, code));
+    await this.machines.watchExits((id, code) => void this.onContainerExit(id, code));
     for (const id of lost) {
       resume[id] = { turns: resume[id]?.turns ?? [], wasWorking: true };
     }
@@ -359,13 +391,17 @@ export class Conductor {
   }
 
   /**
-   * Where the server reaches a nibblet's browser view: its own container's
+   * Where the server reaches a nibblet's browser view: its own machine's
    * 7900, or for a sub-agent the port its runner reported in its host's
-   * container. Null for a sub-agent that hasn't reported one (it isn't up).
+   * machine. Null when it isn't up, or for a sub-agent that hasn't reported one.
    */
-  browserAddress(nibbletId: string, parentId: string | null): string | null {
-    if (!parentId) return `${runnerName(nibbletId)}:${VIEW_PORT}`;
-    return this.views.get(nibbletId) ?? null;
+  async browserAddress(nibbletId: string, parentId: string | null): Promise<string | null> {
+    if (!parentId) {
+      return this.machineFor(await this.store.nibbletRow(nibbletId)).address(nibbletId, VIEW_PORT);
+    }
+    const view = this.views.get(nibbletId);
+    if (!view) return null;
+    return (await this.machineOf(view.host)).plugin.address(view.host, view.port);
   }
 
   /**
@@ -377,9 +413,11 @@ export class Conductor {
     // One lookup for a nibblet with its own container; the proxy asks on every request.
     let row = await this.store.nibbletRow(nibbletId);
     while (row.parentId) row = await this.store.nibbletRow(row.parentId);
-    if (!row.browser) return null;
+    if (!this.browserOn(row)) return null;
+    const address = await this.machineFor(row).address(row.id, DESKTOP_VIEW_PORT);
+    if (!address) return null;
     return {
-      address: `${runnerName(row.id)}:${DESKTOP_VIEW_PORT}`,
+      address,
       token: desktopToken(this.config.NIBBLET_OWNER_TOKEN, row.id, row.tokenHash),
     };
   }
@@ -395,7 +433,11 @@ export class Conductor {
     const token = await this.store.rotateToken(nibbletId);
     // Signing a machine out uses its Tailscale state too; one at a time.
     await this.leaving.get(nibbletId);
-    const { tailscale } = await this.store.nibbletRow(nibbletId);
+    const row = await this.store.nibbletRow(nibbletId);
+    const plugin = this.machineFor(row);
+    const can = plugin.capabilities(row.machine.guest);
+    const tailscale = can.tailscale ? row.tailscale : null;
+    const browser = this.browserOn(row);
     await this.store.updateNibblet(nibbletId, {
       status: "starting",
       statusDetail: null,
@@ -405,23 +447,29 @@ export class Conductor {
         : null,
     });
     try {
-      const containerId = await this.docker.startRunner(
-        nibbletId,
-        this.runnerEnv(nibbletId, token, nibblet.browser, {
+      const containerId = await plugin.start(nibbletId, {
+        machine: row.machine,
+        env: this.runnerEnv(nibbletId, token, browser, {
           billTo: nibbletId,
           tailscale,
-          desktop: nibblet.browser
+          desktop: browser
             ? desktopToken(this.config.NIBBLET_OWNER_TOKEN, nibbletId, hashToken(token))
             : "",
           timeZone: nibblet.location?.timeZone ?? null,
         }),
-        {
-          sshAgent: nibblet.cliCredentials.includes("ssh"),
-          resources: nibblet.resources,
-          tailscale: tailscale !== null,
-        },
-      );
+        sshAgent: can.sshAgent && nibblet.cliCredentials.includes("ssh"),
+        resources: nibblet.resources,
+        tailscale: tailscale !== null,
+        // Making a virtual machine's image first takes minutes; say so.
+        progress: (detail) =>
+          void this.store
+            .setStatus(nibbletId, "starting", detail)
+            .catch((err: unknown) => console.warn(`[${nibbletId}] ${String(err)}`)),
+      });
       const started = await this.store.updateNibblet(nibbletId, { containerId });
+      if (row.machine.guest === "windows" && row.windowsProductKey) {
+        void this.activateWindows(nibbletId, plugin, row.windowsProductKey);
+      }
       for (const id of working) {
         await this.enqueue(id, "system", SUBAGENT_RESUME_INPUT, [], { first: true }).catch(
           (err: unknown) => console.error(`couldn't restart ${id}`, err),
@@ -432,7 +480,7 @@ export class Conductor {
       const message = err instanceof Error ? err.message : String(err);
       await this.store.updateNibblet(nibbletId, {
         status: "error",
-        statusDetail: `Couldn't start its container: ${message}`,
+        statusDetail: `Couldn't start its ${machineWord(plugin)}: ${message}`,
         tailnetNode: null,
       });
       throw new RpcError("unavailable", message);
@@ -491,11 +539,11 @@ export class Conductor {
    */
   private async startSubagent(nibblet: Nibblet): Promise<Nibblet> {
     const nibbletId = nibblet.id;
-    const host = await this.hostOf(nibblet);
+    const { host, plugin } = await this.machineOf(nibbletId);
     try {
       const starting = this.hostStarts.get(host);
       if (starting) await starting;
-      else if (!(await this.docker.runnerRunning(host))) await this.startHost(host);
+      else if (!(await plugin.running(host))) await this.startHost(host);
       const token = await this.store.rotateToken(nibbletId);
       await this.store.updateNibblet(nibbletId, {
         status: "starting",
@@ -508,10 +556,15 @@ export class Conductor {
       this.views.delete(nibbletId);
       // Its host's desktop, if the host has one.
       const desktop = await this.desktop(nibbletId);
-      await this.docker.startSubagent(
+      // Its own browser, where its host's machine can have one.
+      const browser = this.browserOn({
+        browser: nibblet.browser,
+        machine: (await this.store.nibbletRow(host)).machine,
+      });
+      await plugin.startSubagent(
         host,
         nibbletId,
-        this.runnerEnv(nibbletId, token, nibblet.browser, {
+        this.runnerEnv(nibbletId, token, browser, {
           // Its host's agent could read its key, so it spends its host's budget.
           billTo: host,
           desktop: desktop?.token ?? "",
@@ -533,7 +586,7 @@ export class Conductor {
       this.views.delete(nibbletId);
       return;
     }
-    this.views.set(nibbletId, `${runnerName(await this.hostOf(nibblet))}:${port}`);
+    this.views.set(nibbletId, { host: await this.hostOf(nibblet), port });
   }
 
   /** Starts a sub-agent's host container, once however many of its sub-agents ask at the same time. */
@@ -562,8 +615,8 @@ export class Conductor {
     this.links.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
     this.cardFiles.runnerGone(nibbletId);
-    const host = await this.hostOf(nibblet).catch(() => null);
-    if (host && !(await this.docker.runnerRunning(host).catch(() => false))) {
+    const machine = await this.machineOf(nibbletId).catch(() => null);
+    if (machine && !(await machine.plugin.running(machine.host).catch(() => false))) {
       // It went down with its parent's container.
       this.failActive(nibbletId, "interrupted", "Its parent's container stopped");
       await this.store.setStatus(nibbletId, "stopped");
@@ -636,12 +689,13 @@ export class Conductor {
       tailnetNode: null,
     });
     this.views.delete(nibbletId);
+    const { host, plugin } = await this.machineOf(nibbletId);
     if (stopped.parentId) {
       this.subagentRuns.delete(nibbletId);
-      await this.docker.stopSubagent(await this.hostOf(stopped), nibbletId);
+      await plugin.stopSubagent(host, nibbletId);
     } else {
       await this.subagentsGone(nibbletId, "Its parent was stopped");
-      await this.docker.stopRunner(nibbletId);
+      await plugin.stop(nibbletId);
     }
     return stopped;
   }
@@ -655,16 +709,18 @@ export class Conductor {
     await this.stop(nibbletId).catch(() => undefined);
     this.queues.delete(nibbletId);
     const nibblet = await this.store.getNibblet(nibbletId);
+    const { host, plugin } = await this.machineOf(nibbletId);
     if (nibblet.parentId) {
       // What it kept in its host's home: its harness's sessions and its browser profile.
-      await this.docker
-        .removeSubagentState(await this.hostOf(nibblet), nibbletId)
+      await plugin
+        .removeSubagentState(host, nibbletId)
         .catch((err: unknown) => console.warn(`couldn't remove ${nibbletId}'s state`, err));
     }
     // Off the tailnet first, so its machine doesn't linger there with its name.
     if (!nibblet.parentId) await this.leaveTailnet(nibbletId);
     await this.store.deleteNibblet(nibbletId);
-    await this.docker
+    // A sub-agent has no machine of its own, but may have one from before they shared.
+    await plugin
       .removeHome(nibbletId)
       .catch((err: unknown) => console.warn(`couldn't remove ${nibbletId}'s home`, err));
   }
@@ -710,7 +766,7 @@ export class Conductor {
       const outdated =
         !this.active.has(nibbletId) &&
         nibblet.status !== "stopped" &&
-        (await this.docker.runnerOutdated(nibbletId));
+        (await this.machineFor(nibblet).outdated(nibbletId));
       if (nibblet.status === "stopped" || nibblet.status === "error" || outdated) {
         // A recreated runner picks the queue up once it connects.
         await this.start(nibbletId);
@@ -741,13 +797,29 @@ export class Conductor {
     await this.enqueue(nibbletId, "heartbeat", heartbeatInput(beat));
   }
 
-  /** New CPU and memory limits, applied to a running container straight away. */
-  applyResources(nibbletId: string, resources: Resources): Promise<void> {
-    return this.docker.applyResources(nibbletId, resources);
+  /** New CPU and memory limits: applied to a running container straight away, a VM's when it next starts. */
+  async applyResources(nibbletId: string, resources: Resources): Promise<void> {
+    await this.machineFor(await this.store.nibbletRow(nibbletId)).applyResources(
+      nibbletId,
+      resources,
+    );
   }
 
-  hostCapacity(): Promise<{ cpus: number; memoryMb: number } | null> {
-    return this.docker.hostCapacity();
+  /** What there is to share out: a nibblet's own machine's plugin, or the containers'. */
+  async hostCapacity(nibbletId?: string): Promise<{ cpus: number; memoryMb: number } | null> {
+    const machine = nibbletId ? (await this.store.nibbletRow(nibbletId)).machine : DEFAULT_MACHINE;
+    return this.machines.get(machine).capacity();
+  }
+
+  /** Its home folder as a gzipped tar, from whichever machine it has. */
+  async archiveHome(nibbletId: string, out: Writable): Promise<void> {
+    const row = await this.store.nibbletRow(nibbletId);
+    await this.machineFor(row).archiveHome(nibbletId, out);
+  }
+
+  async restoreHome(nibbletId: string, archive: Readable): Promise<void> {
+    const row = await this.store.nibbletRow(nibbletId);
+    await this.machineFor(row).restoreHome(nibbletId, archive);
   }
 
   busy(nibbletId: string): boolean {
@@ -795,6 +867,8 @@ export class Conductor {
         plain: parent.plain,
         // Its own window, in its own browser, beside its parent's.
         browser: parent.browser,
+        // It runs in its parent's machine, so it's the same kind.
+        machine: parent.machine,
       },
       parent.id,
     );
@@ -814,7 +888,15 @@ export class Conductor {
 
   // Runner connections
 
-  async attach(nibbletId: string, link: RunnerLink): Promise<void> {
+  /** Takes a runner's link, or turns it away: whether it took it. */
+  async attach(nibbletId: string, link: RunnerLink): Promise<boolean> {
+    const row = await this.store.nibbletRow(nibbletId);
+    // A runner still up after its nibblet was stopped, its machine on its way
+    // down (a VM's stop waits for a snapshot first): not taken back.
+    if (row.status === "stopped" && this.links.get(nibbletId) !== link) {
+      link.close();
+      return false;
+    }
     const previous = this.links.get(nibbletId);
     previous?.close();
     if (previous && previous !== link) {
@@ -822,7 +904,6 @@ export class Conductor {
       this.cardFiles.runnerGone(nibbletId);
     }
     this.links.set(nibbletId, link);
-    const row = await this.store.nibbletRow(nibbletId);
     const onePassword = await onePasswordLogin(this.config, this.store, nibbletId, (m) =>
       console.warn(`[${nibbletId}] ${m}`),
     );
@@ -841,7 +922,7 @@ export class Conductor {
         hostMcp: this.config.HOST_MCP_URL ? row.hostTools : [],
         // Names only: the guard fetches the settings and secrets behind them itself.
         gated: [
-          ...(row.browser ? ["computer"] : []),
+          ...(this.browserOn(row) ? ["computer"] : []),
           ...(onePassword ? ["onepassword"] : []),
           ...mcpServers.map((server) => server.name),
         ],
@@ -854,6 +935,7 @@ export class Conductor {
         }),
       },
     });
+    return true;
   }
 
   /** Its own MCP servers, less any the host's tools now cover. */
@@ -875,7 +957,7 @@ export class Conductor {
       console.warn(`[${nibbletId}] ${m}`),
     );
     return {
-      browser: row.browser,
+      browser: this.browserOn(row),
       toolApprovals: row.toolApprovals,
       mcpServers: await this.ownMcpServers(row),
       onePassword,
@@ -889,7 +971,7 @@ export class Conductor {
    */
   async tailscaleLogin(nibbletId: string): Promise<TailscaleLogin | null> {
     const row = await this.store.nibbletRow(nibbletId);
-    if (!row.tailscale || row.parentId) return null;
+    if (!row.tailscale || row.parentId || !this.capabilities(row).tailscale) return null;
     return {
       // Its machine name is in its prompt, so it doesn't default to a name it isn't to know.
       hostname: row.tailscale.hostname || tailnetHostname(nameInPrompt(row) ?? ""),
@@ -905,7 +987,9 @@ export class Conductor {
    */
   async tailscaleAuthKey(nibbletId: string): Promise<string> {
     const row = await this.store.nibbletRow(nibbletId);
-    if (!row.tailscale || row.parentId) throw new RpcError("not_found", "It isn't to join");
+    if (!row.tailscale || row.parentId || !this.capabilities(row).tailscale) {
+      throw new RpcError("not_found", "It isn't to join");
+    }
     if (row.tailscale.authKey) return row.tailscale.authKey;
     const oauth = await readTailnetOAuth(this.store);
     if (!oauth) {
@@ -934,8 +1018,9 @@ export class Conductor {
   leaveTailnet(nibbletId: string): Promise<void> {
     const running = this.leaving.get(nibbletId);
     if (running) return running;
-    const leaving = this.docker
-      .leaveTailnet(nibbletId)
+    const leaving = this.store
+      .nibbletRow(nibbletId)
+      .then((row) => this.machineFor(row).leaveTailnet(nibbletId))
       .catch((err: unknown) => console.warn(`[${nibbletId}] couldn't sign out of the tailnet`, err))
       .finally(() => this.leaving.delete(nibbletId));
     this.leaving.set(nibbletId, leaving);
@@ -949,6 +1034,12 @@ export class Conductor {
     this.terminals.runnerGone(nibbletId);
     this.cardFiles.runnerGone(nibbletId);
     this.failActive(nibbletId, "failed", "Lost touch with its container");
+  }
+
+  /** The end of what a nibblet's machine said (a sub-agent's, of its run in its host's). */
+  async logs(nibbletId: string, lines: number): Promise<string> {
+    const nibblet = await this.store.getNibblet(nibbletId);
+    return this.machineFor(nibblet).logs(nibbletId, lines);
   }
 
   /** Pushes new settings to a running nibblet's runner. */
@@ -1121,7 +1212,7 @@ export class Conductor {
       onePasswordVaults: this.onePasswordVaults.get(nibbletId),
       banks: this.bank?.providers() ?? [],
       // Its container's, which comes with the host's browser.
-      desktop: host?.browser ?? false,
+      desktop: host ? this.browserOn(host) : false,
       tailnet:
         host?.tailscale && host.tailnetNode?.state === "running"
           ? { node: host.tailnetNode, ports: host.tailscale.ports }
@@ -1285,11 +1376,10 @@ export class Conductor {
     this.cardFiles.runnerGone(nibbletId);
     this.failActive(nibbletId, "failed", "Its container stopped");
     await this.subagentsGone(nibbletId, "Its parent's container stopped");
-    const logs = await this.docker.runnerLogs(nibbletId, 20);
-    const tail = logs.trim().split("\n").slice(-3).join(" ");
+    const tail = exitReason(await this.machineFor(nibblet).logs(nibbletId, 40));
     await this.store.updateNibblet(nibbletId, {
       status: "error",
-      statusDetail: `Its container exited${code === null ? "" : ` with code ${code}`}${tail ? `: ${tail}` : ""}`,
+      statusDetail: `Its ${machineWord(this.machineFor(nibblet))} exited${code === null ? "" : ` with code ${code}`}${tail ? `: ${tail}` : ""}`,
       tailnetNode: null,
     });
   }
@@ -1322,6 +1412,37 @@ export class Conductor {
     });
   }
 
+  /**
+   * A Windows nibblet's Windows activated with its product key, unless it is
+   * already, while its runner gets going. Said in its thread, unless there's
+   * nothing new; failing, it's tried again when it next starts.
+   */
+  private async activateWindows(
+    nibbletId: string,
+    plugin: MachinePlugin,
+    productKey: string,
+  ): Promise<void> {
+    try {
+      if (!plugin.activateWindows) throw new Error(`${plugin.name} doesn't run Windows`);
+      const done = await plugin.activateWindows(nibbletId, productKey);
+      if (done === "activated") {
+        await this.notice(
+          nibbletId,
+          null,
+          "info",
+          `Activated Windows with its product key (${maskProductKey(productKey)}).`,
+        );
+      }
+    } catch (err) {
+      await this.notice(
+        nibbletId,
+        null,
+        "warning",
+        `Couldn't activate Windows with its product key, so it'll try again when it next starts: ${err instanceof Error ? err.message : String(err)}`,
+      ).catch((e: unknown) => console.warn(`[${nibbletId}] ${String(e)}`));
+    }
+  }
+
   private async notice(
     nibbletId: string,
     turnId: string | null,
@@ -1337,4 +1458,19 @@ export class Conductor {
       text,
     });
   }
+}
+
+/**
+ * Why a runner stopped, from the end of what it said: its last lines, and
+ * when it was Node's own error, that error, which comes well before them.
+ */
+export function exitReason(logs: string): string {
+  const lines = logs
+    .trim()
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const last = lines.slice(-3);
+  const thrown = lines.findLast((l) => /^(\w*Error|Uncaught)\b.*:/.test(l));
+  return (thrown && !last.includes(thrown) ? [thrown, ...last] : last).join(" ");
 }

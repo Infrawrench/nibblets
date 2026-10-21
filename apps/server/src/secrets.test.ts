@@ -58,10 +58,12 @@ describe("toNibblet", () => {
       tailnetNode: null,
       spendingLimits: [],
       location: null,
+      windowsProductKey: "SECRT-SECRT-SECRT-SECRT-VWXYZ",
       statusText: null,
       statusEmoji: null,
       statusUpdatedAt: null,
       awaitingApproval: false,
+      machine: { backend: "docker", guest: "linux" },
       browser: false,
       hostTools: ["files"],
       cliCredentials: ["gh"],
@@ -87,5 +89,8 @@ describe("toNibblet", () => {
     expect(nibblet.mcpServers[0]).toMatchObject({ headers: { authorization: MASKED } });
     expect(nibblet.cliCredentials).toEqual(["gh"]);
     expect(nibblet.tailscale).toEqual({ authKey: MASKED, hostname: "", ports: [3000] });
+    // All but its last group, as Windows shows one.
+    expect(nibblet.windowsProductKey).toBe("•••••-•••••-•••••-•••••-VWXYZ");
+    expect(text).not.toContain("SECRT");
   });
 });

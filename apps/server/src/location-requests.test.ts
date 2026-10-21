@@ -14,14 +14,20 @@ const london = {
 };
 const fix = { latitude: 51.5246, longitude: -0.0781, accuracyM: 35, timeZone: "Europe/London" };
 
-function setup(opts: { viewers?: number; timeoutMs?: number } = {}) {
+function setup(opts: { viewers?: number; timeoutMs?: number; writeMs?: number[] } = {}) {
   const rows = new Map<string, { parentId: string | null; location: NibbletLocation | null }>([
     ["nib_top", { parentId: null, location: null }],
     ["nib_child", { parentId: "nib_top", location: null }],
   ]);
   const items = new Map<string, Item>();
+  // How long each write takes, in turn: a database's can come back out of order.
+  const writeMs = [...(opts.writeMs ?? [])];
   const store: LocationStore = {
-    putItem: async (_id, item) => void items.set(item.id, item),
+    putItem: async (_id, item) => {
+      const ms = writeMs.shift() ?? 0;
+      if (ms > 0) await new Promise((r) => setTimeout(r, ms));
+      items.set(item.id, item);
+    },
     updateNibblet: async (id, patch) => {
       const row = rows.get(id);
       if (row) row.location = patch.location;
@@ -56,6 +62,13 @@ function setup(opts: { viewers?: number; timeoutMs?: number } = {}) {
 }
 
 describe("LocationRequests", () => {
+  it("has written what an ask came to by the time it answers, over a slow first write", async () => {
+    // The first write ("pending") outlasts the wait, and comes back after the second.
+    const { requests, items } = setup({ timeoutMs: 10, writeMs: [100, 5] });
+    expect(await requests.ask("nib_top", "turn_1")).toEqual({ kind: "unanswered" });
+    expect([...items.values()].map((i) => i.status)).toEqual(["unanswered"]);
+  });
+
   it("doesn't ask when no Nibblets is open to answer", async () => {
     const { requests, items } = setup({ viewers: 0 });
     expect(await requests.ask("nib_top", "turn_1")).toEqual({ kind: "nobody" });

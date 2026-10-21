@@ -11,6 +11,7 @@ import { LocationFix } from "./location.ts";
 import { CliStatuses, HostTools } from "./mcp.ts";
 import { HarnessId, HarnessModels } from "./models.ts";
 import { ConnectStatus, ProxyUrl, PublicAddress, TailscaleStatus } from "./connect.ts";
+import { MachineBackend, PrepareMachineImage } from "./machines.ts";
 import { OnePasswordGrants, OnePasswordStatus, VaultGrant } from "./onepassword.ts";
 import { procedure } from "./rpc.ts";
 import { Snapshot, SnapshotActivity, SnapshotTimeline } from "./snapshots.ts";
@@ -47,6 +48,14 @@ export const contract = {
     delete: procedure(Id, Ok),
     start: procedure(Id, Nibblet),
     stop: procedure(Id, Nibblet),
+    /**
+     * The end of what its machine said: its entry's, guard's and runner's
+     * output, for saying why something in it didn't work.
+     */
+    logs: procedure(
+      z.object({ id: z.string(), lines: z.int().min(1).max(2000).default(200) }),
+      z.object({ text: z.string() }),
+    ),
     /** Sends a message. Queued if the nibblet is mid-turn. */
     /** `attachments` are file ids from `POST /api/nibblets/:id/files`. */
     send: procedure(
@@ -95,6 +104,17 @@ export const contract = {
      * Empty while it's asleep.
      */
     apps: procedure(Id, z.array(DesktopApp)),
+  },
+  machines: {
+    /** Where nibblets can run on this server: containers, and the host's hypervisors. */
+    list: procedure(z.object({}), z.array(MachineBackend)),
+    /**
+     * Makes the image a guest's virtual machines start from, in the
+     * background; `list` shows how it's going. Linux's is made by itself
+     * the first time one starts, but Windows needs an installer, and macOS
+     * a download the size of macOS.
+     */
+    prepare: procedure(PrepareMachineImage, Ok),
   },
   harnesses: {
     /** A harness's models: the fixed lists for Claude and Codex, the host's live list for OpenCode. */

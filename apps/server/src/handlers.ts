@@ -17,6 +17,7 @@ import { forgetGrants, onePasswordStatus, readGrants, setGrants } from "./onepas
 import type { Bank } from "./bank.ts";
 import type { Banks } from "./banks.ts";
 import type { PublicAddresses } from "./public-address.ts";
+import type { MachineRegistry } from "@nibblet/machine";
 import type { Conductor } from "./conductor.ts";
 import type { HarnessModelLists } from "./opencode.ts";
 import {
@@ -58,6 +59,7 @@ export interface Services {
   geocoder: Geocoder;
   locations: LocationRequests;
   publicAddress: PublicAddresses;
+  machines: MachineRegistry;
 }
 
 const ok = { ok: true } as const;
@@ -120,6 +122,12 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       get: ({ id }) => store.getNibblet(id),
       create: async ({ message, ...input }) => {
         await checkModel(input.harness, input.model);
+        await s.machines.check(input.machine).catch((err: unknown) => {
+          throw new RpcError("bad_request", err instanceof Error ? err.message : String(err));
+        });
+        if (input.windowsProductKey && input.machine?.guest !== "windows") {
+          throw new RpcError("bad_request", "A Windows product key is only for a Windows machine");
+        }
         if (input.mcpServers?.length && input.hostTools?.length) {
           const host = await hostTools(s.config);
           input = {
@@ -151,6 +159,8 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
           );
         if (patch.monthlyBudgetUsd != null && before.parentId)
           throw new RpcError("bad_request", "A sub-agent spends its parent's budget");
+        if (tailscale && !conductor.capabilities(row).tailscale)
+          throw new RpcError("bad_request", "Its machine can't join a tailnet yet");
         if (tailscale && !tailscale.authKey && !(await readTailnetOAuth(store)))
           throw new RpcError(
             "bad_request",
@@ -202,6 +212,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       },
       start: ({ id }) => conductor.start(id),
       stop: ({ id }) => conductor.stop(id),
+      logs: async ({ id, lines }) => ({ text: await conductor.logs(id, lines ?? 200) }),
       send: async ({ id, text, attachments }) => {
         const files = await s.files.attachments(id, attachments);
         await conductor.enqueue(id, "user", text, files);
@@ -236,6 +247,17 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       },
       decide: async ({ id, approvalId, approve, reason }) => {
         await conductor.approvals.decide(id, approvalId, approve, reason);
+        return ok;
+      },
+    },
+
+    machines: {
+      list: () => s.machines.describe(),
+      prepare: async ({ backend, guest, source }) => {
+        await s.machines.check({ backend, guest }).catch((err: unknown) => {
+          throw new RpcError("bad_request", err instanceof Error ? err.message : String(err));
+        });
+        await s.machines.get({ backend }).prepare(guest, source);
         return ok;
       },
     },

@@ -2,7 +2,7 @@ import { lstat, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { clearProfileLock, serveArgs } from "./computer.ts";
+import { clearProfileLock, ocuCommand, serveArgs, startComputer } from "./computer.ts";
 
 describe("the browser's profile lock", () => {
   let home = "";
@@ -46,5 +46,30 @@ describe("serve's arguments", () => {
       "--view-listen",
       "0.0.0.0:7900",
     ]);
+  });
+});
+
+describe("what starts OpenComputerUse", () => {
+  it("is the command and arguments the environment says, or it alone", () => {
+    expect(ocuCommand({})).toEqual({ command: "opencomputeruse", args: [] });
+    expect(
+      ocuCommand({ OCU_CMD: "runas.exe", OCU_CMD_ARGS: '["--session","nibblet","ocu.exe"]' }),
+    ).toEqual({ command: "runas.exe", args: ["--session", "nibblet", "ocu.exe"] });
+  });
+
+  it("starts it over stdio too, with what goes before its own arguments", async () => {
+    const said: string[] = [];
+    const computer = await startComputer(
+      "view-token",
+      (_level, message) => said.push(message),
+      { mcp: 1, view: 7900 },
+      { via: { command: "nibblet-no-such-wrapper", args: ["--session", "nibblet", "ocu.exe"] } },
+    );
+    expect(computer?.mcp).toMatchObject({
+      type: "stdio",
+      command: "nibblet-no-such-wrapper",
+      args: ["--session", "nibblet", "ocu.exe", "mcp", "--view-listen", "0.0.0.0:7900"],
+    });
+    expect(said.join("\n")).toContain("using stdio");
   });
 });

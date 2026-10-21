@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { nodeFromStatus, tailscaleClient, why } from "./tailscale.ts";
+import {
+  nodeFromStatus,
+  TAILSCALE_USER,
+  tailscaleClient,
+  tailscaleHost,
+  why,
+} from "./tailscale.ts";
 
 describe("its machine on the tailnet", () => {
   it("is running once Tailscale says so, with its name and addresses", () => {
@@ -74,5 +80,25 @@ describe("talking to the server", () => {
     const fetcher: typeof fetch = async () =>
       Response.json({ error: "no OAuth client" }, { status: 409 });
     await expect(tailscaleClient(env, fetcher).authKey()).rejects.toThrow("no OAuth client");
+  });
+});
+
+describe("Tailscale on Windows", () => {
+  const host = tailscaleHost("win32");
+
+  it("listens where only an administrator could have, so nothing can pose as it for the key", () => {
+    expect(host.socket).toMatch(/^\\\\\.\\pipe\\ProtectedPrefix\\Administrators\\/);
+  });
+
+  it("is run by a user of its own, who keeps it, so the agent can't use it", () => {
+    expect(host.cli.args[0]).toBe(TAILSCALE_USER);
+    expect(host.cli.command).toMatch(/nibblet-runas\.exe$/);
+    expect(host.up).toEqual(["--unattended"]);
+  });
+
+  it("is as it was everywhere else", () => {
+    const linux = tailscaleHost("linux");
+    expect(linux.cli).toEqual({ command: "tailscale", args: [] });
+    expect(linux.up).toEqual([]);
   });
 });

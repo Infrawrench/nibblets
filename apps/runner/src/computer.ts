@@ -19,8 +19,10 @@
  * The runner starts another, the desktop (see desktop.ts), for the agent's
  * other apps, as the agent's own user.
  *
- * Overrides: `OCU_CMD` (default `opencomputeruse`), `OCU_ARGS` (space
- * separated), `OCU_MCP_URL`.
+ * Overrides: `OCU_CMD` (default `opencomputeruse`), `OCU_CMD_ARGS` (a JSON
+ * array of arguments before its own, for a command that starts it: on
+ * Windows, runas into the signed-in session), `OCU_ARGS` (space separated),
+ * `OCU_MCP_URL`. The first two can be given as `via` instead.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -28,10 +30,13 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { McpServerSpec } from "@nibblet/harness";
 import { BROWSER_MCP_PORT, VIEW_PORT } from "@nibblet/protocol";
+import { z } from "zod";
 
 // The tokens go in the environment (OCU_SERVE_TOKEN, OCU_VIEW_TOKEN), never
 // the command line, which every process in the container can read.
 const DEFAULT_PORTS = { mcp: BROWSER_MCP_PORT, view: VIEW_PORT };
+/** How long it has to come up through a wrapper: the session runas waits for (three minutes), and then some. */
+const WRAPPED_START_MS = 4 * 60_000;
 
 export interface Computer {
   mcp: McpServerSpec;
@@ -56,6 +61,15 @@ export async function clearProfileLock(home: string): Promise<void> {
   }
 }
 
+/**
+ * Its environment, without the nibblet's own settings and secrets: it needs
+ * none of them, and where it runs as the agent's user (Windows, macOS), a
+ * process of that user's can read another's environment.
+ */
+function ocuEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("NIBBLET_")));
+}
+
 export interface ComputerOptions {
   /** The MCP endpoint's token; a new one, kept in this process, unless given. */
   token?: string;
@@ -67,6 +81,21 @@ export interface ComputerOptions {
   args?: string[];
   /** Whether the harness should run OCU over stdio when `serve` doesn't come up, rather than none. */
   stdio?: boolean;
+  /** What starts it, with the arguments before its own, rather than `OCU_CMD` and `OCU_CMD_ARGS`. */
+  via?: OcuCommand;
+}
+
+export interface OcuCommand {
+  command: string;
+  args: readonly string[];
+}
+
+/** What starts OpenComputerUse, from `OCU_CMD` and `OCU_CMD_ARGS`. */
+export function ocuCommand(env: NodeJS.ProcessEnv = process.env): OcuCommand {
+  return {
+    command: env.OCU_CMD ?? "opencomputeruse",
+    args: env.OCU_CMD_ARGS ? z.array(z.string()).parse(JSON.parse(env.OCU_CMD_ARGS)) : [],
+  };
 }
 
 /**
@@ -92,8 +121,11 @@ export async function startComputer(
   opts: ComputerOptions = {},
 ): Promise<Computer | null> {
   const token = opts.token ?? randomBytes(24).toString("base64url");
-  const command = process.env.OCU_CMD ?? "opencomputeruse";
-  const args = opts.args ?? process.env.OCU_ARGS?.split(" ").filter(Boolean) ?? serveArgs(ports);
+  const { command, args: lead } = opts.via ?? ocuCommand();
+  const args = [
+    ...lead,
+    ...(opts.args ?? process.env.OCU_ARGS?.split(" ").filter(Boolean) ?? serveArgs(ports)),
+  ];
   const tokens = { OCU_SERVE_TOKEN: token, OCU_VIEW_TOKEN: viewToken };
   const url = process.env.OCU_MCP_URL ?? `http://127.0.0.1:${ports.mcp}/mcp`;
   const stdio: Computer | null =
@@ -103,7 +135,7 @@ export async function startComputer(
           mcp: {
             type: "stdio",
             command,
-            args: ["mcp", "--view-listen", `0.0.0.0:${ports.view}`],
+            args: [...lead, "mcp", "--view-listen", `0.0.0.0:${ports.view}`],
             env: { OCU_LINUX_DISPLAY: "wayland", OCU_VIEW_TOKEN: viewToken },
           },
           stop() {},
@@ -113,7 +145,7 @@ export async function startComputer(
   try {
     child = spawn(command, args, {
       stdio: ["ignore", "inherit", "inherit"],
-      env: { ...(opts.env ?? process.env), ...tokens, OCU_LINUX_DISPLAY: "wayland" },
+      env: { ...ocuEnv(opts.env ?? process.env), ...tokens, OCU_LINUX_DISPLAY: "wayland" },
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
     });
   } catch (err) {
@@ -133,7 +165,10 @@ export async function startComputer(
     log("warn", `OpenComputerUse: ${err.message}`);
   });
 
-  if (!(await waitForHttp(url, () => exited))) {
+  // Through a wrapper (runas into Windows' signed-in session), it can't start
+  // before the session has: a first boot's sign-in, making its profile, takes
+  // minutes, which runas waits out.
+  if (!(await waitForHttp(url, () => exited, lead.length > 0 ? WRAPPED_START_MS : 15_000))) {
     log("warn", `OpenComputerUse serve mode didn't come up${stdio ? "; using stdio" : ""}`);
     if (!exited) child.kill();
     return stdio;

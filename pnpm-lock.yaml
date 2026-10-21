@@ -300,9 +300,16 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@nibblet/machine':
+        specifier: workspace:*
+        version: link:../../packages/machine
       '@types/ws':
         specifier: ^8.18.2
         version: 8.18.2
+    optionalDependencies:
+      node-pty:
+        specifier: 1.1.0
+        version: 1.1.0
 
   apps/server:
     dependencies:
@@ -336,6 +343,21 @@ importers:
       '@nibblet/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@nibblet/machine':
+        specifier: workspace:*
+        version: link:../../packages/machine
+      '@nibblet/machine-apple':
+        specifier: workspace:*
+        version: link:../../packages/machine-apple
+      '@nibblet/machine-docker':
+        specifier: workspace:*
+        version: link:../../packages/machine-docker
+      '@nibblet/machine-hyperv':
+        specifier: workspace:*
+        version: link:../../packages/machine-hyperv
+      '@nibblet/machine-kvm':
+        specifier: workspace:*
+        version: link:../../packages/machine-kvm
       '@nibblet/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -600,6 +622,18 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.1
         version: 1.32.1(supports-color@7.2.0)(zod@4.6.7)
+      '@nibblet/machine':
+        specifier: workspace:*
+        version: link:../machine
+      '@nibblet/machine-apple':
+        specifier: workspace:*
+        version: link:../machine-apple
+      '@nibblet/machine-hyperv':
+        specifier: workspace:*
+        version: link:../machine-hyperv
+      '@nibblet/machine-kvm':
+        specifier: workspace:*
+        version: link:../machine-kvm
       '@nibblet/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -610,11 +644,95 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
 
+  packages/machine:
+    dependencies:
+      '@nibblet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      ws:
+        specifier: ^8.22.0
+        version: 8.22.0
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@types/ws':
+        specifier: ^8.18.2
+        version: 8.18.2
+
+  packages/machine-apple:
+    dependencies:
+      '@nibblet/machine':
+        specifier: workspace:*
+        version: link:../machine
+      '@nibblet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  packages/machine-docker:
+    dependencies:
+      '@nibblet/machine':
+        specifier: workspace:*
+        version: link:../machine
+      '@nibblet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      dockerode:
+        specifier: ^5.0.1
+        version: 5.0.1(supports-color@10.2.2)
+    devDependencies:
+      '@types/dockerode':
+        specifier: ^4.0.2
+        version: 4.0.2
+
+  packages/machine-hyperv:
+    dependencies:
+      '@nibblet/machine':
+        specifier: workspace:*
+        version: link:../machine
+      '@nibblet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  packages/machine-kvm:
+    dependencies:
+      '@nibblet/machine':
+        specifier: workspace:*
+        version: link:../machine
+      '@nibblet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
   packages/protocol:
     dependencies:
       zod:
         specifier: ^4.6.7
         version: 4.6.7
+
+  test/integration:
+    dependencies:
+      '@nibblet/host-mcp':
+        specifier: workspace:*
+        version: link:../../packages/host-mcp
+      '@nibblet/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      undici:
+        specifier: ^7.30.0
+        version: 7.30.0
 
 packages:
 
@@ -7258,12 +7376,32 @@ snapshots:
       - electron-builder-squirrel-windows
       - supports-color
 
+  docker-modem@5.0.7(supports-color@10.2.2):
+    dependencies:
+      debug: 4.4.3(supports-color@10.2.2)
+      readable-stream: 3.6.2
+      split-ca: 1.0.1
+      ssh2: 1.17.0
+    transitivePeerDependencies:
+      - supports-color
+
   docker-modem@5.0.7(supports-color@7.2.0):
     dependencies:
       debug: 4.4.3(supports-color@7.2.0)
       readable-stream: 3.6.2
       split-ca: 1.0.1
       ssh2: 1.17.0
+    transitivePeerDependencies:
+      - supports-color
+
+  dockerode@5.0.1(supports-color@10.2.2):
+    dependencies:
+      '@balena/dockerignore': 1.0.2
+      '@grpc/grpc-js': 1.14.6
+      '@grpc/proto-loader': 0.7.15
+      docker-modem: 5.0.7(supports-color@10.2.2)
+      protobufjs: 7.6.6
+      tar-fs: 2.1.5
     transitivePeerDependencies:
       - supports-color
 
@@ -9522,8 +9660,7 @@ snapshots:
 
   undici@7.29.1: {}
 
-  undici@7.30.0:
-    optional: true
+  undici@7.30.0: {}
 
   undici@8.12.2: {}
 

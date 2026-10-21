@@ -15,10 +15,18 @@
  * The key comes from the server, with the guard's token, and goes to
  * `tailscale up` in a file rather than on its command line, which every
  * process in the container can read.
+ *
+ * On Windows it's the same, but for who it runs as. tailscaled's pipe is
+ * open to every user, so it's kept by owning it: tailscaled runs as SYSTEM,
+ * and `tailscale` as a user of its own (TAILSCALE_USER), whose `up
+ * --unattended` makes it tailscaled's owner, which only SYSTEM and it may
+ * then talk to. The pipe is where only an administrator can make one, so
+ * nothing can pose as tailscaled for the key. The entry fences tailscaled
+ * in with nibblet-fence (machine/windows/fence.cs) rather than a firewall.
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { connect } from "node:net";
 import path from "node:path";
 import { promisify } from "node:util";
 import {
@@ -38,9 +46,57 @@ const log = (message: string) => console.warn(`tailscale: ${message}`);
 export const TAILSCALE_STATE = CONTAINER_TAILSCALE_STATE;
 /** Its control socket and the key on its way to `tailscale up`. */
 export const TAILSCALE_RUN = `/tmp/tailscale-${TAILSCALE_UID}`;
-const SOCKET = path.join(TAILSCALE_RUN, "tailscaled.sock");
+
+/** Windows' Tailscale: its binaries, from the image's bootstrap, and its state on the system disk. */
+export const WINDOWS_TAILSCALE = {
+  dir: "C:\\Nibblets\\tailscale",
+  tailscaled: "C:\\Nibblets\\tailscale\\tailscaled.exe",
+  state: "C:\\ProgramData\\Nibblets\\tailscale",
+  run: "C:\\ProgramData\\Nibblets\\tailscale-run",
+};
+/** Windows' user for `tailscale`, which owns tailscaled. */
+export const TAILSCALE_USER = "nibblet-tailscale";
+
+/** Where Tailscale is, and how its CLI's run, on this machine. */
+interface TailscaleHost {
+  state: string;
+  run: string;
+  socket: string;
+  tailscaled: string;
+  cli: { command: string; args: readonly string[] };
+  /** What `up` adds, to keep it signed in as whoever ran it. */
+  up: readonly string[];
+}
+
+export function tailscaleHost(platform: NodeJS.Platform): TailscaleHost {
+  if (platform === "win32") {
+    const w = WINDOWS_TAILSCALE;
+    return {
+      state: w.state,
+      run: w.run,
+      socket: "\\\\.\\pipe\\ProtectedPrefix\\Administrators\\Nibblets\\tailscaled",
+      tailscaled: w.tailscaled,
+      cli: {
+        command: "C:\\Nibblets\\bin\\nibblet-runas.exe",
+        args: [TAILSCALE_USER, path.win32.join(w.dir, "tailscale.exe")],
+      },
+      up: ["--unattended"],
+    };
+  }
+  return {
+    state: TAILSCALE_STATE,
+    run: TAILSCALE_RUN,
+    socket: path.join(TAILSCALE_RUN, "tailscaled.sock"),
+    tailscaled: "tailscaled",
+    cli: { command: "tailscale", args: [] },
+    up: [],
+  };
+}
+
+const HOST = tailscaleHost(process.platform);
+const SOCKET = HOST.socket;
 /** Which key it last joined with, so a new one (perhaps for another tailnet) signs in again. */
-const KEY_MARK = path.join(TAILSCALE_STATE, "nibblet-auth-key.sha256");
+const KEY_MARK = path.join(HOST.state, "nibblet-auth-key.sha256");
 const POLL_MS = 15_000;
 
 export const TailscaleEnv = z.object({
@@ -156,17 +212,27 @@ export function why(err: unknown): string {
 }
 
 const tailscale = async (args: string[], timeout = 30_000) =>
-  (await exec("tailscale", [`--socket=${SOCKET}`, ...args], { timeout })).stdout;
+  (
+    await exec(HOST.cli.command, [...HOST.cli.args, `--socket=${SOCKET}`, ...args], {
+      timeout,
+      windowsHide: true,
+    })
+  ).stdout;
 
-const exists = (p: string) =>
-  lstat(p).then(
-    () => true,
-    () => false,
-  );
+/** Whether tailscaled is listening: its socket, or on Windows its pipe, takes a connection. */
+const listening = () =>
+  new Promise<boolean>((resolve) => {
+    const socket = connect(SOCKET);
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once("error", () => resolve(false));
+  });
 
 async function waitForSocket(daemon: { exited: boolean }): Promise<void> {
   for (let i = 0; i < 100 && !daemon.exited; i++) {
-    if (await exists(SOCKET)) return;
+    if (await listening()) return;
     await new Promise((r) => setTimeout(r, 200));
   }
   throw new Error("tailscaled didn't start");
@@ -175,15 +241,15 @@ async function waitForSocket(daemon: { exited: boolean }): Promise<void> {
 /** Starts `tailscaled`, keeping the end of what it says for when it stops. */
 function startDaemon(): { child: ChildProcess; exited: boolean; tail: string } {
   const child = spawn(
-    "tailscaled",
+    HOST.tailscaled,
     [
       "--tun=userspace-networking",
-      `--statedir=${TAILSCALE_STATE}`,
+      `--statedir=${HOST.state}`,
       `--socket=${SOCKET}`,
       `--socks5-server=127.0.0.1:${TAILSCALE_PROXY_PORT}`,
       `--outbound-http-proxy-listen=127.0.0.1:${TAILSCALE_PROXY_PORT}`,
     ],
-    { stdio: ["ignore", "ignore", "pipe"] },
+    { stdio: ["ignore", "ignore", "pipe"], windowsHide: true },
   );
   const daemon = { child, exited: false, tail: "" };
   child.stderr?.on("data", (chunk: Buffer) => {
@@ -228,8 +294,8 @@ async function up(login: TailscaleLogin, server: TailscaleClient): Promise<void>
   } else if (state === "NeedsMachineAuth") {
     // Signed in, waiting on the tailnet's admin to approve it.
   } else {
-    const keyFile = path.join(TAILSCALE_RUN, "authkey");
-    const args = ["up", "--reset", `--hostname=${login.hostname}`, "--timeout=60s"];
+    const keyFile = path.join(HOST.run, "authkey");
+    const args = ["up", "--reset", ...HOST.up, `--hostname=${login.hostname}`, "--timeout=60s"];
     if (state === "NeedsLogin" || state === "NoState") {
       await writeFile(keyFile, await server.authKey(), { mode: 0o600 });
       args.push(`--auth-key=file:${keyFile}`);
@@ -245,7 +311,7 @@ async function up(login: TailscaleLogin, server: TailscaleClient): Promise<void>
 
 /** Signs the machine out of the tailnet, and forgets it. */
 async function leave(): Promise<void> {
-  await mkdir(TAILSCALE_RUN, { recursive: true, mode: 0o700 });
+  await mkdir(HOST.run, { recursive: true, mode: 0o700 });
   const daemon = startDaemon();
   try {
     await waitForSocket(daemon);
@@ -257,8 +323,8 @@ async function leave(): Promise<void> {
     daemon.child.kill("SIGTERM");
   }
   // The folder is the volume's, so it stays, empty.
-  for (const entry of await readdir(TAILSCALE_STATE).catch(() => []))
-    await rm(path.join(TAILSCALE_STATE, entry), { recursive: true, force: true });
+  for (const entry of await readdir(HOST.state).catch(() => []))
+    await rm(path.join(HOST.state, entry), { recursive: true, force: true });
 }
 
 async function main(): Promise<void> {
@@ -284,7 +350,7 @@ async function main(): Promise<void> {
       await new Promise((r) => setTimeout(r, 2000));
     }
   }
-  await mkdir(TAILSCALE_RUN, { recursive: true, mode: 0o700 });
+  await mkdir(HOST.run, { recursive: true, mode: 0o700 });
 
   let daemon = startDaemon();
   let stopping = false;

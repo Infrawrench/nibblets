@@ -12,6 +12,10 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "@nibblet/machine": "workspace:*",
+    "@nibblet/machine-apple": "workspace:*",
+    "@nibblet/machine-hyperv": "workspace:*",
+    "@nibblet/machine-kvm": "workspace:*",
     "@nibblet/protocol": "workspace:*",
     "kill-emudhra": "^0.1.0",
     "zod": "^4.6.7"

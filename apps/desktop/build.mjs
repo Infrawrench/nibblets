@@ -1,5 +1,6 @@
 // Bundles the main and preload scripts for Electron and copies the static
 // files beside them. Electron loads out/main.cjs.
+import { execFileSync } from "node:child_process";
 import { build } from "esbuild";
 import { existsSync } from "node:fs";
 import { chmod, cp, mkdir, readdir, rm } from "node:fs/promises";
@@ -48,3 +49,36 @@ for (const dir of existsSync(join(pty, "prebuilds")) ? await readdir(join(pty, "
 await cp("src/setup.html", "out/setup.html");
 await cp("assets/trayTemplate.png", "out/trayTemplate.png");
 await cp("assets/trayTemplate@2x.png", "out/trayTemplate@2x.png");
+
+// Apple's VM helper (packages/machine-apple/helper), on a Mac with the
+// Swift compiler, signed for this Mac; a release signs it again with the
+// app's identity and the virtualization entitlement.
+if (process.platform === "darwin") {
+  const helper = "../../packages/machine-apple/helper";
+  try {
+    execFileSync("swiftc", [
+      "-O",
+      "-swift-version",
+      "5",
+      "-target",
+      `${process.arch === "arm64" ? "arm64" : "x86_64"}-apple-macos13`,
+      "-o",
+      "out/nibblet-vm",
+      join(helper, "main.swift"),
+      "-framework",
+      "Virtualization",
+      "-framework",
+      "AppKit",
+    ]);
+    execFileSync("codesign", [
+      "-s",
+      "-",
+      "-f",
+      "--entitlements",
+      join(helper, "vm.entitlements"),
+      "out/nibblet-vm",
+    ]);
+  } catch (err) {
+    console.warn(`No VM helper (virtual machines will build their own): ${err.message}`);
+  }
+}

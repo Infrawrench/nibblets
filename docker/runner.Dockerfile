@@ -74,7 +74,7 @@ RUN curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg \
  && apt-get install -y --no-install-recommends tailscale netcat-openbsd \
  && rm -rf /var/lib/apt/lists/*
 
-ARG OCU_VERSION=0.8.0
+ARG OCU_VERSION=0.11.0
 ARG TARGETARCH
 RUN case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
       amd64) arch=x86_64 ;; \

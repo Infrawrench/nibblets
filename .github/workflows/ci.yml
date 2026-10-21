@@ -48,6 +48,14 @@ jobs:
         env:
           NIBBLET_TEST_DATABASE_URL: postgres://nibblet:nibblet@localhost:5432/nibblet
 
+  windows-helpers:
+    name: Windows guest helpers
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v5
+      - run: ./test/windows/helpers.ps1
+        shell: pwsh
+
   images:
     name: Docker images
     runs-on: ubuntu-latest
@@ -65,6 +73,58 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Test against the runner image
-        run: pnpm vitest run apps/server/src/docker-home.test.ts
+        run: pnpm vitest run packages/machine-docker/test/home.test.ts
         env:
           NIBBLET_TEST_DOCKER: "1"
+
+  integration:
+    name: Integration (${{ matrix.machine }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        # Apple's and Hyper-V's hypervisors aren't on hosted runners: see
+        # test/integration/README.md for running those.
+        machine: [docker, podman, kvm]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Make room
+        # A VM's Linux image is made from the runner image, and needs about 12 GB.
+        if: matrix.machine == 'kvm'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: Build the runner and the server
+        run: |
+          docker build -f docker/runner.Dockerfile -t nibblet/runner:dev .
+          docker build -f docker/server.Dockerfile -t nibblet/server:dev .
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Use Podman
+        if: matrix.machine == 'podman'
+        # Rootful, as the server needs to make containers; the images move over.
+        run: |
+          sudo mkdir -p /etc/systemd/system/podman.socket.d
+          printf '[Socket]\nSocketMode=0666\n' | sudo tee /etc/systemd/system/podman.socket.d/open.conf
+          sudo systemctl daemon-reload
+          sudo systemctl restart podman.socket
+          sudo chmod 755 /run/podman
+          DOCKER_HOST=unix:///run/podman/podman.sock docker version
+          docker save nibblet/runner:dev nibblet/server:dev | sudo podman load
+          echo "DOCKER_HOST=unix:///run/podman/podman.sock" >> "$GITHUB_ENV"
+          echo "NIBBLET_TEST_DOCKER_SOCKET=/run/podman/podman.sock" >> "$GITHUB_ENV"
+      - name: Use KVM
+        if: matrix.machine == 'kvm'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf
+      - run: pnpm test:integration
+        env:
+          NIBBLET_TEST_MACHINE: ${{ matrix.machine == 'podman' && 'docker' || matrix.machine }}
+          NIBBLET_TEST_VERBOSE: "1"

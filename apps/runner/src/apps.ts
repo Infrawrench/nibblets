@@ -328,6 +328,11 @@ export interface DesktopAppsOptions {
   onChange?: (apps: DesktopApp[]) => void;
   /** Overrides how the list is made, for tests. */
   scan?: () => Promise<ScannedApp[]>;
+  /**
+   * The display apps open on: Linux's headless Wayland one; none elsewhere,
+   * where they open on the signed-in desktop. This platform's unless given.
+   */
+  display?: "wayland" | null;
 }
 
 /** The launcher: the apps there are, and opening one on the desktop. */
@@ -380,10 +385,16 @@ export class DesktopApps {
     const app = find() ?? (await this.scan(), find());
     if (!app) throw new Error(`No app ${id}. app_list says which there are.`);
     const [command, ...args] = execArgv(app.exec, files);
+    const display =
+      this.opts.display === undefined
+        ? process.platform === "linux"
+          ? "wayland"
+          : null
+        : this.opts.display;
     const res = await fetch(`${this.opts.viewUrl}/sessions`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.opts.token}`, "content-type": "application/json" },
-      body: JSON.stringify({ app: command, args, display: "wayland" }),
+      body: JSON.stringify({ app: command, args, ...(display ? { display } : {}) }),
       signal: AbortSignal.timeout(60_000),
     });
     const body: unknown = await res.json().catch(() => null);

@@ -1,7 +1,7 @@
 import { TunnelConfig, type TunnelStatus } from "@nibblet/protocol";
 import type Docker from "dockerode";
 import type { Config } from "./config.ts";
-import { isNotFound } from "./docker.ts";
+import { isNotFound } from "@nibblet/machine-docker";
 import type { Store } from "./store.ts";
 
 export const TUNNEL_IMAGE = "cloudflare/cloudflared:2026.10.0";

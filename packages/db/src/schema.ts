@@ -3,6 +3,7 @@ import type {
   CardKind,
   CardState,
   Effort,
+  MachineChoice,
   HamsterLook,
   HarnessId,
   Heartbeat,
@@ -70,6 +71,11 @@ export const nibblets = pgTable("nibblets", {
   /** Null for its own name, empty for none. */
   promptName: text("prompt_name"),
   plain: boolean("plain").notNull().default(false),
+  /** Which machine plugin it runs on, and the guest; every nibblet before there was a choice was a container. */
+  machine: jsonb("machine")
+    .$type<MachineChoice>()
+    .notNull()
+    .default({ backend: "docker", guest: "linux" }),
   browser: boolean("browser").notNull().default(true),
   hostTools: text("host_tools").array().notNull().default([]),
   cliCredentials: text("cli_credentials").array().notNull().default([]),
@@ -82,6 +88,8 @@ export const nibblets = pgTable("nibblets", {
   spendingLimits: jsonb("spending_limits").$type<SpendingLimit[]>().notNull().default([]),
   /** Where its person last said they were, with the place it's in. */
   location: jsonb("location").$type<NibbletLocation>(),
+  /** Unmasked, like `tailscale`: the API masks it on the way out. Windows machines only. */
+  windowsProductKey: text("windows_product_key"),
   statusText: text("status_text"),
   statusEmoji: text("status_emoji"),
   statusUpdatedAt: timestamp("status_updated_at", { withTimezone: true }),

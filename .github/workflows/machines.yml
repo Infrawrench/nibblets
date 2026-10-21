@@ -1,0 +1,199 @@
+name: Machines
+
+# The slow integration runs, whose guests are installed from scratch:
+# Windows on KVM, and Linux and Windows on Hyper-V, for each commit to
+# main, or by hand. Apple Virtualization isn't on hosted runners;
+# test/integration/README.md says how to run it.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: machines-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+jobs:
+  windows-kvm:
+    name: Integration (Windows on KVM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      # Where to download a Windows installer ISO (x64) from, as a secret.
+      WINDOWS_ISO_URL: ${{ secrets.WINDOWS_ISO_URL }}
+    steps:
+      - name: Say what's missing
+        if: env.WINDOWS_ISO_URL == ''
+        run: echo "::warning::Set the WINDOWS_ISO_URL secret to test Windows guests."
+      - uses: actions/checkout@v5
+        if: env.WINDOWS_ISO_URL != ''
+      - name: Make room
+        # The ISO, Windows' disk, and the images.
+        if: env.WINDOWS_ISO_URL != ''
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: Build the runner and the server
+        if: env.WINDOWS_ISO_URL != ''
+        run: |
+          docker build -f docker/runner.Dockerfile -t nibblet/runner:dev .
+          docker build -f docker/server.Dockerfile -t nibblet/server:dev .
+      - uses: pnpm/action-setup@v4
+        if: env.WINDOWS_ISO_URL != ''
+      - uses: actions/setup-node@v5
+        if: env.WINDOWS_ISO_URL != ''
+        with:
+          node-version: 24
+          cache: pnpm
+      - if: env.WINDOWS_ISO_URL != ''
+        run: pnpm install --frozen-lockfile
+      - name: Use KVM
+        if: env.WINDOWS_ISO_URL != ''
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf
+      - name: Download Windows
+        if: env.WINDOWS_ISO_URL != ''
+        run: curl -fsSL --retry 5 -o "$RUNNER_TEMP/windows.iso" "$WINDOWS_ISO_URL"
+      - if: env.WINDOWS_ISO_URL != ''
+        run: pnpm test:integration
+        env:
+          NIBBLET_TEST_MACHINE: kvm
+          NIBBLET_TEST_GUEST: windows
+          NIBBLET_TEST_WINDOWS_ISO: ${{ runner.temp }}/windows.iso
+          NIBBLET_TEST_GUEST_REF: ${{ github.sha }}
+          NIBBLET_TEST_MACHINES_DIR: ${{ runner.temp }}/machines
+          NIBBLET_TEST_VERBOSE: "1"
+      - name: Keep the installer's screen and logs
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-kvm
+          path: |
+            ${{ runner.temp }}/machines/**/*.png
+            ${{ runner.temp }}/machines/**/*.log
+          if-no-files-found: ignore
+
+  hyperv:
+    name: Integration (${{ matrix.name }} on Hyper-V)
+    # Hyper-V runs here, nested, and WSL 2 with it (windows-2022's doesn't).
+    runs-on: windows-2025
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - guest: linux
+            name: Linux
+          - guest: windows
+            name: Windows
+    env:
+      WINDOWS_ISO_URL: ${{ secrets.WINDOWS_ISO_URL }}
+      DISTRO: Ubuntu-24.04
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Keep line endings as they are
+        # The Linux images are built from this checkout.
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+      - name: A switch for VMs, with NAT and DHCP
+        # Windows Server has no Default Switch. Its containers' NAT goes first:
+        # Windows doesn't always allow two.
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          Get-NetNat | Remove-NetNat -Confirm:$false
+          New-VMSwitch -Name nibblets -SwitchType Internal | Out-Null
+          $adapter = Get-NetAdapter | Where-Object Name -like '*(nibblets)*'
+          New-NetIPAddress -IPAddress 192.168.250.1 -PrefixLength 24 -InterfaceIndex $adapter.ifIndex | Out-Null
+          New-NetNat -Name nibblets -InternalIPInterfaceAddressPrefix 192.168.250.0/24 | Out-Null
+          Install-WindowsFeature DHCP -IncludeManagementTools | Out-Null
+          Add-DhcpServerv4Scope -Name nibblets -StartRange 192.168.250.100 -EndRange 192.168.250.200 -SubnetMask 255.255.255.0
+          Set-DhcpServerv4OptionValue -ScopeId 192.168.250.0 -Router 192.168.250.1 -DnsServer 1.1.1.1, 8.8.8.8 -Force
+          Restart-Service DHCPServer
+          # Containers in WSL reach the bridge on this computer.
+          Set-NetFirewallProfile -All -Enabled False
+      - name: Docker in WSL
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          wsl --set-default-version 2
+          wsl --install -d $env:DISTRO --no-launch --web-download
+          $setup = @'
+          set -e
+          curl -fsSL https://get.docker.com | sh >/dev/null
+          if [ -d /run/systemd/system ]; then
+            mkdir -p /etc/systemd/system/docker.service.d
+            printf '[Service]\nExecStart=\nExecStart=/usr/bin/dockerd -H fd:// -H tcp://0.0.0.0:2375 --containerd=/run/containerd/containerd.sock\n' > /etc/systemd/system/docker.service.d/tcp.conf
+            systemctl daemon-reload
+            systemctl restart docker
+          else
+            nohup dockerd -H unix:///var/run/docker.sock -H tcp://0.0.0.0:2375 >/var/log/dockerd.log 2>&1 &
+          fi
+          for i in $(seq 60); do docker info >/dev/null 2>&1 && break; sleep 1; done
+          docker info --format 'Docker {{.ServerVersion}} on {{.OperatingSystem}}'
+          '@
+          # As a file, which WSL sees under /mnt: no quoting to go wrong on the way.
+          $file = Join-Path $env:RUNNER_TEMP 'docker-in-wsl.sh'
+          [IO.File]::WriteAllText($file, ($setup -replace "`r", ""))
+          $inWsl = ($file -replace '^([A-Za-z]):', { "/mnt/$($_.Groups[1].Value.ToLower())" }) -replace '\\', '/'
+          # WSL stops a distro nobody's using: this keeps it, and Docker, up.
+          Start-Process wsl -ArgumentList '-d', $env:DISTRO, '-u', 'root', '--', 'sleep', 'infinity' -WindowStyle Hidden
+          wsl -d $env:DISTRO -u root -- bash $inWsl
+          if ($LASTEXITCODE -ne 0) { throw "Docker didn't start in WSL" }
+          "DOCKER_HOST=tcp://localhost:2375" >> $env:GITHUB_ENV
+          $gateway = (wsl -d $env:DISTRO -- sh -c "ip route show default | cut -d' ' -f3").Trim()
+          "NIBBLET_TEST_HOST_FROM_DOCKER=$gateway" >> $env:GITHUB_ENV
+      - name: BuildKit for Docker's CLI
+        # Windows' has no buildx, and without it the runner image (COPY --chmod) won't build.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $release = Invoke-RestMethod https://api.github.com/repos/docker/buildx/releases/latest -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN" }
+          $asset = $release.assets | Where-Object name -like '*.windows-amd64.exe' | Select-Object -First 1
+          $plugins = Join-Path $HOME '.docker\cli-plugins'
+          New-Item -ItemType Directory -Force -Path $plugins | Out-Null
+          Invoke-WebRequest $asset.browser_download_url -OutFile (Join-Path $plugins 'docker-buildx.exe')
+          docker buildx version
+      - name: Check Docker
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          docker version --format 'client {{.Client.Version}}, server {{.Server.Version}} ({{.Server.Os}})'
+          docker compose version
+      - name: Build the runner and the server
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          docker build -f docker/runner.Dockerfile -t nibblet/runner:dev .
+          docker build -f docker/server.Dockerfile -t nibblet/server:dev .
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Download Windows
+        if: matrix.guest == 'windows'
+        run: curl.exe -fsSL --retry 5 -o "$env:RUNNER_TEMP\windows.iso" $env:WINDOWS_ISO_URL
+      - run: pnpm test:integration
+        env:
+          NIBBLET_TEST_MACHINE: hyperv
+          NIBBLET_TEST_GUEST: ${{ matrix.guest }}
+          NIBBLET_TEST_WINDOWS_ISO: ${{ matrix.guest == 'windows' && format('{0}\windows.iso', runner.temp) || '' }}
+          NIBBLET_TEST_GUEST_REF: ${{ github.sha }}
+          NIBBLET_TEST_MACHINES_DIR: ${{ runner.temp }}\machines
+          NIBBLET_TEST_DOCKER_IN_WSL: "1"
+          NIBBLET_TEST_HYPERV_SWITCH: nibblets
+          NIBBLET_TEST_VERBOSE: "1"
+      - name: Keep logs
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyperv-${{ matrix.guest }}
+          path: |
+            ${{ runner.temp }}/machines/**/*.log
+          if-no-files-found: ignore

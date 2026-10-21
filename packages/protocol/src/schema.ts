@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { SpendingLimits } from "./bank.ts";
 import { LocationFix, NibbletLocation } from "./location.ts";
+import { DEFAULT_MACHINE, MachineChoice, WindowsProductKey } from "./machines.ts";
 import { McpServerDef, McpServerList, ToolRules } from "./mcp.ts";
 import { Effort, HarnessId } from "./models.ts";
 import { SnapshotPolicy } from "./snapshots.ts";
@@ -233,6 +234,8 @@ export const Nibblet = z.object({
    */
   monthlyBudgetUsd: z.number().nullable(),
   snapshotPolicy: SnapshotPolicy,
+  /** Where it runs: a container, or a virtual machine. Sub-agents run in their host's. */
+  machine: MachineChoice,
   /** Whether the container gets a browser it and the user can drive. */
   browser: z.boolean(),
   /** Host MCP servers this nibblet may use, by name. None unless ticked. */
@@ -254,6 +257,8 @@ export const Nibblet = z.object({
    * A sub-agent without one uses its parent's.
    */
   location: NibbletLocation.nullable(),
+  /** A Windows nibblet's product key, masked (maskProductKey), or null for none. */
+  windowsProductKey: z.string().nullable(),
   /** A short line the nibblet keeps current about what it's doing, like a chat status. */
   statusText: z.string().nullable(),
   statusEmoji: z.string().nullable(),
@@ -285,11 +290,17 @@ export const CreateNibblet = z.object({
   instructions: z.string().default(""),
   promptName: PromptName.nullable().default(null),
   plain: z.boolean().default(false),
+  /** A container unless asked for otherwise. */
+  machine: MachineChoice.default(DEFAULT_MACHINE),
+  /** For a Windows machine: activates its Windows. Never sent back unmasked. */
+  windowsProductKey: WindowsProductKey.optional(),
   browser: z.boolean().default(true),
   hostTools: z.array(z.string()).default([]),
   cliCredentials: z.array(z.string()).default([]),
   mcpServers: McpServerList.default([]),
   toolApprovals: ToolRules.default([]),
+  /** How much of the machine it may use; the default unless given. */
+  resources: Resources.optional(),
   /** First message, sent once the container is up. */
   message: z.string().optional(),
 });

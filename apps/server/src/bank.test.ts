@@ -6,6 +6,7 @@ import {
   type IssueRequest,
 } from "@nibblet/bank";
 import {
+  DEFAULT_MACHINE,
   defaultHamsterLook,
   RpcError,
   type CardFile,
@@ -24,6 +25,8 @@ function nibbletWith(id: string, spendingLimits: SpendingLimit[]): Nibblet {
     name: "Pip",
     promptName: null,
     plain: false,
+    machine: DEFAULT_MACHINE,
+    windowsProductKey: null,
     look: defaultHamsterLook,
     harness: "claude",
     model: "claude-opus-5-5",

@@ -47,6 +47,8 @@ interface Pending {
   answer: Promise<LocationAnswer>;
   resolve: (answer: LocationAnswer) => void;
   timer: ReturnType<typeof setTimeout>;
+  /** Its first write, "pending": what it comes to is written after, never under it. */
+  written: Promise<unknown>;
 }
 
 /** How long `location_get` waits for a device: inside the tool-call timeouts harnesses set. */
@@ -108,8 +110,9 @@ export class LocationRequests {
       const entry = this.pending.get(item.id);
       if (entry) void this.finish(entry, { kind: "unanswered" });
     }, this.timeoutMs);
-    this.pending.set(item.id, { nibbletId, item, answer, resolve, timer });
-    return this.store.putItem(nibbletId, item).then(
+    const written = this.store.putItem(nibbletId, item);
+    this.pending.set(item.id, { nibbletId, item, answer, resolve, timer, written });
+    return written.then(
       () => answer,
       (err: unknown) => {
         this.drop(item.id);
@@ -170,9 +173,10 @@ export class LocationRequests {
     this.pending.delete(requestId);
   }
 
+  /** Records what an ask came to, then answers it: whoever asked then reads it as it is. */
   private async finish(entry: Pending, answer: LocationAnswer): Promise<void> {
     this.drop(entry.item.id);
-    entry.resolve(answer);
+    await entry.written.catch(() => undefined);
     const status =
       answer.kind === "shared" ? "shared" : answer.kind === "declined" ? "declined" : "unanswered";
     await this.store
@@ -186,5 +190,6 @@ export class LocationRequests {
         decidedAt: new Date().toISOString(),
       })
       .catch((err: unknown) => console.error("couldn't record a location answer", err));
+    entry.resolve(answer);
   }
 }

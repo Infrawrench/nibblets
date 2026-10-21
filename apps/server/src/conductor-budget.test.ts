@@ -2,7 +2,7 @@ import type { CredentialStatus, Nibblet, ThreadItem } from "@nibblet/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Config } from "./config.ts";
 import { Conductor } from "./conductor.ts";
-import type { Orchestrator } from "./docker.ts";
+import type { MachineRegistry } from "@nibblet/machine";
 import type { Store } from "./store.ts";
 
 const proxyStatus = (source: CredentialStatus["source"]): CredentialStatus[] => [
@@ -77,7 +77,7 @@ describe("budget waits", () => {
   async function waiting(nibblets: Partial<Nibblet>[], spentUsd: number) {
     const store = fakeStore(nibblets);
     store.spent.set("nib_top", spentUsd);
-    const conductor = new Conductor(store as unknown as Store, {} as Orchestrator, config);
+    const conductor = new Conductor(store as unknown as Store, {} as MachineRegistry, config);
     for (const n of nibblets) {
       await conductor.limits.start(
         n.id ?? "",

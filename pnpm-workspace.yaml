@@ -1,6 +1,7 @@
 packages:
   - apps/*
   - packages/*
+  - test/*
 minimumReleaseAgeExclude:
   - "@hono/node-server@2.1.5"
   - "@tanstack/react-router@1.170.44"
