@@ -33,7 +33,14 @@ import type { Config } from "./config.ts";
 import { Approvals } from "./approvals.ts";
 import type { LocationRequests } from "./location-requests.ts";
 import { Budgets } from "./budget.ts";
-import { heartbeatInput, isQuiet, mayBeQuiet, QUIET_REPLY, systemPrompt } from "./context.ts";
+import {
+  heartbeatInput,
+  isQuiet,
+  mayBeQuiet,
+  QUIET_REPLY,
+  SYSTEM_PROMPT_SETTING,
+  systemPrompt,
+} from "./context.ts";
 import {
   billedProviderFor,
   LimitWaits,
@@ -1215,6 +1222,11 @@ export class Conductor {
     const host = nibblet.parentId
       ? await this.store.nibbletRow(await this.hostOf(nibblet)).catch(() => null)
       : row;
+    const extra = await this.store.getSetting(
+      SYSTEM_PROMPT_SETTING,
+      (v) => z.string().parse(v),
+      "",
+    );
     return systemPrompt({
       nibblet,
       serverName: this.serverName,
@@ -1231,6 +1243,7 @@ export class Conductor {
         host?.tailscale && host.tailnetNode?.state === "running"
           ? { node: host.tailnetNode, ports: host.tailscale.ports }
           : null,
+      extra,
     });
   }
 

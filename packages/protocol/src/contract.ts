@@ -29,6 +29,7 @@ import {
   Schedule,
   ServerInfo,
   StoredItem,
+  SystemPrompt,
   UpdateNibblet,
 } from "./schema.ts";
 
@@ -40,6 +41,9 @@ export const contract = {
   system: {
     info: procedure(z.object({}), ServerInfo),
     rename: procedure(z.object({ name: z.string().min(1) }), Ok),
+    /** Extra text added to every nibblet's system prompt on this server. Empty adds nothing. */
+    systemPrompt: procedure(z.object({}), SystemPrompt),
+    setSystemPrompt: procedure(SystemPrompt, Ok),
   },
   nibblets: {
     list: procedure(z.object({}), z.array(Nibblet)),

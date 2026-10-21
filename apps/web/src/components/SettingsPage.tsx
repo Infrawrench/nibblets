@@ -10,7 +10,7 @@ import { keys, useServers } from "../lib/servers.tsx";
 import { clockTime, relativeTime } from "../lib/time.ts";
 import { Button } from "./ui/Button.tsx";
 import { OnePasswordSettings } from "./onepassword/OnePasswordSection.tsx";
-import { FieldRow, Input, SectionHeading } from "./ui/Field.tsx";
+import { FieldRow, Input, SectionHeading, Textarea } from "./ui/Field.tsx";
 import { Segmented } from "./ui/Segmented.tsx";
 import { MobileBack } from "./MobileBack.tsx";
 import { NotificationsSection } from "./NotificationsSection.tsx";
@@ -51,6 +51,7 @@ export function SettingsPage() {
         {connection ? (
           <>
             <ServerSection connection={connection} />
+            <SystemPromptSection connection={connection} />
             <UpdatesSection connection={connection} />
             <CredentialsSection connection={connection} />
             <HostToolsSection connection={connection} />
@@ -100,6 +101,88 @@ function ServerSection({ connection }: { connection: ServerConnection }) {
       <FieldRow label="Version">
         <span className="text-sm text-dim">{info.data?.version ?? "…"}</span>
       </FieldRow>
+    </>
+  );
+}
+
+/** Extra text for every nibblet's system prompt on this server. */
+function SystemPromptSection({ connection }: { connection: ServerConnection }) {
+  const qc = useQueryClient();
+  const saved = useQuery({
+    queryKey: keys.systemPrompt(connection.id),
+    queryFn: () => connection.client.system.systemPrompt({}),
+  });
+  const [text, setText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (saved.data) setText(saved.data.text);
+  }, [saved.data]);
+  const dirty = saved.data !== undefined && text !== saved.data.text;
+  const save = async () => {
+    if (!dirty || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await connection.client.system.setSystemPrompt({ text });
+      await qc.invalidateQueries({ queryKey: keys.systemPrompt(connection.id) });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <>
+      <SectionHeading>System prompt</SectionHeading>
+      <FieldRow
+        label="Add to it"
+        top
+        hint="Every nibblet on this server is told this, from its next turn. Its own instructions stay its own."
+      >
+        <Textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              void save();
+            }
+          }}
+          placeholder="I live in Berlin. Write in British English."
+          maxLength={20_000}
+          disabled={!saved.data}
+          className="min-h-24"
+        />
+      </FieldRow>
+      {dirty || error ? (
+        <div className="flex flex-wrap items-center justify-end gap-1.5 sm:pl-[7.75rem]">
+          {error ? (
+            <span className="mr-auto text-xs text-danger">Couldn't save: {error}</span>
+          ) : (
+            <span className="mr-auto text-xs text-faint">Unsaved changes</span>
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setText(saved.data?.text ?? "");
+              setError(null);
+            }}
+            disabled={saving}
+          >
+            Undo
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={!dirty || saving}
+            onClick={() => void save()}
+          >
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      ) : null}
     </>
   );
 }

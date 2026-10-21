@@ -22,6 +22,7 @@ import { maxSeq, upsertItems } from "./thread.ts";
 /** Query keys, in one place so the live bridge and the hooks agree. */
 export const keys = {
   info: (server: string) => ["info", server] as const,
+  systemPrompt: (server: string) => ["systemPrompt", server] as const,
   nibblets: (server: string) => ["nibblets", server] as const,
   thread: (server: string, id: string) => ["thread", server, id] as const,
   schedules: (server: string, id: string) => ["schedules", server, id] as const,

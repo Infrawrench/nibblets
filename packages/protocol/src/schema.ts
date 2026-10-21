@@ -591,3 +591,7 @@ export const ServerInfo = z.object({
   host: z.object({ cpus: z.int(), memoryMb: z.int() }).nullable(),
 });
 export type ServerInfo = z.infer<typeof ServerInfo>;
+
+/** What the user adds to every nibblet's system prompt on a server. */
+export const SystemPrompt = z.object({ text: z.string().max(20_000) });
+export type SystemPrompt = z.infer<typeof SystemPrompt>;
