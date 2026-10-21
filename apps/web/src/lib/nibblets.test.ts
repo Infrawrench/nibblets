@@ -22,6 +22,7 @@ const nibblet = (id: string, parentId: string | null, active: string): Nibblet =
   statusDetail: null,
   heartbeats: [],
   resources: { cpus: null, memoryMb: null },
+  monthlyBudgetUsd: null,
   snapshotPolicy: { everyMinutes: 1440, keep: 7 },
   toolApprovals: [],
   tailscale: null,

@@ -1,8 +1,17 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { BudgetStatus, MeteredRequest } from "@nibblet/protocol";
+import { nibbletProxyKey } from "@nibblet/protocol/proxy-key";
 import { describe, expect, it, vi } from "vitest";
-import { createApp, placeholderCodexAuth, placeholderJwt, presentsKey } from "../src/app.ts";
+import {
+  createApp,
+  placeholderCodexAuth,
+  placeholderJwt,
+  presentsKey,
+  runnerOf,
+} from "../src/app.ts";
+import { serverBudgets, type BudgetClient } from "../src/budgets.ts";
 import { anthropicProvider, mergeBetas } from "../src/providers/anthropic.ts";
 import { anthropicKeyProvider, openaiKeyProvider } from "../src/providers/apikey.ts";
 import { deepseekProvider } from "../src/providers/deepseek.ts";
@@ -14,6 +23,34 @@ import { TokenManager } from "../src/tokens.ts";
 const KEY = "runner-key-0123456789";
 const ADMIN = "admin-key-0123456789";
 const HOUR = 60 * 60 * 1000;
+/** What a nibblet's container presents: the shared secret, signed for it. */
+const NIB_KEY = nibbletProxyKey(KEY, "nib_a");
+
+function fakeBudgets(
+  status: Partial<BudgetStatus> = {},
+): BudgetClient & { reports: MeteredRequest[]; checked: string[] } {
+  const reports: MeteredRequest[] = [];
+  const checked: string[] = [];
+  return {
+    reports,
+    checked,
+    async check(nibbletId) {
+      checked.push(nibbletId);
+      return {
+        nibbletId,
+        budgetUsd: null,
+        spentUsd: 0,
+        month: "2026-10",
+        resetsAt: "2026-11-01T00:00:00.000Z",
+        allowed: true,
+        ...status,
+      };
+    },
+    async report(request) {
+      reports.push(request);
+    },
+  };
+}
 
 function claudeDoc(access: string, refresh: string, expiresAt: number) {
   return JSON.stringify({
@@ -80,6 +117,23 @@ describe("presentsKey", () => {
     expect(
       presentsKey(new Headers({ authorization: `Bearer ${placeholderJwt("other")}` }), KEY),
     ).toBe(false);
+  });
+});
+
+describe("runnerOf", () => {
+  it("knows a nibblet's key, wherever the harness puts it", () => {
+    expect(runnerOf(new Headers({ "x-api-key": NIB_KEY }), KEY)?.nibbletId).toBe("nib_a");
+    expect(
+      runnerOf(new Headers({ authorization: `Bearer ${placeholderJwt(NIB_KEY)}` }), KEY)?.nibbletId,
+    ).toBe("nib_a");
+    expect(runnerOf(new Headers({ "x-api-key": KEY }), KEY)).toEqual({ key: KEY, nibbletId: null });
+  });
+  it("won't take a key signed with another secret, or another nibblet's id with this one's signature", () => {
+    expect(
+      runnerOf(new Headers({ "x-api-key": nibbletProxyKey("other-secret", "nib_a") }), KEY),
+    ).toBeNull();
+    const forged = `nib_b.${NIB_KEY.split(".")[1]}`;
+    expect(runnerOf(new Headers({ "x-api-key": forged }), KEY)).toBeNull();
   });
 });
 
@@ -218,6 +272,7 @@ describe("proxy", () => {
       openai,
       deepseek: deepseekProvider(deepseekKey, "https://deepseek.test/anthropic"),
       push: () => false,
+      budgets: fakeBudgets(),
       fetch,
     });
     return { app, fetch };
@@ -251,7 +306,7 @@ describe("proxy", () => {
     );
     const res = await app.request("/deepseek/v1/messages?beta=true", {
       method: "POST",
-      headers: { "x-api-key": KEY, authorization: "Bearer stray" },
+      headers: { "x-api-key": NIB_KEY, authorization: "Bearer stray" },
       body: JSON.stringify({ model: "deepseek-v4-pro" }),
     });
     expect(res.status).toBe(200);
@@ -267,7 +322,7 @@ describe("proxy", () => {
     const { app, fetch } = setup(() => new Response("{}"), null);
     const res = await app.request("/deepseek/v1/messages", {
       method: "POST",
-      headers: { "x-api-key": KEY },
+      headers: { "x-api-key": NIB_KEY },
       body: "{}",
     });
     expect(res.status).toBe(503);
@@ -295,6 +350,17 @@ describe("proxy", () => {
     expect(String(url)).toBe("https://chatgpt.test/backend-api/codex/responses");
     expect(header(init ?? {}, "authorization")).toBe("Bearer oa-access");
     expect(header(init ?? {}, "chatgpt-account-id")).toBe("acct-9");
+  });
+
+  it("takes a nibblet's own key on a subscription", async () => {
+    const { app, fetch } = setup(() => new Response("{}"));
+    const res = await app.request("/anthropic/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": NIB_KEY },
+      body: "{}",
+    });
+    expect(res.status).toBe(200);
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it("refuses requests without the runner key", async () => {
@@ -339,13 +405,18 @@ describe("proxy", () => {
     expect(push.status).toBe(409);
   });
 
-  it("answers Codex refreshes of the placeholder login", async () => {
+  it("answers Codex refreshes of the placeholder login, keeping its key", async () => {
     const { app } = setup(() => new Response("{}"));
     const ok = await app.request("/openai-auth/oauth/token", {
       method: "POST",
       body: JSON.stringify({ grant_type: "refresh_token", refresh_token: KEY }),
     });
     expect(ok.status).toBe(200);
+    const mine = await app.request("/openai-auth/oauth/token", {
+      method: "POST",
+      body: JSON.stringify({ grant_type: "refresh_token", refresh_token: NIB_KEY }),
+    });
+    expect(((await mine.json()) as { refresh_token: string }).refresh_token).toBe(NIB_KEY);
     const bad = await app.request("/openai-auth/oauth/token", {
       method: "POST",
       body: JSON.stringify({ refresh_token: "nope" }),
@@ -355,7 +426,10 @@ describe("proxy", () => {
 });
 
 describe("proxy on API keys", () => {
-  function setup(upstream: (url: string, init: RequestInit) => Response | Promise<Response>) {
+  function setup(
+    upstream: (url: string, init: RequestInit) => Response | Promise<Response>,
+    budgets = fakeBudgets(),
+  ) {
     const fetch = mockFetch(upstream);
     const app = createApp({
       key: KEY,
@@ -364,16 +438,17 @@ describe("proxy on API keys", () => {
       openai: openaiKeyProvider("sk-openai-key", "https://openai.test/v1"),
       deepseek: deepseekProvider(null),
       push: () => false,
+      budgets,
       fetch,
     });
-    return { app, fetch };
+    return { app, fetch, budgets };
   }
 
   it("swaps the runner key for the Anthropic API key, without the OAuth beta", async () => {
     const { app, fetch } = setup(() => new Response("data: hi\n\n"));
     const res = await app.request("/anthropic/v1/messages?beta=true", {
       method: "POST",
-      headers: { "x-api-key": KEY, "anthropic-beta": "fine-grained-tool-streaming-2025-05-14" },
+      headers: { "x-api-key": NIB_KEY, "anthropic-beta": "fine-grained-tool-streaming-2025-05-14" },
       body: "{}",
     });
     expect(res.status).toBe(200);
@@ -388,7 +463,7 @@ describe("proxy on API keys", () => {
 
   it("sends Codex to the OpenAI API with the API key and no ChatGPT account", async () => {
     const { app, fetch } = setup(() => new Response("{}"));
-    const auth = placeholderCodexAuth(KEY);
+    const auth = placeholderCodexAuth(NIB_KEY);
     await app.request("/openai/responses", {
       method: "POST",
       headers: {
@@ -407,7 +482,7 @@ describe("proxy on API keys", () => {
     const { app, fetch } = setup(() => new Response("bad key", { status: 401 }));
     const res = await app.request("/anthropic/v1/messages", {
       method: "POST",
-      headers: { "x-api-key": KEY },
+      headers: { "x-api-key": NIB_KEY },
       body: "{}",
     });
     expect(res.status).toBe(401);
@@ -452,9 +527,10 @@ describe("proxy on API keys", () => {
       openai: openaiKeyProvider(null),
       deepseek: deepseekProvider(null),
       push: () => false,
+      budgets: fakeBudgets(),
     }).request("/anthropic/v1/messages", {
       method: "POST",
-      headers: { "x-api-key": KEY },
+      headers: { "x-api-key": NIB_KEY },
       body: "{}",
     });
     expect(res.status).toBe(503);
@@ -463,5 +539,198 @@ describe("proxy on API keys", () => {
       source: "none",
       detail: "NIBBLET_ANTHROPIC_API_KEY isn't set",
     });
+  });
+
+  it("needs a nibblet's own key, so the spending goes to someone", async () => {
+    const { app, fetch } = setup(() => new Response("{}"));
+    const res = await app.request("/anthropic/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": KEY },
+      body: "{}",
+    });
+    expect(res.status).toBe(401);
+    expect(await res.text()).toMatch(/Restart it/);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a nibblet that has spent its budget, saying so", async () => {
+    const budgets = fakeBudgets({ allowed: false, budgetUsd: 10, spentUsd: 10.25 });
+    const { app, fetch } = setup(() => new Response("{}"), budgets);
+    const res = await app.request("/openai/responses", {
+      method: "POST",
+      headers: { authorization: `Bearer ${placeholderJwt(NIB_KEY)}` },
+      body: "{}",
+    });
+    expect(res.status).toBe(402);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toMatch(/monthly budget \(\$10\.25 of \$10\.00\).*2026-11-01/);
+    expect(budgets.checked).toEqual(["nib_a"]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses rather than spends when the budget can't be checked", async () => {
+    const budgets = fakeBudgets();
+    budgets.check = async () => {
+      throw new Error("connection refused");
+    };
+    const { app, fetch } = setup(() => new Response("{}"), budgets);
+    const res = await app.request("/anthropic/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": NIB_KEY },
+      body: "{}",
+    });
+    expect(res.status).toBe(503);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("reports what a streamed Claude response used, once it ends", async () => {
+    const sse = [
+      `event: message_start\ndata: ${JSON.stringify({
+        type: "message_start",
+        message: {
+          model: "claude-opus-5-5",
+          usage: {
+            input_tokens: 10,
+            cache_read_input_tokens: 2000,
+            cache_creation_input_tokens: 300,
+            cache_creation: { ephemeral_5m_input_tokens: 100, ephemeral_1h_input_tokens: 200 },
+            output_tokens: 1,
+          },
+        },
+      })}\n\n`,
+      `event: content_block_delta\ndata: {"type":"content_block_delta"}\n\n`,
+      `event: message_delta\ndata: ${JSON.stringify({
+        type: "message_delta",
+        usage: { output_tokens: 512, server_tool_use: { web_search_requests: 2 } },
+      })}\n\n`,
+    ].join("");
+    const { app, budgets } = setup(
+      () => new Response(sse, { headers: { "content-type": "text/event-stream" } }),
+    );
+    const res = await app.request("/anthropic/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": NIB_KEY },
+      body: "{}",
+    });
+    expect(await res.text()).toBe(sse);
+    expect(budgets.reports).toEqual([
+      {
+        nibbletId: "nib_a",
+        provider: "anthropic",
+        model: "claude-opus-5-5",
+        usage: {
+          inputTokens: 10,
+          cachedInputTokens: 2000,
+          cacheWriteTokens: 100,
+          cacheWrite1hTokens: 200,
+          outputTokens: 512,
+          webSearches: 2,
+        },
+      },
+    ]);
+  });
+
+  it("reports what a Codex response used, with cached input apart", async () => {
+    const completed = {
+      type: "response.completed",
+      response: {
+        model: "gpt-6-sol-2026-09-01",
+        output: [{ type: "web_search_call" }, { type: "message" }],
+        usage: {
+          input_tokens: 5000,
+          input_tokens_details: { cached_tokens: 4000 },
+          output_tokens: 70,
+        },
+      },
+    };
+    const sse = `event: response.created\ndata: {"type":"response.created"}\n\nevent: response.completed\ndata: ${JSON.stringify(completed)}\n\n`;
+    const { app, budgets } = setup(
+      () => new Response(sse, { headers: { "content-type": "text/event-stream" } }),
+    );
+    await (
+      await app.request("/openai/responses", {
+        method: "POST",
+        headers: { authorization: `Bearer ${placeholderJwt(NIB_KEY)}` },
+        body: "{}",
+      })
+    ).text();
+    expect(budgets.reports[0]).toMatchObject({
+      provider: "openai",
+      model: "gpt-6-sol-2026-09-01",
+      usage: { inputTokens: 1000, cachedInputTokens: 4000, outputTokens: 70, webSearches: 1 },
+    });
+  });
+
+  it("reports a plain JSON response, and nothing for one without usage", async () => {
+    const { app, budgets } = setup((url) =>
+      url.includes("count_tokens")
+        ? Response.json({ input_tokens: 99 })
+        : Response.json({
+            model: "claude-haiku-5-5",
+            usage: { input_tokens: 7, output_tokens: 3 },
+          }),
+    );
+    for (const path of ["/anthropic/v1/messages", "/anthropic/v1/messages/count_tokens"]) {
+      await (
+        await app.request(path, { method: "POST", headers: { "x-api-key": NIB_KEY }, body: "{}" })
+      ).text();
+    }
+    expect(budgets.reports).toHaveLength(1);
+    expect(budgets.reports[0]?.usage).toMatchObject({ inputTokens: 7, outputTokens: 3 });
+  });
+
+  it("still counts a stream the harness stopped reading", async () => {
+    const start = `data: ${JSON.stringify({
+      type: "message_start",
+      message: { model: "claude-sonnet-5-5", usage: { input_tokens: 40000, output_tokens: 1 } },
+    })}\n\n`;
+    const { app, budgets } = setup(
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(start));
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    );
+    const res = await app.request("/anthropic/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": NIB_KEY },
+      body: "{}",
+    });
+    const reader = res.body?.getReader();
+    await reader?.read();
+    await reader?.cancel();
+    expect(budgets.reports[0]?.usage.inputTokens).toBe(40000);
+  });
+});
+
+describe("serverBudgets", () => {
+  it("asks the server with the admin key, and reads its answer", async () => {
+    const status = {
+      nibbletId: "nib_a",
+      budgetUsd: 5,
+      spentUsd: 1,
+      month: "2026-10",
+      resetsAt: "2026-11-01T00:00:00.000Z",
+      allowed: true,
+    };
+    const fetch = mockFetch(() => Response.json(status));
+    const client = serverBudgets({ serverUrl: "http://server:8420/", adminKey: ADMIN, fetch });
+    expect(await client.check("nib_a")).toEqual(status);
+    const [url, init] = fetch.mock.calls[0] ?? [];
+    expect(String(url)).toBe("http://server:8420/credproxy/budget/nib_a");
+    expect(header(init ?? {}, "authorization")).toBe(`Bearer ${ADMIN}`);
+  });
+
+  it("fails rather than guess when the server says no", async () => {
+    const client = serverBudgets({
+      serverUrl: "http://server:8420",
+      adminKey: ADMIN,
+      fetch: mockFetch(() => new Response("nope", { status: 500 })),
+    });
+    await expect(client.check("nib_a")).rejects.toThrow(/500/);
   });
 });

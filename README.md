@@ -18,7 +18,7 @@ On a Linux server or VM, one command sets up Docker or Podman, your agents, and 
 curl -fsSL https://nibblets.dev/install.sh | bash
 ```
 
-Run it again to update or to sign in to another agent. Claude Code and Codex can use an Anthropic or OpenAI API key instead of a subscription: pick that when the installer asks, or pass `NIBBLETS_ANTHROPIC_API_KEY` or `NIBBLETS_OPENAI_API_KEY` to it.
+Run it again to update or to sign in to another agent. Claude Code and Codex can use an Anthropic or OpenAI API key instead of a subscription: pick that when the installer asks, or pass `NIBBLETS_ANTHROPIC_API_KEY` or `NIBBLETS_OPENAI_API_KEY` to it. Each nibblet can then have a monthly budget for what it spends, in its settings.
 
 On a Mac, the desktop app (`apps/desktop`) does all of this for you: it checks Docker, finds your Claude and Codex logins, starts the stack, and opens the UI signed in.
 

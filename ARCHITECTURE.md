@@ -18,7 +18,7 @@ The server is the only service published on the host (`127.0.0.1:8420`). It moun
 
 ## Credentials (`apps/credproxy`)
 
-Runner containers never see a Claude or ChatGPT subscription token. (What they can see: an OpenCode login, scoped to the model's own provider, and the CLI logins you tick for a nibblet. See below.) Each gets a base URL on the proxy and `NIBBLET_CREDPROXY_KEY`, a shared secret it sends where the harness would send an API key. The proxy checks the key, swaps in the real credential, and forwards:
+Runner containers never see a Claude or ChatGPT subscription token. (What they can see: an OpenCode login, scoped to the model's own provider, and the CLI logins you tick for a nibblet. See below.) Each gets a base URL on the proxy and `NIBBLET_CREDPROXY_KEY`, which it sends where the harness would send an API key: its nibblet's id signed with the proxy's shared secret (`@nibblet/protocol/proxy-key`), so the proxy can tell whose a request is without asking, and an agent can't pass for another nibblet. A sub-agent gets its host's, since it runs in its host's container. The proxy checks the key, swaps in the real credential, and forwards:
 
 | Proxy path                         | Upstream                                  | Injected                                                                                                               |
 | ---------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
@@ -41,6 +41,15 @@ Claude and ChatGPT can be API keys too, instead of subscriptions. The installer 
 | `/openai/*`    | `https://api.openai.com/v1/*` | `Authorization: Bearer <key>`; drops `x-api-key` and `chatgpt-account-id` |
 
 Like DeepSeek's, these have nothing to refresh (a 401 goes straight back) and no subscription limit to note, their status reads `env`, and the desktop app keeps both lines when it rewrites `.env`.
+
+### Budgets for API keys
+
+A nibblet can have a monthly budget (`monthlyBudgetUsd`, set in its settings) for what its usage on API keys costs: Claude or ChatGPT on a key, and DeepSeek. Subscriptions don't count. Months are calendar months in UTC. A sub-agent spends its host's budget, since its host's agent could read its key anyway.
+
+- **Before each request on an API key,** the proxy asks the server (`GET /credproxy/budget/:id`, with the admin key) whether the nibblet the key names still has budget. If it has spent it, the proxy answers 402 with a `billing_error` saying so, in the harness's own API's shape, so the harness shows it. If the server can't be asked, the request is refused rather than paid for. The bare shared secret isn't taken on these routes, since its spending would go to no one.
+- **After each response,** the proxy reads the usage off it on its way through (the `message_start` and `message_delta` events of a Claude stream, `response.completed` of a Codex one, or a JSON body's `usage`) and reports it (`POST /credproxy/usage`). A stream the harness stops reading still reports what it had used.
+- **The server prices it** with the table in `@nibblet/protocol`'s `budget.ts` and adds it to the nibblet's row in `spend`. Where a price is temporary or varies, the table has the higher one, a model it doesn't list costs as much as the provider's dearest, and OpenAI's uncached input is charged at its cache-write rate, so a budget runs out early rather than late. A request can still take spending a little past the budget, since it's only checked before each one starts.
+- **A spent budget is waited out** like a usage limit: the turn the proxy refused goes back on the queue, and the nibblet waits (`limit_wait` with `reason: "budget"`) until the month turns, or until its budget is raised, which carries it on straight away. While it waits, heartbeats and schedules don't pile up.
 
 Refresh endpoints: Anthropic `POST https://platform.claude.com/v1/oauth/token` JSON `{grant_type:"refresh_token", refresh_token, client_id:"9d1c250a-e61b-44d9-88ed-5944d1962f5e"}`; OpenAI `POST https://auth.openai.com/oauth/token` `{grant_type:"refresh_token", refresh_token, client_id:"app_EMoamEEZ73f0CkXaXp7hrann"}`.
 

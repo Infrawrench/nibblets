@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { serve } from "@hono/node-server";
 import { z } from "zod";
 import { createApp } from "./app.ts";
+import { serverBudgets } from "./budgets.ts";
 import { anthropicProvider } from "./providers/anthropic.ts";
 import { anthropicKeyProvider, openaiKeyProvider } from "./providers/apikey.ts";
 import { deepseekProvider } from "./providers/deepseek.ts";
@@ -26,6 +27,8 @@ const Env = z.object({
   CODEX_AUTH_SOURCE: SourceMode,
   KEYCHAIN_BRIDGE_URL: z.string().optional(),
   KEYCHAIN_BRIDGE_TOKEN: z.string().optional(),
+  // Where nibblets' budgets for API keys are kept.
+  NIBBLET_SERVER_URL: z.string().default("http://server:8420"),
   // Compose passes these through empty when they aren't set. Not
   // ANTHROPIC_API_KEY and OPENAI_API_KEY, which the host's own CLIs would
   // pick up from the .env the host bridge loads.
@@ -97,6 +100,7 @@ const app = createApp({
   anthropic,
   openai,
   deepseek,
+  budgets: serverBudgets({ serverUrl: env.NIBBLET_SERVER_URL, adminKey: env.CREDPROXY_ADMIN_KEY }),
   push(provider, text) {
     const keychain = keychains.get(provider);
     if (!keychain) return false;

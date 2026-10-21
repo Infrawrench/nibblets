@@ -14,6 +14,7 @@ import { FieldRow, Input, SectionHeading, Textarea } from "../ui/Field.tsx";
 import { Switch } from "../ui/Switch.tsx";
 import { NibbletTools } from "../tools/NibbletTools.tsx";
 import { NibbletVaults } from "../onepassword/OnePasswordSection.tsx";
+import { BudgetSection } from "./BudgetSection.tsx";
 import { ResourcesSection } from "./ResourcesSection.tsx";
 import { TailscaleSection } from "./TailscaleSection.tsx";
 
@@ -186,6 +187,8 @@ export function NibbletSettings({
       <TailscaleSection connection={connection} nibblet={nibblet} />
 
       <ResourcesSection connection={connection} nibblet={nibblet} />
+
+      <BudgetSection connection={connection} nibblet={nibblet} />
 
       <SectionHeading>Heartbeats</SectionHeading>
       <HeartbeatSummary

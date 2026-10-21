@@ -6,6 +6,7 @@ import {
   pairingCodes,
   schedules,
   settings,
+  spend,
   type Db,
 } from "@nibblet/db";
 import {
@@ -86,6 +87,7 @@ export function toNibblet(row: NibbletRow): Nibblet {
     statusDetail: row.statusDetail,
     heartbeats: row.heartbeats,
     resources: row.resources,
+    monthlyBudgetUsd: row.monthlyBudgetUsd,
     snapshotPolicy: row.snapshotPolicy,
     browser: row.browser,
     hostTools: row.hostTools,
@@ -258,6 +260,34 @@ export class Store {
   async children(parentId: string): Promise<Nibblet[]> {
     const rows = await this.db.select().from(nibblets).where(eq(nibblets.parentId, parentId));
     return rows.map(toNibblet);
+  }
+
+  // Spending on API keys
+
+  /** What a nibblet's API-key usage has cost in a month (`2026-10`), in US dollars. */
+  async spentUsd(nibbletId: string, month: string): Promise<number> {
+    const [row] = await this.db
+      .select({ costUsd: spend.costUsd })
+      .from(spend)
+      .where(and(eq(spend.nibbletId, nibbletId), eq(spend.month, month)));
+    return row?.costUsd ?? 0;
+  }
+
+  /** Adds one request's cost to a nibblet's month, returning the month's new total. */
+  async addSpend(nibbletId: string, month: string, costUsd: number): Promise<number> {
+    const [row] = await this.db
+      .insert(spend)
+      .values({ nibbletId, month, costUsd, requests: 1 })
+      .onConflictDoUpdate({
+        target: [spend.nibbletId, spend.month],
+        set: {
+          costUsd: sql`${spend.costUsd} + ${costUsd}`,
+          requests: sql`${spend.requests} + 1`,
+          updatedAt: new Date(),
+        },
+      })
+      .returning({ costUsd: spend.costUsd });
+    return row?.costUsd ?? costUsd;
   }
 
   // Thread items

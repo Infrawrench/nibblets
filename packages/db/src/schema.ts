@@ -16,6 +16,7 @@ import type {
 import {
   bigint,
   boolean,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -54,6 +55,8 @@ export const nibblets = pgTable("nibblets", {
     .$type<Resources>()
     .notNull()
     .default({ cpus: null, memoryMb: null }),
+  /** US dollars a calendar month of API-key usage may cost; null for no limit. */
+  monthlyBudgetUsd: doublePrecision("monthly_budget_usd"),
   snapshotPolicy: jsonb("snapshot_policy")
     .$type<SnapshotPolicy>()
     .notNull()
@@ -197,4 +200,23 @@ export const snapshots = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("snapshots_nibblet_idx").on(t.nibbletId, t.createdAt)],
+);
+
+/**
+ * What a nibblet's API-key usage has cost, a calendar month (UTC) at a time,
+ * as the credential proxy reports it. A sub-agent's goes to its host's row.
+ */
+export const spend = pgTable(
+  "spend",
+  {
+    nibbletId: text("nibblet_id")
+      .notNull()
+      .references(() => nibblets.id, { onDelete: "cascade" }),
+    /** Like `2026-10`. */
+    month: text("month").notNull(),
+    costUsd: doublePrecision("cost_usd").notNull().default(0),
+    requests: integer("requests").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.nibbletId, t.month] })],
 );

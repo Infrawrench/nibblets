@@ -359,7 +359,7 @@ function Subagent({
 
 const subscriptionNames = { anthropic: "Claude", openai: "ChatGPT" } as const;
 
-/** Waiting out a usage limit: when it carries on, and a way to try sooner. */
+/** Waiting out a usage limit or a spent budget: when it carries on, and a way to try sooner. */
 function LimitWait({
   item,
   onResume,
@@ -370,11 +370,17 @@ function LimitWait({
   const [busy, setBusy] = useState(false);
   const which = item.provider ? `your ${subscriptionNames[item.provider]} subscription's` : "the";
   const text =
-    item.status === "waiting"
-      ? `Hit ${which} usage limit. Carrying on by itself at ${clockTime(item.until)}.`
-      : item.status === "resumed"
-        ? `Hit ${which} usage limit, then carried on.`
-        : `Stopped waiting for ${which} usage limit.`;
+    item.reason === "budget"
+      ? item.status === "waiting"
+        ? `Spent its monthly budget. Carrying on when the month turns, or raise the budget in its settings.`
+        : item.status === "resumed"
+          ? "Spent its monthly budget, then carried on."
+          : "Stopped waiting for its monthly budget."
+      : item.status === "waiting"
+        ? `Hit ${which} usage limit. Carrying on by itself at ${clockTime(item.until)}.`
+        : item.status === "resumed"
+          ? `Hit ${which} usage limit, then carried on.`
+          : `Stopped waiting for ${which} usage limit.`;
   return (
     <div className="flex items-center gap-2 rounded-md bg-warning/10 px-2.5 py-1.5 text-xs text-warning [&>svg]:size-3.5 [&>svg]:shrink-0">
       <Clock />

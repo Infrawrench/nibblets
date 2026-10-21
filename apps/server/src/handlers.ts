@@ -139,6 +139,8 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
             "bad_request",
             "A sub-agent is on the tailnet as its parent's machine",
           );
+        if (patch.monthlyBudgetUsd != null && before.parentId)
+          throw new RpcError("bad_request", "A sub-agent spends its parent's budget");
         if (tailscale && !tailscale.authKey && !(await readTailnetOAuth(store)))
           throw new RpcError(
             "bad_request",
@@ -173,6 +175,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         // Asleep, it signs its machine out now rather than whenever it next wakes.
         if (tailscaleChanged && tailscale === null) void conductor.leaveTailnet(id);
         if (patch.resources) await conductor.applyResources(id, patch.resources);
+        if (patch.monthlyBudgetUsd !== undefined) await conductor.budgetChanged(id);
         await conductor.reconfigure(id);
         return updated;
       },
@@ -196,6 +199,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         await conductor.heartbeat(id);
         return ok;
       },
+      spend: ({ id }) => conductor.budgets.status(id),
       resume: async ({ id }) => {
         await conductor.resumeNow(id);
         return ok;

@@ -7,6 +7,7 @@ import { procedure } from "./rpc.ts";
 import { Snapshot, SnapshotActivity, SnapshotTimeline } from "./snapshots.ts";
 import { TailnetKeys } from "./tailscale.ts";
 import { AppUpdate, HarnessUpdates } from "./updates.ts";
+import { BudgetStatus } from "./budget.ts";
 import {
   BackgroundTask,
   CreateNibblet,
@@ -56,6 +57,8 @@ export const contract = {
     wake: procedure(Id, Ok),
     /** Stops waiting out a usage limit and tries the queued work now. */
     resume: procedure(Id, Ok),
+    /** Its monthly budget for API-key usage, and what it has spent this month. */
+    spend: procedure(Id, BudgetStatus),
     /** Approves or declines a gated tool call the nibblet is waiting on. */
     decide: procedure(
       z.object({

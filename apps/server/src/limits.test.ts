@@ -1,6 +1,13 @@
 import type { ThreadItem } from "@nibblet/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LimitWaits, looksLikeUsageLimit, providerFor, resumeAt } from "./limits.ts";
+import {
+  billedProviderFor,
+  LimitWaits,
+  looksLikeBudget,
+  looksLikeUsageLimit,
+  providerFor,
+  resumeAt,
+} from "./limits.ts";
 
 describe("providerFor", () => {
   it("knows whose subscription each harness spends", () => {
@@ -20,6 +27,26 @@ describe("looksLikeUsageLimit", () => {
     expect(looksLikeUsageLimit("API Error: 429 Too Many Requests")).toBe(true);
     expect(looksLikeUsageLimit("ENOENT: no such file")).toBe(false);
     expect(looksLikeUsageLimit(null)).toBe(false);
+  });
+});
+
+describe("budgets", () => {
+  it("know DeepSeek costs money too", () => {
+    expect(billedProviderFor({ harness: "deepseek", model: "deepseek-flash" })).toBe("deepseek");
+    expect(billedProviderFor({ harness: "kimi", model: "kimi-code/k3" })).toBeNull();
+  });
+  it("spot the proxy's refusal, in either harness's wording", () => {
+    expect(
+      looksLikeBudget(
+        'API Error: 402 {"type":"error","error":{"type":"billing_error","message":"This nibblet has spent its monthly budget ($10.00 of $10.00)."}}',
+      ),
+    ).toBe(true);
+    expect(
+      looksLikeBudget(
+        "unexpected status 402 Payment Required: This nibblet has spent its monthly budget",
+      ),
+    ).toBe(true);
+    expect(looksLikeBudget("Your credit balance is too low")).toBe(false);
   });
 });
 
@@ -122,5 +149,31 @@ describe("LimitWaits", () => {
     expect(resumed).toEqual(["a"]);
     await vi.advanceTimersByTimeAsync(3 * 3_600_000);
     expect(resumed).toEqual(["a"]);
+  });
+
+  it("waits out a spent budget until the month turns, saying which it is", async () => {
+    const store = fakeStore();
+    const waits = new LimitWaits(store, { restoreQueue: () => {}, resume: () => {} });
+    await waits.start("nib_1", null, new Date("2026-11-01T00:00:00Z"), [turn], "budget");
+    expect(waits.waitingFor("budget")).toEqual(["nib_1"]);
+    expect(waits.waitingFor("usage")).toEqual([]);
+    expect(store.statuses.at(-1)?.detail).toBe("Monthly budget spent, resuming 2026-11-01");
+    expect([...store.items.values()][0]).toMatchObject({ type: "limit_wait", reason: "budget" });
+  });
+
+  it("reads waits saved before budgets as usage limits", async () => {
+    const store = fakeStore();
+    await store.setSetting("limitWaits", {
+      nib_1: {
+        until: "2026-10-14T11:00:00.000Z",
+        provider: "anthropic",
+        itemId: "limit_1",
+        turns: [],
+      },
+    });
+    const waits = new LimitWaits(store, { restoreQueue: () => {}, resume: () => {} });
+    await waits.restore();
+    expect(waits.waitingFor("usage")).toEqual(["nib_1"]);
+    waits.stopAll();
   });
 });

@@ -71,6 +71,13 @@
       "when": 1792113198525,
       "tag": "0009_tailscale",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792574561052,
+      "tag": "0010_budgets",
+      "breakpoints": true
     }
   ]
 }

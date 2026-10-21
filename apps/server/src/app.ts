@@ -20,6 +20,7 @@ import type { Bus } from "./bus.ts";
 import type { RunnerLink } from "./conductor.ts";
 import { createHandlers, type Services } from "./handlers.ts";
 import { hostMcpHandler } from "./hostmcp.ts";
+import { mountBudgets } from "./budget.ts";
 import { mountGuard } from "./guard.ts";
 import { mcpHandler } from "./mcp.ts";
 import { mountFiles } from "./files.ts";
@@ -189,6 +190,9 @@ export function createApp(services: Services, bus: Bus) {
 
   // The guard in each nibblet's container: its settings and secrets, and approvals.
   mountGuard(app, services);
+
+  // The credential proxy, checking and reporting nibblets' spending on API keys.
+  mountBudgets(app, { config, budgets: conductor.budgets });
 
   app.all("/mcp", mcpHandler(services));
   app.all("/hostmcp/:name", hostMcpHandler(services));
