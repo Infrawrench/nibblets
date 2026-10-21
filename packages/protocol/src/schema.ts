@@ -197,6 +197,8 @@ export type Resources = z.infer<typeof Resources>;
 export const DEFAULT_MEMORY_MB = 4096;
 export const defaultResources: Resources = { cpus: null, memoryMb: null };
 
+export const PromptName = z.string().trim().max(80);
+
 export const Nibblet = z.object({
   id: z.string(),
   name: z.string(),
@@ -206,6 +208,13 @@ export const Nibblet = z.object({
   effort: Effort,
   /** The nibblet's standing instructions: who it is and what it looks after. */
   instructions: z.string(),
+  /**
+   * What it's called in its own prompts, so its name never reaches the model:
+   * null for its name, empty for no name at all.
+   */
+  promptName: PromptName.nullable(),
+  /** Whether it's a plain assistant: not told it's a hamster, and asked to leave out the cute stuff. */
+  plain: z.boolean(),
   /** Set when this nibblet is a sub-agent another nibblet spawned. */
   parentId: z.string().nullable(),
   status: NibbletStatus,
@@ -239,6 +248,15 @@ export const Nibblet = z.object({
 });
 export type Nibblet = z.infer<typeof Nibblet>;
 
+/**
+ * What a nibblet is called in prompts, which can be other than its name so
+ * that never reaches the model. Null when it isn't to have one.
+ */
+export function nameInPrompt(nibblet: Pick<Nibblet, "name" | "promptName">): string | null {
+  if (nibblet.promptName === null) return nibblet.name;
+  return nibblet.promptName.trim() || null;
+}
+
 export const CreateNibblet = z.object({
   name: z.string().min(1).max(80),
   /** Random when left out. */
@@ -247,6 +265,8 @@ export const CreateNibblet = z.object({
   model: z.string(),
   effort: Effort,
   instructions: z.string().default(""),
+  promptName: PromptName.nullable().default(null),
+  plain: z.boolean().default(false),
   browser: z.boolean().default(true),
   hostTools: z.array(z.string()).default([]),
   cliCredentials: z.array(z.string()).default([]),
@@ -265,6 +285,8 @@ export const UpdateNibblet = z.object({
   model: z.string().optional(),
   effort: Effort.optional(),
   instructions: z.string().optional(),
+  promptName: PromptName.nullable().optional(),
+  plain: z.boolean().optional(),
   browser: z.boolean().optional(),
   hostTools: z.array(z.string()).optional(),
   cliCredentials: z.array(z.string()).optional(),
