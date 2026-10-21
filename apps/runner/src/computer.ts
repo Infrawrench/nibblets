@@ -28,8 +28,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import type { McpServerSpec } from "@nibblet/harness";
-import { BROWSER_MCP_PORT, VIEW_PORT } from "@nibblet/protocol";
+import type { McpServerSpec } from "@nibblets/harness";
+import { BROWSER_MCP_PORT, VIEW_PORT } from "@nibblets/protocol";
 import { z } from "zod";
 
 // The tokens go in the environment (OCU_SERVE_TOKEN, OCU_VIEW_TOKEN), never

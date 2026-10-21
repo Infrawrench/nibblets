@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { HamsterLook } from "@nibblet/protocol";
+import type { HamsterLook } from "@nibblets/protocol";
 import { Modal } from "../ui/Modal.tsx";
 import { Button } from "../ui/Button.tsx";
 import { HamsterEditor } from "./HamsterEditor.tsx";

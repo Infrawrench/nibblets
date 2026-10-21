@@ -3,7 +3,7 @@ import {
   type HttpResponse,
   type HttpRoute,
   type SecurityRequirement,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import type { Context, Hono, MiddlewareHandler, Next } from "hono";
 import { z } from "zod";
 

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { KimiLogin } from "@nibblet/protocol";
+import type { KimiLogin } from "@nibblets/protocol";
 import type { Run } from "./clis/cli.ts";
 
 /**

@@ -7,7 +7,7 @@ import {
   type BankKind,
   type BankSetup,
   type BankStatus,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import {
   bankDraftChanged,

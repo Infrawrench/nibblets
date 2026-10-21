@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { CityBackground } from "@nibblet/protocol";
+import type { CityBackground } from "@nibblets/protocol";
 
 /**
  * Skylines for behind a hamster, drawn in its 100 × 100 frame. The hamster

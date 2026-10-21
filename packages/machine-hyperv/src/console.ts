@@ -2,7 +2,7 @@ import { createWriteStream } from "node:fs";
 import { open, readFile, stat, writeFile } from "node:fs/promises";
 import { connect, type Socket } from "node:net";
 import { join } from "node:path";
-import type { VmRef } from "@nibblet/machine/host";
+import type { VmRef } from "@nibblets/machine/host";
 
 /** Where a VM's console is recorded. */
 export const consoleFile = (vm: VmRef) => join(vm.dir, "console.log");

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { RpcError, defaultHamsterLook } from "@nibblet/protocol";
+import { RpcError, defaultHamsterLook } from "@nibblets/protocol";
 import type { ServerConnection } from "../lib/connection.ts";
 import { keys } from "../lib/servers.tsx";
 import { Hamster } from "./hamster/Hamster.tsx";

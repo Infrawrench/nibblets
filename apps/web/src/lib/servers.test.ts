@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CentralServers, keys, useServers } from "./servers.tsx";
 import type { CentralApi, ServerList } from "./central.ts";
-import type { LiveMessage } from "@nibblet/protocol";
+import type { LiveMessage } from "@nibblets/protocol";
 import type { LiveState } from "./connection.ts";
 
 const boundary = vi.hoisted(() => ({ create: vi.fn() }));

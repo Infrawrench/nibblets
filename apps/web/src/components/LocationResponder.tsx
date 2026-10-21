@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
 import { LocateFixed, MapPin } from "lucide-react";
-import type { Nibblet } from "@nibblet/protocol";
+import type { Nibblet } from "@nibblets/protocol";
 import type { ServerConnection } from "../lib/connection.ts";
 import {
   answerFromDevice,

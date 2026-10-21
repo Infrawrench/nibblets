@@ -11,8 +11,8 @@ import {
   type BankSettingValues,
   type CardRef,
   type CardUsage,
-} from "@nibblet/bank";
-import type { CardSecret } from "@nibblet/protocol";
+} from "@nibblets/bank";
+import type { CardSecret } from "@nibblets/protocol";
 import { z } from "zod";
 import { stripePurchaseHook } from "./purchases.ts";
 

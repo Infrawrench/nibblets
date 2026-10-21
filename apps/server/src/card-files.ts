@@ -1,4 +1,4 @@
-import type { CardFile, RunnerToServer, ServerToRunner } from "@nibblet/protocol";
+import type { CardFile, RunnerToServer, ServerToRunner } from "@nibblets/protocol";
 import { newId } from "./store.ts";
 
 type Done = Extract<RunnerToServer, { type: "card_done" }>;

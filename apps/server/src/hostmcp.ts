@@ -7,7 +7,7 @@ import {
   TailscaleStatus,
   type HostTool,
   type McpServerDef,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { createHash } from "node:crypto";
 import type { Context } from "hono";
 import { z } from "zod";

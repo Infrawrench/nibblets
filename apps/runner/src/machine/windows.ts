@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { HYPERV_AGENT_PORT, hypervServiceId } from "@nibblet/protocol";
+import { HYPERV_AGENT_PORT, hypervServiceId } from "@nibblets/protocol";
 import { withHosts } from "./macos.ts";
 import { entryArgv, relayStream, type GuestPlugin } from "./guest.ts";
 

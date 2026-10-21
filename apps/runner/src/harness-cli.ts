@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { cliHarnesses, HARNESS_CLI_DIR, HarnessId, harnesses } from "@nibblet/protocol";
+import { cliHarnesses, HARNESS_CLI_DIR, HarnessId, harnesses } from "@nibblets/protocol";
 
 const run = promisify(execFile);
 

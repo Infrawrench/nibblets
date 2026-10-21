@@ -1,4 +1,4 @@
-import type { NibbletLocation, ThreadItemOf } from "@nibblet/protocol";
+import type { NibbletLocation, ThreadItemOf } from "@nibblets/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { LocationRequests, type LocationStore } from "./location-requests.ts";
 

@@ -1,4 +1,4 @@
-import { connect, migrateDb } from "@nibblet/db";
+import { connect, migrateDb } from "@nibblets/db";
 import { readFileSync } from "node:fs";
 import { Bus } from "./bus.ts";
 import { loadConfig } from "./config.ts";

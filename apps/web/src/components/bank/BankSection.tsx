@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Copy, Plus, XCircle } from "lucide-react";
-import type { BankProvider, BankSetup } from "@nibblet/protocol";
+import type { BankProvider, BankSetup } from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { bankTitle, money } from "../../lib/bank.ts";
 import { keys } from "../../lib/servers.tsx";

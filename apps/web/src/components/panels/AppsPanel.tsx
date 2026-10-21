@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppWindow, LayoutGrid, Loader2, RefreshCw, Search, X } from "lucide-react";
-import type { DesktopApp, Nibblet } from "@nibblet/protocol";
+import type { DesktopApp, Nibblet } from "@nibblets/protocol";
 import { endSession, launchApp, listSessions, type OcuSession } from "../../lib/browserView.ts";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { hostOf } from "../../lib/nibblets.ts";

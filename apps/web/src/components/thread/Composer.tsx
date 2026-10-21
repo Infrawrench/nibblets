@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowUp, Loader2, Paperclip, Square, Upload, X } from "lucide-react";
-import type { FileRef, Nibblet } from "@nibblet/protocol";
+import type { FileRef, Nibblet } from "@nibblets/protocol";
 import { formatBytes, isImage } from "../../lib/files.ts";
 import { FileTypeIcon } from "../files/Files.tsx";
 import { useModels } from "../../lib/models.ts";

@@ -7,7 +7,7 @@ import {
   type BankSetup,
   type Card,
   type Nibblet,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import {
   bankAssets,

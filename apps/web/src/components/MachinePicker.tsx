@@ -1,4 +1,4 @@
-import { DEFAULT_MACHINE, type MachineChoice } from "@nibblet/protocol";
+import { DEFAULT_MACHINE, type MachineChoice } from "@nibblets/protocol";
 import type { MachineOption } from "../lib/machines.ts";
 import { machineKey } from "../lib/machines.ts";
 import { FieldRow, Select } from "./ui/Field.tsx";

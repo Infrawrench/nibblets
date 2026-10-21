@@ -13,7 +13,7 @@ import {
   Settings2,
   Trash2,
 } from "lucide-react";
-import type { Nibblet } from "@nibblet/protocol";
+import type { Nibblet } from "@nibblets/protocol";
 import type { ServerConnection } from "../lib/connection.ts";
 import { openPanel, type PanelTab } from "../lib/panels.ts";
 import { cn } from "../lib/cn.ts";

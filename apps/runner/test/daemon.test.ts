@@ -1,5 +1,5 @@
 import { Duplex } from "node:stream";
-import { encodeSerial, GuestToServer, SerialReader } from "@nibblet/protocol";
+import { encodeSerial, GuestToServer, SerialReader } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { GuestDaemon } from "../src/machine/daemon.ts";
 import type { GuestPlugin } from "../src/machine/guest.ts";

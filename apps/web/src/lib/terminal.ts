@@ -1,4 +1,4 @@
-import { TerminalEvent, type BackgroundTask, type TerminalInput } from "@nibblet/protocol";
+import { TerminalEvent, type BackgroundTask, type TerminalInput } from "@nibblets/protocol";
 import type { ServerConnection } from "./connection.ts";
 
 /** Where a terminal in a nibblet's container is served: a shell, or a task's output. */

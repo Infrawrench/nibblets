@@ -1,4 +1,4 @@
-import { GuardConfig } from "@nibblet/protocol";
+import { GuardConfig } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { gatedSpecs } from "./guard.ts";
 

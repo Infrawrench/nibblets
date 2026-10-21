@@ -1,4 +1,4 @@
-import type { RunnerToServer, ServerToRunner } from "@nibblet/protocol";
+import type { RunnerToServer, ServerToRunner } from "@nibblets/protocol";
 import { spawn } from "node:child_process";
 import { chmod } from "node:fs/promises";
 import { createRequire } from "node:module";

@@ -1,4 +1,4 @@
-import type { ColourBackground, HamsterLook } from "@nibblet/protocol";
+import type { ColourBackground, HamsterLook } from "@nibblets/protocol";
 
 export interface FurColours {
   base: string;

@@ -5,7 +5,7 @@ import {
   MeteredRequest,
   type BudgetStatus,
   type Nibblet,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import type { Hono } from "hono";
 import { bearerToken, safeEqual } from "./auth.ts";
 import type { Config } from "./config.ts";
@@ -14,7 +14,7 @@ import type { Store } from "./store.ts";
 type BudgetStore = Pick<Store, "getNibblet" | "spentUsd" | "addSpend">;
 
 /**
- * Monthly budgets for API-key usage (see `@nibblet/protocol`'s budget.ts).
+ * Monthly budgets for API-key usage (see `@nibblets/protocol`'s budget.ts).
  * The credential proxy asks here before relaying each request on an API key,
  * and reports what each one used afterwards. A sub-agent runs in its host's
  * container, where the host's agent could read its proxy key anyway, so it

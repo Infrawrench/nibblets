@@ -10,7 +10,7 @@ import {
   type BankSetup,
   type Card,
   type SpendingLimit,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 
 /** One asset's limit as typed: an amount in its own units (empty for none), and a period. */
 export interface LimitDraft {

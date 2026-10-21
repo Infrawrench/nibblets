@@ -9,7 +9,7 @@ import {
   settings,
   spend,
   type Db,
-} from "@nibblet/db";
+} from "@nibblets/db";
 import {
   DEFAULT_MACHINE,
   HamsterLook,
@@ -31,7 +31,7 @@ import {
   type Schedule,
   type StoredItem,
   type ThreadItem,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import {
   and,
   asc,

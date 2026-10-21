@@ -1,6 +1,6 @@
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpCircle, Download, Loader2 } from "lucide-react";
-import { compareVersions, type AppUpdate } from "@nibblet/protocol";
+import { compareVersions, type AppUpdate } from "@nibblets/protocol";
 import type { ServerConnection } from "../lib/connection.ts";
 import { keys, useServers } from "../lib/servers.tsx";
 import { openWeb } from "../lib/links.ts";

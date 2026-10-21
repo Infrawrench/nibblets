@@ -1,4 +1,4 @@
-import type { Nibblet } from "@nibblet/protocol";
+import type { Nibblet } from "@nibblets/protocol";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { Budgets, mountBudgets } from "./budget.ts";

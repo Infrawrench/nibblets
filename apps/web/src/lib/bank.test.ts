@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MASKED, type BankField, type BankKind, type BankSetup } from "@nibblet/protocol";
+import { MASKED, type BankField, type BankKind, type BankSetup } from "@nibblets/protocol";
 import {
   bankAssets,
   bankDraftChanged,

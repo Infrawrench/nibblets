@@ -8,7 +8,7 @@ import {
   HYPERV_AGENT_PORT,
   TAILSCALE_GID,
   TAILSCALE_UID,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { entryArgv, relayStream, type GuestPlugin } from "./guest.ts";
 
 const run = promisify(execFile);

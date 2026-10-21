@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { HarnessId } from "@nibblet/protocol";
+import type { HarnessId } from "@nibblets/protocol";
 import { hostLoginFor } from "./host-login.ts";
 
 const bridge = { HOST_MCP_URL: "http://bridge.test", HOST_MCP_TOKEN: "t" };

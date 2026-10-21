@@ -1,4 +1,4 @@
-import { BankError } from "@nibblet/bank";
+import { BankError } from "@nibblets/bank";
 import { describe, expect, it } from "vitest";
 import { slash, slashPlugin, SLASH_API } from "./index.ts";
 

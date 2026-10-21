@@ -1,4 +1,4 @@
-import type { ThreadItem, ThreadItemOf } from "@nibblet/protocol";
+import type { ThreadItem, ThreadItemOf } from "@nibblets/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Approvals, type ApprovalStore } from "./approvals.ts";
 import { declinedReply, inspectRequest, toolCallIn } from "./hostmcp.ts";

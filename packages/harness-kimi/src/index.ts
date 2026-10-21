@@ -10,8 +10,8 @@ import {
   installedCliDir,
   type HarnessContext,
   type TurnRequest,
-} from "@nibblet/harness";
-import { harnesses, KimiLine } from "@nibblet/protocol";
+} from "@nibblets/harness";
+import { harnesses, KimiLine } from "@nibblets/protocol";
 import { installLogin, kimiConfig, writeMcpConfig } from "./login.ts";
 import { KimiMapper } from "./mapper.ts";
 

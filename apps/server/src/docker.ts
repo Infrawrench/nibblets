@@ -1,7 +1,7 @@
 import { Writable } from "node:stream";
 import Docker from "dockerode";
-import { DockerMachines, isNotFound } from "@nibblet/machine-docker";
-import { HARNESS_CLI_DIR, HARNESS_CLI_VOLUME } from "@nibblet/protocol";
+import { DockerMachines, isNotFound } from "@nibblets/machine-docker";
+import { HARNESS_CLI_DIR, HARNESS_CLI_VOLUME } from "@nibblets/protocol";
 import type { Config } from "./config.ts";
 import { TUNNEL_IMAGE } from "./tunnel.ts";
 

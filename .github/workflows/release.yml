@@ -132,14 +132,14 @@ jobs:
           node-version: 24
           cache: pnpm
       # Only what the app needs: Connect's workerd has no Windows Arm build.
-      - run: pnpm install --frozen-lockfile --filter "@nibblet/desktop..."
+      - run: pnpm install --frozen-lockfile --filter "@nibblets/desktop..."
       - name: Build, sign and notarise (Mac)
         if: matrix.os == 'mac'
         # build/notarize.cjs retries stapling itself; this is for anything else
         # flaky (a notarisation service hiccup, say).
         run: |
           for attempt in 1 2; do
-            pnpm --filter @nibblet/desktop dist:mac && exit 0
+            pnpm --filter @nibblets/desktop dist:mac && exit 0
             echo "::warning::Mac build attempt $attempt failed"
             sleep 30
           done
@@ -162,7 +162,7 @@ jobs:
         run: mv apps/desktop/dist/latest-mac.yml apps/desktop/dist/latest-mac-${{ matrix.arch }}.yml
       - name: Build (Linux)
         if: matrix.os == 'linux'
-        run: pnpm --filter @nibblet/desktop dist:linux
+        run: pnpm --filter @nibblets/desktop dist:linux
       - name: Name the x64 files like the rest (Linux)
         # electron-builder names them amd64 (deb) and x86_64 (AppImage).
         if: matrix.os == 'linux' && matrix.arch == 'x64'
@@ -172,7 +172,7 @@ jobs:
           mv Nibblets-x86_64.AppImage Nibblets-x64.AppImage
       - name: Build (Windows)
         if: matrix.os == 'win'
-        run: pnpm --filter @nibblet/desktop dist:win
+        run: pnpm --filter @nibblets/desktop dist:win
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.os }}-${{ matrix.arch }}
@@ -197,7 +197,7 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      - run: pnpm install --frozen-lockfile --filter "@nibblet/server..."
+      - run: pnpm install --frozen-lockfile --filter "@nibblets/server..."
       - name: What a server serves at /api/openapi.json
         env:
           VERSION: ${{ needs.check.outputs.version }}

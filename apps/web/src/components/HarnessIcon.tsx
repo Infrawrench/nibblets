@@ -1,4 +1,4 @@
-import type { HarnessId } from "@nibblet/protocol";
+import type { HarnessId } from "@nibblets/protocol";
 import { cn } from "../lib/cn.ts";
 
 // Official marks. Claude and DeepSeek from Simple Icons 16.35.0; OpenAI from

@@ -53,7 +53,7 @@ encrypted for each browser and signed with the VAPID key (`src/push.ts`, no
 dependencies). Tapping one opens that nibblet.
 
 ```sh
-pnpm --filter @nibblet/connect deploy   # builds the central UI, migrates D1, deploys
+pnpm --filter @nibblets/connect deploy   # builds the central UI, migrates D1, deploys
 ```
 
 Clerk development instances work on the workers.dev address as they are.
@@ -65,7 +65,7 @@ not workers.dev) set up in the Clerk dashboard.
 ```sh
 cp .dev.vars.example .dev.vars          # DEV_AUTH_USER=you skips Clerk
 npx wrangler d1 migrations apply nibblets-connect --local
-pnpm --filter @nibblet/web build:central
+pnpm --filter @nibblets/web build:central
 npx wrangler dev
 ```
 

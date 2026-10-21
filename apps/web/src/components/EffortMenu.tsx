@@ -1,6 +1,6 @@
 import { Menu } from "@base-ui/react/menu";
 import { Brain, Check, ChevronDown } from "lucide-react";
-import { effortLabels, type Effort, type ModelOption } from "@nibblet/protocol";
+import { effortLabels, type Effort, type ModelOption } from "@nibblets/protocol";
 import { cn } from "../lib/cn.ts";
 
 /** Reasoning effort, from what the chosen model supports. */

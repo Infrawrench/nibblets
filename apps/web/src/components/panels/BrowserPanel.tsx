@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Globe, Hand, KeyRound, Loader2, LogIn, MousePointerClick, Network } from "lucide-react";
-import type { BrowserBorrow, Nibblet } from "@nibblet/protocol";
+import type { BrowserBorrow, Nibblet } from "@nibblets/protocol";
 import { keys, useBorrow, useBorrowError, useNibblets, useServers } from "../../lib/servers.tsx";
 import { localServerId } from "../../lib/central.ts";
 import { listSessions, openBrowser } from "../../lib/browserView.ts";

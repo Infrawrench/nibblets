@@ -5,8 +5,8 @@ import {
   type BrowserBorrow,
   type BrowserBorrowState,
   type LiveMessage,
-} from "@nibblet/protocol";
-import type { MachinePlugin, MachineRegistry } from "@nibblet/machine";
+} from "@nibblets/protocol";
+import type { MachinePlugin, MachineRegistry } from "@nibblets/machine";
 import type { Config } from "./config.ts";
 import type { Orchestrator } from "./docker.ts";
 import type { Store } from "./store.ts";

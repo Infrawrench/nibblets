@@ -10,7 +10,7 @@
  */
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import type { McpServerSpec } from "@nibblet/harness";
+import type { McpServerSpec } from "@nibblets/harness";
 import {
   GATE_PORT,
   GuardConfig,
@@ -18,7 +18,7 @@ import {
   ONEPASSWORD_VAULTS_ENV,
   type JsonValue,
   type ToolRule,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { z } from "zod";
 import { clearProfileLock, startComputer, type Computer } from "./computer.ts";
 import { McpGate, type Decision } from "./gate.ts";

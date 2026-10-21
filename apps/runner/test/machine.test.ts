@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { HypervisorClient, VirtualMachines } from "@nibblet/machine";
-import { HostMachines, type HypervisorPlugin } from "@nibblet/machine/host";
+import { HypervisorClient, VirtualMachines } from "@nibblets/machine";
+import { HostMachines, type HypervisorPlugin } from "@nibblets/machine/host";
 import { GuestDaemon } from "../src/machine/daemon.ts";
 import type { GuestPlugin } from "../src/machine/guest.ts";
 

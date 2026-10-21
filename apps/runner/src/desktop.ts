@@ -14,8 +14,8 @@
  * One per container. The top-level runner starts it; a sub-agent's runner
  * joins it, so sub-agents share their host's apps (as they do its files).
  */
-import type { McpServerSpec } from "@nibblet/harness";
-import { DESKTOP_MCP_PORT, DESKTOP_VIEW_PORT } from "@nibblet/protocol";
+import type { McpServerSpec } from "@nibblets/harness";
+import { DESKTOP_MCP_PORT, DESKTOP_VIEW_PORT } from "@nibblets/protocol";
 import {
   serveArgs,
   startComputer,

@@ -10,7 +10,7 @@ import {
   CityBackground,
   ColourBackground,
   isCityBackground,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { Hamster } from "./Hamster.tsx";
 import { cities } from "./cities.tsx";
 import {

@@ -3,7 +3,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Loader2, MapPin, Monitor, ShieldAlert } from "lucide-react";
 import { z } from "zod";
-import { defaultHamsterLook } from "@nibblet/protocol";
+import { defaultHamsterLook } from "@nibblets/protocol";
 import { Hamster } from "../components/hamster/Hamster.tsx";
 import { Button } from "../components/ui/Button.tsx";
 import { useServers } from "../lib/servers.tsx";

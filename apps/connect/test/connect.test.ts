@@ -1,7 +1,12 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Miniflare } from "miniflare";
-import { CentralServer, LinkPollResponse, LinkStartResponse, ServerToken } from "@nibblet/protocol";
+import {
+  CentralServer,
+  LinkPollResponse,
+  LinkStartResponse,
+  ServerToken,
+} from "@nibblets/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Connect } from "../../server/src/connect.ts";

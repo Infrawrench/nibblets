@@ -1,4 +1,4 @@
-import { emptyUsage, type BudgetStatus, type MeteredRequest } from "@nibblet/protocol";
+import { emptyUsage, type BudgetStatus, type MeteredRequest } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { BudgetGate, type BudgetClient } from "../src/budgets.ts";
 import { estimateRequest, UsageReader } from "../src/meter.ts";

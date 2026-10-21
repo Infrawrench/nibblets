@@ -8,8 +8,8 @@ import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { OpencodeLogin } from "@nibblet/protocol";
-import { installLogin, parseModelsVerbose, prepareHome } from "@nibblet/harness-opencode";
+import { OpencodeLogin } from "@nibblets/protocol";
+import { installLogin, parseModelsVerbose, prepareHome } from "@nibblets/harness-opencode";
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];

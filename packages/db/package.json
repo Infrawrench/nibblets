@@ -1,5 +1,5 @@
 {
-  "name": "@nibblet/db",
+  "name": "@nibblets/db",
   "version": "0.3.2",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "generate": "drizzle-kit generate"
   },
   "dependencies": {
-    "@nibblet/protocol": "workspace:*",
+    "@nibblets/protocol": "workspace:*",
     "drizzle-orm": "^0.45.4",
     "postgres": "^3.4.9"
   },

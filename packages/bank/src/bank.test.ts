@@ -1,4 +1,4 @@
-import { formatAmount, MASKED, parseAmount, type CardSecret } from "@nibblet/protocol";
+import { formatAmount, MASKED, parseAmount, type CardSecret } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import {
   allowance,

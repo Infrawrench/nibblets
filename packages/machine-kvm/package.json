@@ -1,5 +1,5 @@
 {
-  "name": "@nibblet/machine-kvm",
+  "name": "@nibblets/machine-kvm",
   "version": "0.3.1",
   "private": true,
   "type": "module",
@@ -11,8 +11,8 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@nibblet/machine": "workspace:*",
-    "@nibblet/protocol": "workspace:*",
+    "@nibblets/machine": "workspace:*",
+    "@nibblets/protocol": "workspace:*",
     "zod": "^4.6.7"
   }
 }

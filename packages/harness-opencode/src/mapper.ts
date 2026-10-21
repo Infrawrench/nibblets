@@ -1,6 +1,6 @@
 import type { Event, Part } from "@opencode-ai/sdk";
-import type { TurnWriter } from "@nibblet/harness";
-import { JsonValue } from "@nibblet/protocol";
+import type { TurnWriter } from "@nibblets/harness";
+import { JsonValue } from "@nibblets/protocol";
 
 /**
  * Feeds OpenCode server events for one session into a `TurnWriter`.

@@ -7,7 +7,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * reads its own can't make one for another nibblet, so what it spends on an
  * API key counts against its own budget.
  *
- * Node only, so it's `@nibblet/protocol/proxy-key` rather than in the index
+ * Node only, so it's `@nibblets/protocol/proxy-key` rather than in the index
  * the web UI imports.
  */
 export function nibbletProxyKey(secret: string, nibbletId: string): string {

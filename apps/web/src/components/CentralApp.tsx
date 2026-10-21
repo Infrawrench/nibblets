@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ClerkProvider, SignIn, useAuth, useSignIn } from "@clerk/react";
 import { Loader2 } from "lucide-react";
-import { defaultHamsterLook } from "@nibblet/protocol";
+import { defaultHamsterLook } from "@nibblets/protocol";
 import {
   centralApi,
   loadCentralConfig,

@@ -1,5 +1,5 @@
-import type { McpServerSpec } from "@nibblet/harness";
-import type { BackgroundTask } from "@nibblet/protocol";
+import type { McpServerSpec } from "@nibblets/harness";
+import type { BackgroundTask } from "@nibblets/protocol";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { appendFile, mkdir, open, rm } from "node:fs/promises";

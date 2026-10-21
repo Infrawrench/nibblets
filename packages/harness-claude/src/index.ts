@@ -17,8 +17,8 @@ import {
   type TurnAttachment,
   installedCli,
   packageField,
-} from "@nibblet/harness";
-import type { Effort, HarnessId, RunnerConfig } from "@nibblet/protocol";
+} from "@nibblets/harness";
+import type { Effort, HarnessId, RunnerConfig } from "@nibblets/protocol";
 import { ClaudeMapper } from "./mapper.ts";
 
 export { ClaudeMapper } from "./mapper.ts";

@@ -1,4 +1,4 @@
-import type { Place } from "@nibblet/protocol";
+import type { Place } from "@nibblets/protocol";
 import { z } from "zod";
 
 /**

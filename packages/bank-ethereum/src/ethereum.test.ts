@@ -1,4 +1,4 @@
-import { BankError, deriveWalletKey } from "@nibblet/bank";
+import { BankError, deriveWalletKey } from "@nibblets/bank";
 import { custom, isAddress, isHex, parseTransaction, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { describe, expect, it } from "vitest";

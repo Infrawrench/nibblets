@@ -8,8 +8,8 @@
  * from the `apps` MCP server here. Both start apps through the desktop's
  * view server, so a session either of them opens is the other's too.
  */
-import type { McpServerSpec } from "@nibblet/harness";
-import type { DesktopApp } from "@nibblet/protocol";
+import type { McpServerSpec } from "@nibblets/harness";
+import type { DesktopApp } from "@nibblets/protocol";
 import { access, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";

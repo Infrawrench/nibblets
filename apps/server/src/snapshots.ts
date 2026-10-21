@@ -1,11 +1,11 @@
-import { snapshots as snapshotsTable } from "@nibblet/db";
+import { snapshots as snapshotsTable } from "@nibblets/db";
 import {
   RpcError,
   type Snapshot,
   type SnapshotActivity,
   type SnapshotTimeline,
   type SnapshotTrigger,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { desc, eq } from "drizzle-orm";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";

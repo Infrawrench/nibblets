@@ -1,5 +1,5 @@
 {
-  "name": "@nibblet/bank-ethereum",
+  "name": "@nibblets/bank-ethereum",
   "version": "0.3.1",
   "private": true,
   "type": "module",
@@ -10,8 +10,8 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@nibblet/bank": "workspace:*",
-    "@nibblet/protocol": "workspace:*",
+    "@nibblets/bank": "workspace:*",
+    "@nibblets/protocol": "workspace:*",
     "viem": "^2.57.7",
     "zod": "^4.6.7"
   }

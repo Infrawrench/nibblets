@@ -1,4 +1,4 @@
-import type { Snapshot, SnapshotPolicy } from "@nibblet/protocol";
+import type { Snapshot, SnapshotPolicy } from "@nibblets/protocol";
 
 /** The automatic snapshot choices offered, by minutes between them; null is off. */
 export const snapshotFrequencies: { minutes: number | null; label: string }[] = [

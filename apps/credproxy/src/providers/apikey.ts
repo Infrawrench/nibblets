@@ -1,4 +1,4 @@
-import type { CredentialStatus } from "@nibblet/protocol";
+import type { CredentialStatus } from "@nibblets/protocol";
 
 /**
  * A provider on an API key rather than a subscription login: nothing to

@@ -1,4 +1,4 @@
-import { GUEST_NAMES, type MachineBackend, type MachineChoice } from "@nibblet/protocol";
+import { GUEST_NAMES, type MachineBackend, type MachineChoice } from "@nibblets/protocol";
 import type { ExitListener, MachinePlugin, MachineState } from "./plugin.ts";
 
 /** Asked for a plugin that isn't loaded, or a guest it can't run. */

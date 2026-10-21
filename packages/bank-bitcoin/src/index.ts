@@ -15,8 +15,8 @@ import {
   type BankSettingValues,
   type CardRef,
   type CardUsage,
-} from "@nibblet/bank";
-import type { CardSecret } from "@nibblet/protocol";
+} from "@nibblets/bank";
+import type { CardSecret } from "@nibblets/protocol";
 import { hex } from "@scure/base";
 import { NETWORK, p2wpkh, selectUTXO, TEST_NETWORK, Transaction, WIF } from "@scure/btc-signer";
 import { pubECDSA } from "@scure/btc-signer/utils.js";

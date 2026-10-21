@@ -4,7 +4,7 @@ import {
   type BankPlugin,
   type CardRef,
   type IssueRequest,
-} from "@nibblet/bank";
+} from "@nibblets/bank";
 import {
   DEFAULT_MACHINE,
   defaultHamsterLook,
@@ -13,7 +13,7 @@ import {
   type LiveMessage,
   type Nibblet,
   type SpendingLimit,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { Bank, type BankStore } from "./bank.ts";

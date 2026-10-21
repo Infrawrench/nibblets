@@ -22,7 +22,7 @@ import {
   MapPin,
   X,
 } from "lucide-react";
-import type { Nibblet, StoredItem, ThreadItemOf, TurnSource } from "@nibblet/protocol";
+import type { Nibblet, StoredItem, ThreadItemOf, TurnSource } from "@nibblets/protocol";
 import { z } from "zod";
 import { openPanel } from "../../lib/panels.ts";
 import { buildTimeline, sourceLabels, type TimelineEntry } from "../../lib/thread.ts";

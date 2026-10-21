@@ -1,4 +1,4 @@
-import type { LiveMessage, Nibblet, PushNote } from "@nibblet/protocol";
+import type { LiveMessage, Nibblet, PushNote } from "@nibblets/protocol";
 
 /** What it needs to know about a nibblet. */
 export type Watched = Pick<

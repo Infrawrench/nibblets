@@ -1,4 +1,4 @@
-import type { CardFile, ServerToRunner } from "@nibblet/protocol";
+import type { CardFile, ServerToRunner } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { CardFiles } from "./card-files.ts";
 

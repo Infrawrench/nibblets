@@ -6,7 +6,7 @@ import {
   TailnetPort,
   type Nibblet,
   type NibbletTailscale,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { keys } from "../../lib/servers.tsx";
 import { Button } from "../ui/Button.tsx";

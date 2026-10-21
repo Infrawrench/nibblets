@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Plus, X } from "lucide-react";
-import { MASKED, McpServerDef } from "@nibblet/protocol";
+import { MASKED, McpServerDef } from "@nibblets/protocol";
 import { z } from "zod";
 import { Button } from "../ui/Button.tsx";
 import { FieldRow, Input, Textarea } from "../ui/Field.tsx";

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ThreadItem } from "@nibblet/protocol";
+import type { ThreadItem } from "@nibblets/protocol";
 import { sentenceEnd, TurnWriter } from "./index.ts";
 
 describe("sentenceEnd", () => {

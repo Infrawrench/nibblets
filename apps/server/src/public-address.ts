@@ -1,4 +1,4 @@
-import { ProxyUrl, type PublicAddress } from "@nibblet/protocol";
+import { ProxyUrl, type PublicAddress } from "@nibblets/protocol";
 import type { Store } from "./store.ts";
 import type { Tunnel } from "./tunnel.ts";
 

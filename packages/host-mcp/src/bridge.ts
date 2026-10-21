@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { mcpTarget } from "@nibblet/protocol";
+import { mcpTarget } from "@nibblets/protocol";
 import { detectOpencode, readOpencodeLogin } from "./opencode.ts";
 import { detectKimi, readKimiLogin } from "./kimi.ts";
 import { setTailscaleServe, tailscaleLogin, tailscaleState } from "./tailscale.ts";
@@ -44,7 +44,7 @@ import {
 } from "./onepassword.ts";
 import { cliPlugins, runOnHost, type CliPlugin, type Run } from "./clis/index.ts";
 import type { AppUpdaterHost } from "./update.ts";
-import type { HostMachines } from "@nibblet/machine/host";
+import type { HostMachines } from "@nibblets/machine/host";
 import { Writable } from "node:stream";
 import { borrowProfile, hostBrowserStatus } from "./browser.ts";
 

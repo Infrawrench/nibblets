@@ -1,4 +1,4 @@
-import { EMBEDDING_DIMENSIONS } from "@nibblet/db";
+import { EMBEDDING_DIMENSIONS } from "@nibblets/db";
 import { z } from "zod";
 
 /**

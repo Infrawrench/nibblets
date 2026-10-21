@@ -13,7 +13,7 @@ import {
   type LinkStartResponse,
   type ManagedTunnel,
   type ServerToken,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 // Module, not ambient, Workers types: the app is also typechecked and tested under Node.
 import type { D1Database, Fetcher } from "@cloudflare/workers-types/index.ts";
 import { Hono, type Context, type Next } from "hono";

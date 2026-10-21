@@ -1,10 +1,10 @@
-import { BankError, defineBankFactory, defineBankPlugin, defineField } from "@nibblet/bank";
+import { BankError, defineBankFactory, defineBankPlugin, defineField } from "@nibblets/bank";
 import {
   MASKED,
   type BankProviderId,
   type CardSecret,
   type PublicAddress,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { Banks } from "./banks.ts";
 

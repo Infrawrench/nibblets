@@ -1,8 +1,8 @@
-import type { CredentialStatus, Nibblet, ThreadItem } from "@nibblet/protocol";
+import type { CredentialStatus, Nibblet, ThreadItem } from "@nibblets/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Config } from "./config.ts";
 import { Conductor } from "./conductor.ts";
-import type { MachineRegistry } from "@nibblet/machine";
+import type { MachineRegistry } from "@nibblets/machine";
 import type { Store } from "./store.ts";
 
 const proxyStatus = (source: CredentialStatus["source"]): CredentialStatus[] => [

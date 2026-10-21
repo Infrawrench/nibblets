@@ -9,7 +9,7 @@ import {
   type MachineBackend,
   type MachineCapabilities,
   type Resources,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import type { HostImage, VmInfo } from "./bridge-api.ts";
 import { BridgeError, type HypervisorClient } from "./bridge-client.ts";
 import { GuestLink, type RunExit } from "./guest-link.ts";

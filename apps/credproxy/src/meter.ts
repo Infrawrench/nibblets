@@ -1,4 +1,4 @@
-import { emptyUsage, type ApiUsage } from "@nibblet/protocol";
+import { emptyUsage, type ApiUsage } from "@nibblets/protocol";
 import { isRecord } from "./providers/provider.ts";
 
 /** What a response used: as it said, or as near as can be told when it didn't finish saying. */

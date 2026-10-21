@@ -1,5 +1,5 @@
-import type { McpServerSpec, TurnAttachment } from "@nibblet/harness";
-import type { FileRef } from "@nibblet/protocol";
+import type { McpServerSpec, TurnAttachment } from "@nibblets/harness";
+import type { FileRef } from "@nibblets/protocol";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readdir, stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, resolve } from "node:path";

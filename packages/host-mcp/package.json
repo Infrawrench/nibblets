@@ -1,5 +1,5 @@
 {
-  "name": "@nibblet/host-mcp",
+  "name": "@nibblets/host-mcp",
   "version": "0.3.2",
   "private": true,
   "type": "module",
@@ -12,11 +12,11 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "@nibblet/machine": "workspace:*",
-    "@nibblet/machine-apple": "workspace:*",
-    "@nibblet/machine-hyperv": "workspace:*",
-    "@nibblet/machine-kvm": "workspace:*",
-    "@nibblet/protocol": "workspace:*",
+    "@nibblets/machine": "workspace:*",
+    "@nibblets/machine-apple": "workspace:*",
+    "@nibblets/machine-hyperv": "workspace:*",
+    "@nibblets/machine-kvm": "workspace:*",
+    "@nibblets/protocol": "workspace:*",
     "kill-emudhra": "^0.1.0",
     "zod": "^4.6.7"
   }

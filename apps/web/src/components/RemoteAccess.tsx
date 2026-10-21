@@ -9,7 +9,7 @@ import {
   type RouteKind,
   type ServerRoutes,
   type TailscaleStatus,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import type { ServerConnection } from "../lib/connection.ts";
 import type { ChosenRouteKind } from "../lib/central.ts";
 import { keys, useServers } from "../lib/servers.tsx";

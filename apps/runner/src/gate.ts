@@ -14,8 +14,8 @@ import {
   type CallToolResult,
   type ServerCapabilities,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { McpServerSpec } from "@nibblet/harness";
-import { declinedMessage, needsApproval, type JsonValue, type ToolRule } from "@nibblet/protocol";
+import type { McpServerSpec } from "@nibblets/harness";
+import { declinedMessage, needsApproval, type JsonValue, type ToolRule } from "@nibblets/protocol";
 import { createServer, type Server as HttpServer } from "node:http";
 
 export interface Decision {

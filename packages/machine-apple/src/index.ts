@@ -16,7 +16,7 @@ import { join } from "node:path";
 import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import type { GuestImage, GuestOs } from "@nibblet/protocol";
+import type { GuestImage, GuestOs } from "@nibblets/protocol";
 import {
   alive,
   connectTo,
@@ -31,7 +31,7 @@ import {
   type ImageJob,
   type VmRef,
   type VmSpec,
-} from "@nibblet/machine/host";
+} from "@nibblets/machine/host";
 import { z } from "zod";
 import { prepareMacos } from "./macos.ts";
 import { meta } from "./meta.ts";

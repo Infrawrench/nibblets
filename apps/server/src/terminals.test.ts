@@ -1,4 +1,4 @@
-import type { ServerToRunner } from "@nibblet/protocol";
+import type { ServerToRunner } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { TerminalHub } from "./terminals.ts";
 

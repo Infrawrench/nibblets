@@ -4,7 +4,7 @@ import {
   RpcError,
   SharedVault,
   type VaultGrant,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { z } from "zod";
 import type { Config } from "./config.ts";
 import type { Store } from "./store.ts";

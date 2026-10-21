@@ -1,5 +1,5 @@
 {
-  "name": "@nibblet/harness-opencode",
+  "name": "@nibblets/harness-opencode",
   "version": "0.3.2",
   "private": true,
   "type": "module",
@@ -10,8 +10,8 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@nibblet/harness": "workspace:*",
-    "@nibblet/protocol": "workspace:*",
+    "@nibblets/harness": "workspace:*",
+    "@nibblets/protocol": "workspace:*",
     "@opencode-ai/sdk": "^1.19.0",
     "opencode-ai": "^1.19.0"
   },

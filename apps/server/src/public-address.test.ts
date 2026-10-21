@@ -1,4 +1,4 @@
-import type { TunnelStatus } from "@nibblet/protocol";
+import type { TunnelStatus } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { PublicAddresses } from "./public-address.ts";
 

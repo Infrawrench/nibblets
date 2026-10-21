@@ -5,7 +5,7 @@ import {
   TurnSource,
   type HarnessId,
   type ThreadItemOf,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { z } from "zod";
 import type { Config } from "./config.ts";
 import { newId, type Store } from "./store.ts";

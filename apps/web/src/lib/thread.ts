@@ -1,4 +1,4 @@
-import type { StoredItem, ThreadItem, ThreadItemOf, TurnSource } from "@nibblet/protocol";
+import type { StoredItem, ThreadItem, ThreadItemOf, TurnSource } from "@nibblets/protocol";
 
 /**
  * Merges incoming items into a thread. Items are upserted whole, so the

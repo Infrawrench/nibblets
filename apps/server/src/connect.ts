@@ -11,7 +11,7 @@ import {
   type ServerRoutes,
   type TunnelConfig,
   type TunnelStatus,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import { z } from "zod";
 import type { Config } from "./config.ts";

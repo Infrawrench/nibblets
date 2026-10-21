@@ -1,5 +1,5 @@
 {
-  "name": "@nibblet/harness-kimi",
+  "name": "@nibblets/harness-kimi",
   "version": "0.3.2",
   "private": true,
   "type": "module",
@@ -11,8 +11,8 @@
   },
   "dependencies": {
     "@moonshot-ai/kimi-code": "^2.2.0",
-    "@nibblet/harness": "workspace:*",
-    "@nibblet/protocol": "workspace:*",
+    "@nibblets/harness": "workspace:*",
+    "@nibblets/protocol": "workspace:*",
     "smol-toml": "^1.9.1"
   },
   "devDependencies": {}

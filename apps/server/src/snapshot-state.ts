@@ -1,4 +1,4 @@
-import { items, memories, nibblets, schedules, type Db } from "@nibblet/db";
+import { items, memories, nibblets, schedules, type Db } from "@nibblets/db";
 import {
   Effort,
   HarnessId,
@@ -8,7 +8,7 @@ import {
   Resources,
   ThreadItem,
   ToolRules,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 

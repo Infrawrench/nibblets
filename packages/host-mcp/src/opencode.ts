@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { OpencodeLogin } from "@nibblet/protocol";
+import type { OpencodeLogin } from "@nibblets/protocol";
 import type { Run } from "./clis/cli.ts";
 
 /**

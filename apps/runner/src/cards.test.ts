@@ -1,4 +1,4 @@
-import type { CardFile } from "@nibblet/protocol";
+import type { CardFile } from "@nibblets/protocol";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

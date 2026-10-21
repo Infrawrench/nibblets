@@ -244,7 +244,7 @@ if ($have.Trim() -ne $want) {
   Say "Installing the runner's packages"
   # Copied, not linked from pnpm's store: a hard link has the store's permissions, which are
   # SYSTEM's own, so the agent's user couldn't read its packages. Copies take C:\Nibblets'.
-  & "$root\\node\\corepack.cmd" pnpm install --prod --frozen-lockfile --package-import-method copy --filter '@nibblet/runner...'
+  & "$root\\node\\corepack.cmd" pnpm install --prod --frozen-lockfile --package-import-method copy --filter '@nibblets/runner...'
   if ($LASTEXITCODE -ne 0) { throw 'Installing the runner failed' }
   Pop-Location
   New-Item -ItemType Directory -Force -Path "$root\\bin" | Out-Null

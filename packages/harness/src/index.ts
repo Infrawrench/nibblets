@@ -8,7 +8,7 @@ import type {
   ThreadItem,
   TurnSource,
   Usage,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 
 /**
  * The contract every harness plugin fulfils. A harness is an agent loop we

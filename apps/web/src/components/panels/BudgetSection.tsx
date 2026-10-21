@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { MonthlyBudget, type Nibblet } from "@nibblet/protocol";
+import { MonthlyBudget, type Nibblet } from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { budgetApplies } from "../../lib/budget.ts";
 import { keys } from "../../lib/servers.tsx";

@@ -1,6 +1,6 @@
 import type { ThreadEvent, ThreadItem as CodexItem } from "@openai/codex-sdk";
-import type { TurnWriter } from "@nibblet/harness";
-import { JsonValue, type Usage } from "@nibblet/protocol";
+import type { TurnWriter } from "@nibblets/harness";
+import { JsonValue, type Usage } from "@nibblets/protocol";
 
 export interface CodexTurnState {
   threadId: string | null;

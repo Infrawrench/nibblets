@@ -1,4 +1,4 @@
-import { openApiDocument } from "@nibblet/protocol/openapi";
+import { openApiDocument } from "@nibblets/protocol/openapi";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";

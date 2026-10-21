@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import { RunnerToServer, ServerToRunner } from "@nibblet/protocol";
+import { RunnerToServer, ServerToRunner } from "@nibblets/protocol";
 
 const PING_MS = 20_000;
 const MAX_BACKLOG = 5_000;

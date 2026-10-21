@@ -1,5 +1,5 @@
 import { useId, type ReactNode, type SVGProps } from "react";
-import { isCityBackground, type HamsterLook, type NibbletStatus } from "@nibblet/protocol";
+import { isCityBackground, type HamsterLook, type NibbletStatus } from "@nibblets/protocol";
 import { cities } from "./cities.tsx";
 import {
   LINE,

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Laptop, LogIn, Plus, Settings } from "lucide-react";
-import { defaultHamsterLook, type Nibblet, type NibbletStatus } from "@nibblet/protocol";
+import { defaultHamsterLook, type Nibblet, type NibbletStatus } from "@nibblets/protocol";
 import { Hamster } from "./hamster/Hamster.tsx";
 import { CreateNibbletDialog } from "./CreateNibbletDialog.tsx";
 import { Button } from "./ui/Button.tsx";

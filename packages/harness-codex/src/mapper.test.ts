@@ -1,6 +1,6 @@
 import type { ThreadEvent } from "@openai/codex-sdk";
-import { TurnWriter } from "@nibblet/harness";
-import type { ThreadItem } from "@nibblet/protocol";
+import { TurnWriter } from "@nibblets/harness";
+import type { ThreadItem } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { placeholderAuth } from "./index.ts";
 import { CodexMapper } from "./mapper.ts";

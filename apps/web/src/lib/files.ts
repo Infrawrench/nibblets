@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { FileRef } from "@nibblet/protocol";
+import type { FileRef } from "@nibblets/protocol";
 import type { ServerConnection } from "./connection.ts";
 
 /** Mock mode keeps files in memory as object URLs. */

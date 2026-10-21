@@ -39,7 +39,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build the web app
         # Also generates its route tree, which typechecking needs.
-        run: pnpm --filter @nibblet/web build
+        run: pnpm --filter @nibblets/web build
       - run: pnpm typecheck
       - run: pnpm format:check
       - name: Shellcheck

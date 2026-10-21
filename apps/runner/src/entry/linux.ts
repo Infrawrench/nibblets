@@ -19,7 +19,7 @@ import {
   TAILSCALE_GID,
   TAILSCALE_UID,
   TailnetPort,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { TAILSCALE_RUN, TAILSCALE_STATE } from "../tailscale.ts";
 import { inherit, pick, sleep } from "./shared.ts";
 import type { EntryPlatform, Who } from "./platform.ts";

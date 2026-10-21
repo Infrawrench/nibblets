@@ -1,7 +1,7 @@
 import { chmod, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { McpServerSpec } from "@nibblet/harness";
-import type { Effort, KimiLogin } from "@nibblet/protocol";
+import type { McpServerSpec } from "@nibblets/harness";
+import type { Effort, KimiLogin } from "@nibblets/protocol";
 import { parse, stringify, type TomlTable, type TomlValue } from "smol-toml";
 
 /**

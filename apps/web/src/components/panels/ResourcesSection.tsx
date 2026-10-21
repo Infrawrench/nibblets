@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { DEFAULT_MEMORY_MB, type Nibblet, type Resources } from "@nibblet/protocol";
+import { DEFAULT_MEMORY_MB, type Nibblet, type Resources } from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { keys } from "../../lib/servers.tsx";
 import { FieldRow, SectionHeading, Select } from "../ui/Field.tsx";

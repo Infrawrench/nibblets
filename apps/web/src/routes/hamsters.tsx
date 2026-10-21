@@ -6,7 +6,7 @@ import {
   PiercingMetal,
   defaultHamsterLook,
   type NibbletStatus,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { Hamster } from "../components/hamster/Hamster.tsx";
 import { withField } from "../components/hamster/HamsterEditor.tsx";
 

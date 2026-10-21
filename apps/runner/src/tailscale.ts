@@ -36,7 +36,7 @@ import {
   TailscaleAuthKey,
   TailscaleLogin,
   type TailnetNode,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { z } from "zod";
 
 const exec = promisify(execFile);

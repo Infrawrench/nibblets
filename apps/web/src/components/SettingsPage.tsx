@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Copy, Link2, XCircle } from "lucide-react";
-import type { CredentialStatus } from "@nibblet/protocol";
+import type { CredentialStatus } from "@nibblets/protocol";
 import type { ServerConnection } from "../lib/connection.ts";
 import { AccountSection, RemoteAccessSection } from "./RemoteAccess.tsx";
 import { TailnetKeysSection } from "./TailnetKeysSection.tsx";

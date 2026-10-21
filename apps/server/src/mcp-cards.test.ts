@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { DEFAULT_MACHINE, defaultHamsterLook, type Card, type Nibblet } from "@nibblet/protocol";
+import { DEFAULT_MACHINE, defaultHamsterLook, type Card, type Nibblet } from "@nibblets/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { Decision } from "./approvals.ts";

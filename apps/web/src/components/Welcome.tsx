@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
-import { randomHamsterLook } from "@nibblet/protocol";
+import { randomHamsterLook } from "@nibblets/protocol";
 import { Hamster } from "./hamster/Hamster.tsx";
 import { CreateNibbletDialog } from "./CreateNibbletDialog.tsx";
 import { Button } from "./ui/Button.tsx";

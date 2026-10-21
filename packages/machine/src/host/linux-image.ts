@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, rm, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { GUEST_PORT_NAME } from "@nibblet/protocol";
+import { GUEST_PORT_NAME } from "@nibblets/protocol";
 
 /** The root partition's id, which the boot entry names it by. */
 const ROOT_UUID = "6e1bb1e7-5d0d-4c3b-9a43-6e6962626c74";

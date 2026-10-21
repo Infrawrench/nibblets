@@ -15,7 +15,7 @@ import { cpus, totalmem } from "node:os";
 import { join } from "node:path";
 import type { Duplex } from "node:stream";
 import { promisify } from "node:util";
-import { GUEST_PORT_NAME, type GuestImage, type GuestOs } from "@nibblet/protocol";
+import { GUEST_PORT_NAME, type GuestImage, type GuestOs } from "@nibblets/protocol";
 import { z } from "zod";
 import { ask, qmp } from "./qmp.ts";
 import { litFraction } from "./screen.ts";
@@ -39,7 +39,7 @@ import {
   type ImageJob,
   type VmRef,
   type VmSpec,
-} from "@nibblet/machine/host";
+} from "@nibblets/machine/host";
 import { meta } from "./meta.ts";
 
 const run = promisify(execFile);

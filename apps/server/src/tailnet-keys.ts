@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { MASKED, RpcError, TailnetOAuth, type TailnetKeys } from "@nibblet/protocol";
+import { MASKED, RpcError, TailnetOAuth, type TailnetKeys } from "@nibblets/protocol";
 import { z } from "zod";
 import type { Store } from "./store.ts";
 

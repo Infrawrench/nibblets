@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PushNote } from "@nibblet/protocol";
+import type { PushNote } from "@nibblets/protocol";
 import { Notifier, type Watched } from "./notifier.ts";
 
 const nibblet = (patch: Partial<Watched>): Watched => ({

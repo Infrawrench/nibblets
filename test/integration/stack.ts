@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { contract, createClient, fetchTransport, type Client } from "@nibblet/protocol";
-import { hostMachines, startHostMcpBridge, type HostMcpBridge } from "@nibblet/host-mcp";
+import { contract, createClient, fetchTransport, type Client } from "@nibblets/protocol";
+import { hostMachines, startHostMcpBridge, type HostMcpBridge } from "@nibblets/host-mcp";
 import { z } from "zod";
 
 /**

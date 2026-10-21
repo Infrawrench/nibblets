@@ -1,5 +1,5 @@
-import type { TurnWriter } from "@nibblet/harness";
-import { JsonValue, KimiLine } from "@nibblet/protocol";
+import type { TurnWriter } from "@nibblets/harness";
+import { JsonValue, KimiLine } from "@nibblets/protocol";
 
 export interface KimiTurnState {
   /** From the `session.resume_hint` meta line, so the next turn can resume. */
