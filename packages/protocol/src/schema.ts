@@ -475,9 +475,12 @@ export const Memory = z.object({
 export type Memory = z.infer<typeof Memory>;
 
 export const CredentialStatus = z.object({
-  /** `deepseek` is an API key rather than a subscription login. */
+  /**
+   * `deepseek` is always an API key; `anthropic` and `openai` are a
+   * subscription login, or an API key when `source` is `env`.
+   */
   provider: z.enum(["anthropic", "openai", "deepseek"]),
-  /** Where the proxy reads the credential from. */
+  /** Where the proxy reads the credential from: `env` is an API key in its settings. */
   source: z.enum(["keychain", "file", "env", "none"]),
   ok: z.boolean(),
   detail: z.string(),

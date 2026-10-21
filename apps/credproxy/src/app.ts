@@ -2,18 +2,19 @@ import { placeholderCodexAuth, placeholderCodexRefresh, placeholderJwt } from "@
 import { timingSafeEqual } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { jwtClaims } from "./providers/provider.ts";
-import type { DeepseekProvider } from "./providers/deepseek.ts";
+import type { ApiKeyProvider } from "./providers/apikey.ts";
 import { anthropicLimit, openaiLimit } from "./limits.ts";
-import { NoCredentialError, type TokenManager } from "./tokens.ts";
+import { NoCredentialError, TokenManager } from "./tokens.ts";
 
 export interface AppOptions {
   /** The key runners present. */
   key: string;
   /** The key the server and the desktop app present. */
   adminKey: string;
-  anthropic: TokenManager;
-  openai: TokenManager;
-  deepseek: DeepseekProvider;
+  /** A subscription login, or an API key when the user chose one instead. */
+  anthropic: TokenManager | ApiKeyProvider;
+  openai: TokenManager | ApiKeyProvider;
+  deepseek: ApiKeyProvider;
   /** Called with a pushed document; returns false when the provider has no keychain source. */
   push(provider: "anthropic" | "openai", text: string): boolean;
   fetch?: typeof globalThis.fetch;
@@ -67,10 +68,9 @@ export function createApp(opts: AppOptions) {
 
   app.get("/status", async (c) => {
     if (!admin(c)) return c.json({ error: "unauthorized" }, 401);
-    return c.json([
-      ...(await Promise.all([opts.anthropic.status(), opts.openai.status()])),
-      opts.deepseek.status(),
-    ]);
+    return c.json(
+      await Promise.all([opts.anthropic.status(), opts.openai.status(), opts.deepseek.status()]),
+    );
   });
 
   app.put("/admin/credentials/:provider", async (c) => {
@@ -80,6 +80,8 @@ export function createApp(opts: AppOptions) {
       return c.json({ error: "unknown provider" }, 404);
     const text = await c.req.text();
     const manager = provider === "anthropic" ? opts.anthropic : opts.openai;
+    if (!(manager instanceof TokenManager))
+      return c.json({ error: `${provider} is using an API key` }, 409);
     try {
       manager.provider.parse(text);
     } catch (err) {
@@ -178,12 +180,9 @@ export function createApp(opts: AppOptions) {
     return new Response(out, { status: res.status, statusText: res.statusText, headers });
   };
 
-  app.all("/anthropic/*", forward("/anthropic", opts.anthropic));
-  app.all("/openai/*", forward("/openai", opts.openai));
-
-  // An API key, so no refresh to retry with and no subscription limit to
-  // note; the response streams straight through.
-  app.all("/deepseek/*", async (c) => {
+  // An API key: no refresh to retry with and no subscription limit to note,
+  // so the response streams straight through.
+  const forwardKey = (prefix: string, provider: ApiKeyProvider) => async (c: Context) => {
     const req = c.req.raw;
     if (!presentsKey(req.headers, opts.key)) {
       return c.json(
@@ -191,29 +190,39 @@ export function createApp(opts: AppOptions) {
         401,
       );
     }
-    const { key } = opts.deepseek;
+    const { key } = provider;
     if (!key) {
       return c.json(
-        { type: "error", error: { type: "credential_error", message: "No DeepSeek API key" } },
+        {
+          type: "error",
+          error: { type: "credential_error", message: `No ${provider.id} API key` },
+        },
         503,
       );
     }
     const url = new URL(req.url);
-    const target = opts.deepseek.upstream(
-      url.pathname.slice("/deepseek".length) || "/",
-      url.search,
-    );
+    const target = provider.upstream(url.pathname.slice(prefix.length) || "/", url.search);
     const headers = new Headers(req.headers);
     for (const h of HOP_BY_HOP) headers.delete(h);
+    headers.delete("authorization");
     headers.delete("x-api-key");
     headers.set("accept-encoding", "identity");
-    opts.deepseek.authorise(headers, key);
+    provider.authorise(headers, key);
     const body = req.method === "GET" || req.method === "HEAD" ? null : await req.arrayBuffer();
     const res = await doFetch(target, { method: req.method, headers, body, redirect: "manual" });
     const out = new Headers(res.headers);
     for (const h of [...HOP_BY_HOP, "content-encoding"]) out.delete(h);
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers: out });
-  });
+  };
+
+  const route = (prefix: string, credential: TokenManager | ApiKeyProvider) =>
+    credential instanceof TokenManager
+      ? forward(prefix, credential)
+      : forwardKey(prefix, credential);
+
+  app.all("/anthropic/*", route("/anthropic", opts.anthropic));
+  app.all("/openai/*", route("/openai", opts.openai));
+  app.all("/deepseek/*", forwardKey("/deepseek", opts.deepseek));
 
   return app;
 }

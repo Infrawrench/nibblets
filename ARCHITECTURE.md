@@ -33,6 +33,15 @@ Sources, per provider, are plugins: `file` (the host's `~/.claude/.credentials.j
 
 DeepSeek is an API key, not a login: `DEEPSEEK_API_KEY` in `docker/.env` (the installer asks for it), passed only to the proxy. There's nothing to refresh, and its status reads `env`.
 
+Claude and ChatGPT can be API keys too, instead of subscriptions. The installer asks which when you set up Claude Code or Codex (or takes `NIBBLETS_ANTHROPIC_API_KEY` and `NIBBLETS_OPENAI_API_KEY`), and writes `CLAUDE_CREDENTIALS_SOURCE=api-key` with `NIBBLET_ANTHROPIC_API_KEY`, or `CODEX_AUTH_SOURCE=api-key` with `NIBBLET_OPENAI_API_KEY`, to `docker/.env`. Not `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, since the host bridge loads that file and the host's own CLIs would pick those up. The harnesses don't change: Claude Code still sends the runner key, and Codex still has its placeholder ChatGPT login. The proxy's routes do:
+
+| Proxy path     | Upstream (on an API key)      | Injected                                                                  |
+| -------------- | ----------------------------- | ------------------------------------------------------------------------- |
+| `/anthropic/*` | `https://api.anthropic.com/*` | `x-api-key: <key>`, no OAuth beta; drops `Authorization`                  |
+| `/openai/*`    | `https://api.openai.com/v1/*` | `Authorization: Bearer <key>`; drops `x-api-key` and `chatgpt-account-id` |
+
+Like DeepSeek's, these have nothing to refresh (a 401 goes straight back) and no subscription limit to note, their status reads `env`, and the desktop app keeps both lines when it rewrites `.env`.
+
 Refresh endpoints: Anthropic `POST https://platform.claude.com/v1/oauth/token` JSON `{grant_type:"refresh_token", refresh_token, client_id:"9d1c250a-e61b-44d9-88ed-5944d1962f5e"}`; OpenAI `POST https://auth.openai.com/oauth/token` `{grant_type:"refresh_token", refresh_token, client_id:"app_EMoamEEZ73f0CkXaXp7hrann"}`.
 
 ## Runner (`apps/runner`)

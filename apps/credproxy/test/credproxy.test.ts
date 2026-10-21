@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createApp, placeholderCodexAuth, placeholderJwt, presentsKey } from "../src/app.ts";
 import { anthropicProvider, mergeBetas } from "../src/providers/anthropic.ts";
+import { anthropicKeyProvider, openaiKeyProvider } from "../src/providers/apikey.ts";
 import { deepseekProvider } from "../src/providers/deepseek.ts";
 import { openaiProvider } from "../src/providers/openai.ts";
 import { fileSource } from "../src/sources/file.ts";
@@ -350,5 +351,117 @@ describe("proxy", () => {
       body: JSON.stringify({ refresh_token: "nope" }),
     });
     expect(bad.status).toBe(401);
+  });
+});
+
+describe("proxy on API keys", () => {
+  function setup(upstream: (url: string, init: RequestInit) => Response | Promise<Response>) {
+    const fetch = mockFetch(upstream);
+    const app = createApp({
+      key: KEY,
+      adminKey: ADMIN,
+      anthropic: anthropicKeyProvider("sk-ant-key", "https://anthropic.test"),
+      openai: openaiKeyProvider("sk-openai-key", "https://openai.test/v1"),
+      deepseek: deepseekProvider(null),
+      push: () => false,
+      fetch,
+    });
+    return { app, fetch };
+  }
+
+  it("swaps the runner key for the Anthropic API key, without the OAuth beta", async () => {
+    const { app, fetch } = setup(() => new Response("data: hi\n\n"));
+    const res = await app.request("/anthropic/v1/messages?beta=true", {
+      method: "POST",
+      headers: { "x-api-key": KEY, "anthropic-beta": "fine-grained-tool-streaming-2025-05-14" },
+      body: "{}",
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("data: hi\n\n");
+    const [url, init] = fetch.mock.calls[0] ?? [];
+    expect(String(url)).toBe("https://anthropic.test/v1/messages?beta=true");
+    const sent = init ?? {};
+    expect(header(sent, "x-api-key")).toBe("sk-ant-key");
+    expect(header(sent, "authorization")).toBeNull();
+    expect(header(sent, "anthropic-beta")).toBe("fine-grained-tool-streaming-2025-05-14");
+  });
+
+  it("sends Codex to the OpenAI API with the API key and no ChatGPT account", async () => {
+    const { app, fetch } = setup(() => new Response("{}"));
+    const auth = placeholderCodexAuth(KEY);
+    await app.request("/openai/responses", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${auth.tokens.access_token}`,
+        "chatgpt-account-id": "nibblet",
+      },
+      body: "{}",
+    });
+    const [url, init] = fetch.mock.calls[0] ?? [];
+    expect(String(url)).toBe("https://openai.test/v1/responses");
+    expect(header(init ?? {}, "authorization")).toBe("Bearer sk-openai-key");
+    expect(header(init ?? {}, "chatgpt-account-id")).toBeNull();
+  });
+
+  it("passes a 401 straight back rather than refreshing", async () => {
+    const { app, fetch } = setup(() => new Response("bad key", { status: 401 }));
+    const res = await app.request("/anthropic/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": KEY },
+      body: "{}",
+    });
+    expect(res.status).toBe(401);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("still refuses requests without the runner key", async () => {
+    const { app, fetch } = setup(() => new Response("{}"));
+    const res = await app.request("/openai/responses", {
+      method: "POST",
+      headers: { authorization: "Bearer sk-someone-elses" },
+      body: "{}",
+    });
+    expect(res.status).toBe(401);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("reports the keys as from the environment, and refuses keychain pushes", async () => {
+    const { app } = setup(() => new Response("{}"));
+    const body = await (
+      await app.request("/status", { headers: { authorization: `Bearer ${ADMIN}` } })
+    ).json();
+    expect(body).toContainEqual(
+      expect.objectContaining({ provider: "anthropic", source: "env", ok: true }),
+    );
+    expect(body).toContainEqual(
+      expect.objectContaining({ provider: "openai", source: "env", ok: true }),
+    );
+    const push = await app.request("/admin/credentials/anthropic", {
+      method: "PUT",
+      headers: { authorization: `Bearer ${ADMIN}` },
+      body: claudeDoc("a", "b", 0),
+    });
+    expect(push.status).toBe(409);
+  });
+
+  it("says which variable to set when the key is missing", async () => {
+    const res = await createApp({
+      key: KEY,
+      adminKey: ADMIN,
+      anthropic: anthropicKeyProvider(null),
+      openai: openaiKeyProvider(null),
+      deepseek: deepseekProvider(null),
+      push: () => false,
+    }).request("/anthropic/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": KEY },
+      body: "{}",
+    });
+    expect(res.status).toBe(503);
+    expect(anthropicKeyProvider(null).status()).toMatchObject({
+      ok: false,
+      source: "none",
+      detail: "NIBBLET_ANTHROPIC_API_KEY isn't set",
+    });
   });
 });

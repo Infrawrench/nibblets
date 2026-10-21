@@ -37,6 +37,11 @@ function parseEnv(text: string): EnvFile {
 
 const secret = () => randomBytes(32).toString("hex");
 
+/** The keys of `env` that are set, for carrying hand-added lines over. */
+function keep(env: EnvFile, ...keys: string[]): EnvFile {
+  return Object.fromEntries(keys.filter((k) => env[k]).map((k) => [k, env[k] ?? ""]));
+}
+
 /**
  * The compose project in the app's data directory: the shipped compose
  * file, an .env whose secrets are made once and kept, and an override that
@@ -80,12 +85,23 @@ export class Stack {
         process.platform === "linux"
           ? (process.env.SSH_AUTH_SOCK ?? "")
           : "/run/host-services/ssh-auth.sock",
-      CLAUDE_CREDENTIALS_SOURCE: creds.claude === "none" ? "auto" : creds.claude,
-      CODEX_AUTH_SOURCE: creds.codex === "none" ? "auto" : creds.codex,
+      // An API key, chosen by hand instead of a login, wins over what's detected.
+      CLAUDE_CREDENTIALS_SOURCE:
+        existing.CLAUDE_CREDENTIALS_SOURCE === "api-key"
+          ? "api-key"
+          : creds.claude === "none"
+            ? "auto"
+            : creds.claude,
+      CODEX_AUTH_SOURCE:
+        existing.CODEX_AUTH_SOURCE === "api-key"
+          ? "api-key"
+          : creds.codex === "none"
+            ? "auto"
+            : creds.codex,
       KEYCHAIN_BRIDGE_URL:
         creds.claude === "keychain" ? `http://host.docker.internal:${BRIDGE_PORT}` : "",
-      // Added by hand, so it has to survive this rewrite.
-      ...(existing.DEEPSEEK_API_KEY ? { DEEPSEEK_API_KEY: existing.DEEPSEEK_API_KEY } : {}),
+      // Added by hand, so they have to survive this rewrite.
+      ...keep(existing, "DEEPSEEK_API_KEY", "NIBBLET_ANTHROPIC_API_KEY", "NIBBLET_OPENAI_API_KEY"),
       ...(this.paths.sourceDir ? { NIBBLET_SOURCE_DIR: this.paths.sourceDir } : {}),
       ...(this.paths.images
         ? { NIBBLET_IMAGE_PREFIX: this.paths.images.prefix, NIBBLET_TAG: this.paths.images.tag }
