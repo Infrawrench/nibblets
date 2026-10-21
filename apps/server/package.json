@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "node --watch src/main.ts",
     "start": "node src/main.ts",
-    "openapi": "node src/openapi.ts",
     "typecheck": "tsc -p ."
   },
   "dependencies": {

@@ -15,7 +15,6 @@
     "test": "vitest run",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "openapi": "pnpm --filter @nibblet/server openapi",
     "release": "node scripts/release.mjs",
     "test:integration": "vitest run --project @nibblet/integration"
   },
