@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("electron", () => ({ shell: { openExternal: vi.fn() } }));
-const { isExternalSafe, isProviderSignIn, navigationAllowed, parseSignInLink } =
+const { isExternalSafe, isProviderSignIn, navigationAllowed, parseSignInLink, sameOrigin } =
   await import("./links.ts");
 
 describe("desktop links", () => {
@@ -12,6 +12,14 @@ describe("desktop links", () => {
     expect(isExternalSafe("file:///Applications/Calculator.app")).toBe(false);
     expect(isExternalSafe("javascript:alert(1)")).toBe(false);
     expect(isExternalSafe("nonsense")).toBe(false);
+  });
+
+  it("tells the UI's own pages from everything else", () => {
+    expect(sameOrigin("https://app.nibblets.dev/n/pip", "https://app.nibblets.dev/")).toBe(true);
+    expect(sameOrigin("http://127.0.0.1:8420", "http://127.0.0.1:8420/")).toBe(true);
+    expect(sameOrigin("https://clerk.app.nibblets.dev/", "https://app.nibblets.dev/")).toBe(false);
+    expect(sameOrigin("http://127.0.0.1:9999/", "http://127.0.0.1:8420/")).toBe(false);
+    expect(sameOrigin("nonsense", "https://app.nibblets.dev/")).toBe(false);
   });
 
   it("keeps the window on the UI and its sign-in", () => {

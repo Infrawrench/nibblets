@@ -1,0 +1,1 @@
+ALTER TABLE "nibblets" ADD COLUMN "location" jsonb;

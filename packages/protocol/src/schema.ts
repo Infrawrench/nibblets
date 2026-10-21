@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { SpendingLimits } from "./bank.ts";
+import { LocationFix, NibbletLocation } from "./location.ts";
 import { McpServerDef, McpServerList, ToolRules } from "./mcp.ts";
 import { Effort, HarnessId } from "./models.ts";
 import { SnapshotPolicy } from "./snapshots.ts";
@@ -248,6 +249,11 @@ export const Nibblet = z.object({
   tailnetNode: TailnetNode.nullable(),
   /** How much it may put on cards, per asset. None means it can't have a card. */
   spendingLimits: SpendingLimits,
+  /**
+   * Where its person is, as they last shared it from their device, or null.
+   * A sub-agent without one uses its parent's.
+   */
+  location: NibbletLocation.nullable(),
   /** A short line the nibblet keeps current about what it's doing, like a chat status. */
   statusText: z.string().nullable(),
   statusEmoji: z.string().nullable(),
@@ -314,6 +320,8 @@ export const UpdateNibblet = z.object({
   snapshotPolicy: SnapshotPolicy.optional(),
   /** Only the person sets these; the nibblet can't raise its own. */
   spendingLimits: SpendingLimits.optional(),
+  /** Where the person's device says it is; the server looks up the place. Null forgets it. */
+  location: LocationFix.nullable().optional(),
 });
 
 /** What started a turn. Anything but `user` is the nibblet acting on its own. */
@@ -402,6 +410,18 @@ export const ThreadItem = z.discriminatedUnion("type", [
     input: JsonValue,
     status: z.enum(["pending", "approved", "denied", "expired"]),
     reason: z.string().nullable(),
+    decidedAt: Timestamp.nullable(),
+  }),
+  /**
+   * The nibblet asked where its person is (`location_get`), and an open
+   * Nibblets on their device answered, or didn't.
+   */
+  ItemBase.extend({
+    type: z.literal("location_request"),
+    /** `unanswered`: no device answered in time. */
+    status: z.enum(["pending", "shared", "declined", "unanswered"]),
+    /** The place that was shared, once it was. */
+    place: z.string().nullable(),
     decidedAt: Timestamp.nullable(),
   }),
   /**

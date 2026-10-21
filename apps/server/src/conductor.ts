@@ -25,6 +25,7 @@ import { z } from "zod";
 import { cliLogins } from "./clilogins.ts";
 import type { Config } from "./config.ts";
 import { Approvals } from "./approvals.ts";
+import type { LocationRequests } from "./location-requests.ts";
 import { Budgets } from "./budget.ts";
 import { heartbeatInput, isQuiet, mayBeQuiet, QUIET_REPLY, systemPrompt } from "./context.ts";
 import {
@@ -141,6 +142,8 @@ export class Conductor {
   });
   /** Nibblets' cards, once the bank is set up; it writes their files through `cardFiles`. */
   bank: Bank | null = null;
+  /** `location_get` asks waiting on a device; set once the server has them. */
+  locations: LocationRequests | null = null;
   serverName = "nibblet";
 
   constructor(store: Store, docker: Orchestrator, config: Config) {
@@ -410,6 +413,7 @@ export class Conductor {
           desktop: nibblet.browser
             ? desktopToken(this.config.NIBBLET_OWNER_TOKEN, nibbletId, hashToken(token))
             : "",
+          timeZone: nibblet.location?.timeZone ?? null,
         }),
         {
           sshAgent: nibblet.cliCredentials.includes("ssh"),
@@ -445,15 +449,19 @@ export class Conductor {
       tailscale = null,
       desktop,
       subagent = false,
+      timeZone = null,
     }: {
       /** Whose budget its API-key usage counts against. */
       billTo: string;
       tailscale?: NibbletTailscale | null;
       desktop: string;
       subagent?: boolean;
+      /** Its person's, for the container's clock; a sub-agent's exec keeps its host's. */
+      timeZone?: string | null;
     },
   ) {
     return {
+      ...(timeZone ? { TZ: timeZone } : {}),
       NIBBLET_ID: nibbletId,
       NIBBLET_TOKEN: token,
       NIBBLET_SERVER_WS: `${this.config.NIBBLET_INTERNAL_URL.replace(/^http/, "ws")}/runner`,
@@ -591,6 +599,7 @@ export class Conductor {
       this.subagentRuns.delete(child.id);
       this.views.delete(child.id);
       void this.approvals.cancelAll(child.id, reason);
+      void this.locations?.cancelAll(child.id);
       this.failActive(child.id, "interrupted", reason);
       this.links.get(child.id)?.close();
       this.links.delete(child.id);
@@ -611,6 +620,7 @@ export class Conductor {
 
   async stop(nibbletId: string): Promise<Nibblet> {
     await this.approvals.cancelAll(nibbletId, "The nibblet was stopped");
+    await this.locations?.cancelAll(nibbletId);
     await this.limits.end(nibbletId, "cancelled");
     this.failActive(nibbletId, "interrupted", "Stopped");
     this.links.get(nibbletId)?.close();
@@ -746,6 +756,7 @@ export class Conductor {
 
   interrupt(nibbletId: string): void {
     void this.approvals.cancelAll(nibbletId, "The turn was stopped");
+    void this.locations?.cancelAll(nibbletId);
     void this.limits.end(nibbletId, "cancelled");
     const turn = this.active.get(nibbletId);
     if (turn) {
@@ -1093,6 +1104,8 @@ export class Conductor {
     const parent = nibblet.parentId
       ? await this.store.getNibblet(nibblet.parentId).catch(() => null)
       : null;
+    // Only whether there is one: it asks for the rest with `location_get`.
+    const location = (await this.store.locationOf(nibbletId)) !== null;
     // A sub-agent is on the tailnet as its host container's machine.
     const host = nibblet.parentId
       ? await this.store.nibbletRow(await this.hostOf(nibblet)).catch(() => null)
@@ -1103,6 +1116,7 @@ export class Conductor {
       memories: memories.filter((m) => (m.score ?? 0) > 0.45),
       history,
       parent,
+      location,
       now: new Date(),
       onePasswordVaults: this.onePasswordVaults.get(nibbletId),
       banks: this.bank?.providers() ?? [],

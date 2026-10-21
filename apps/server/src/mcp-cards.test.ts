@@ -31,6 +31,7 @@ const nibblet: Nibblet = {
   tailscale: null,
   tailnetNode: null,
   spendingLimits: [],
+  location: null,
   statusText: "Booking flights",
   statusEmoji: "✈️",
   statusUpdatedAt: "2026-10-21T12:00:00.000Z",

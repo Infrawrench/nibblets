@@ -1,11 +1,13 @@
 import {
   formatAmount,
   nameInPrompt,
+  placeLabel,
   TAILSCALE_PROXY_PORT,
   type AssetInfo,
   type Heartbeat,
   type Memory,
   type Nibblet,
+  type NibbletLocation,
   type SharedVault,
   type TailnetNode,
   type ThreadItem,
@@ -92,6 +94,8 @@ export interface SystemPromptInput {
   /** Set when the harness session is fresh and has no history of its own. */
   history: ThreadItem[] | null;
   parent: Nibblet | null;
+  /** Whether its person has shared where they are (for a sub-agent, with it or a parent). */
+  location?: boolean;
   now: Date;
   /** 1Password vaults shared with it, if any. */
   onePasswordVaults?: readonly SharedVault[];
@@ -173,6 +177,8 @@ export function systemPrompt(input: SystemPromptInput): string {
       : "## Your heartbeats\n\nNone yet. Set one with `heartbeat_set` once there's something worth checking on regularly.",
   );
 
+  if (input.location) parts.push(LOCATION_SECTION);
+
   if (input.onePasswordVaults?.length) {
     const vaults = input.onePasswordVaults
       .map((v) => `- ${v.name} (${v.access === "write" ? "read and write" : "read only"})`)
@@ -204,6 +210,68 @@ export function systemPrompt(input: SystemPromptInput): string {
 
   parts.push(`Current time: ${input.now.toISOString()}.`);
   return parts.join("\n\n");
+}
+
+/**
+ * What a nibblet whose person has shared their location is told. The
+ * location itself comes fresh from their device through `location_get` when
+ * it needs it, so it isn't sent with every turn.
+ */
+export const LOCATION_SECTION = `## Where your person is
+
+They've shared where they are with you. Whenever that or their local time matters (the weather, opening hours, what's nearby, travel, which country's sites, prices, units and rules apply, or the time zone for a schedule or heartbeat), call \`location_get\`, which asks their device where they are now, rather than guessing, and give them times in their time zone. Once a turn is enough. It's private: don't give it to a site or a person they didn't ask you to.`;
+
+/** "Wednesday 21 October at 13:36 CEST", in `timeZone`. */
+export function localTime(timeZone: string, now: Date): string {
+  return now.toLocaleString("en-GB", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone,
+    timeZoneName: "short",
+  });
+}
+
+/**
+ * What `location_get` answers: where its person is, and the time there now.
+ * `stale` says why it's where they last shared rather than where their
+ * device is now.
+ */
+export function locationAnswer(location: NibbletLocation, now: Date, stale?: string) {
+  const { place } = location;
+  return {
+    place: place && placeLabel(place),
+    ...(place
+      ? {
+          neighbourhood: place.neighbourhood,
+          city: place.city,
+          region: place.region,
+          postcode: place.postcode,
+          country: place.country,
+          countryCode: place.countryCode,
+        }
+      : {}),
+    latitude: Number(location.latitude.toFixed(4)),
+    longitude: Number(location.longitude.toFixed(4)),
+    accuracyMetres: location.accuracyM,
+    timeZone: location.timeZone,
+    localTime: location.timeZone ? localTime(location.timeZone, now) : null,
+    fresh: stale === undefined,
+    sharedAt: location.sharedAt,
+    note: [
+      stale ?? "Their device gave this just now.",
+      place
+        ? null
+        : "The place it's in couldn't be looked up; work it out from the coordinates if you need it.",
+      location.timeZone ? null : "Their device didn't say its time zone.",
+      stale ? "They may have moved since; if being wrong would matter, check with them." : null,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  };
 }
 
 function tailnetSection(node: TailnetNode, ports: readonly number[]): string {

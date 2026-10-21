@@ -18,6 +18,8 @@ import {
   Loader2,
   ShieldAlert,
   Wrench,
+  LocateFixed,
+  MapPin,
   X,
 } from "lucide-react";
 import type { Nibblet, StoredItem, ThreadItemOf, TurnSource } from "@nibblet/protocol";
@@ -34,17 +36,22 @@ import { Input } from "../ui/Field.tsx";
 /** Answers a gated tool call the nibblet is waiting on. */
 export type DecideFn = (approvalId: string, approve: boolean, reason?: string) => Promise<void>;
 
+/** Answers the nibblet asking where its person is: with this device's location, or not. */
+export type LocationFn = (requestId: string, share: boolean) => Promise<void>;
+
 export function ThreadView({
   items,
   server,
   nibblets,
   onDecide,
   onResume,
+  onLocation,
 }: {
   items: readonly StoredItem[];
   server: string;
   nibblets: readonly Nibblet[];
   onDecide?: DecideFn;
+  onLocation?: LocationFn;
   /** "Try now" on a usage-limit wait. */
   onResume?: () => Promise<void>;
 }) {
@@ -79,6 +86,7 @@ export function ThreadView({
             nibblets={nibblets}
             onDecide={onDecide}
             onResume={onResume}
+            onLocation={onLocation}
           />
         ))}
       </div>
@@ -92,11 +100,13 @@ function Entry({
   nibblets,
   onDecide,
   onResume,
+  onLocation,
 }: {
   entry: TimelineEntry;
   server: string;
   nibblets: readonly Nibblet[];
   onDecide?: DecideFn;
+  onLocation?: LocationFn;
   onResume?: () => Promise<void>;
 }) {
   switch (entry.kind) {
@@ -111,6 +121,7 @@ function Entry({
               nibblets={nibblets}
               onDecide={onDecide}
               onResume={onResume}
+              onLocation={onLocation}
             />
           ))}
         </Quiet>
@@ -163,6 +174,8 @@ function Entry({
           ) : (
             <Approval item={item} onDecide={onDecide} />
           );
+        case "location_request":
+          return <LocationRequest item={item} onLocation={onLocation} />;
         case "limit_wait":
           return <LimitWait item={item} onResume={onResume} />;
         case "turn":
@@ -425,6 +438,61 @@ function Notice({ item }: { item: ThreadItemOf<"notice"> }) {
     >
       {item.level === "info" ? <Info /> : <AlertTriangle />}
       <span>{item.text}</span>
+    </div>
+  );
+}
+
+/** The nibblet asking where its person is: Share / Not now while it waits, then what happened. */
+function LocationRequest({
+  item,
+  onLocation,
+}: {
+  item: ThreadItemOf<"location_request">;
+  onLocation?: LocationFn;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const answer = async (share: boolean) => {
+    if (!onLocation) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onLocation(item.id, share);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const text = {
+    pending: "Asking where you are",
+    shared: item.place
+      ? `Your device said where you are: ${item.place}`
+      : "Your device said where you are",
+    declined: "You didn't share where you are",
+    unanswered: "Asked where you are, but no device answered",
+  }[item.status];
+  return (
+    <div
+      className={cn(
+        "flex flex-wrap items-center gap-2 rounded-md px-2.5 py-1.5 text-xs",
+        item.status === "pending" ? "border border-accent/50 bg-accent/5" : "bg-hover text-dim",
+      )}
+    >
+      <MapPin className="size-3.5 shrink-0" />
+      <span className="min-w-0 flex-1">{text}</span>
+      {item.status === "pending" && onLocation ? (
+        <span className="flex gap-1.5">
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => void answer(false)}>
+            Not now
+          </Button>
+          <Button size="sm" variant="primary" disabled={busy} onClick={() => void answer(true)}>
+            <LocateFixed />
+            {busy ? "Finding you…" : "Share"}
+          </Button>
+        </span>
+      ) : null}
+      {error ? <span className="basis-full text-danger">{error}</span> : null}
     </div>
   );
 }

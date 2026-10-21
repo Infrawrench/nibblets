@@ -18,8 +18,9 @@ import type { Decision } from "./approvals.ts";
 import type { Bank } from "./bank.ts";
 import type { Conductor } from "./conductor.ts";
 import type { Connect } from "./connect.ts";
+import type { LocationRequests } from "./location-requests.ts";
 import type { Notifier } from "./notifier.ts";
-import { describeHeartbeat } from "./context.ts";
+import { describeHeartbeat, locationAnswer } from "./context.ts";
 import type { Scheduler } from "./scheduler.ts";
 import { toNibblet, type Store } from "./store.ts";
 
@@ -30,6 +31,7 @@ export interface ToolDeps {
   notifier: Pick<Notifier, "askForHelp">;
   connect: Pick<Connect, "status">;
   bank: Bank;
+  locations: Pick<LocationRequests, "ask">;
 }
 
 const text = (value: string) => ({ content: [{ type: "text" as const, text: value }] });
@@ -46,7 +48,7 @@ function validCron(pattern: string, timezone: string): string | null {
 
 /** The nibblet tools, scoped to the nibblet whose token made the call. */
 export function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
-  const { store, conductor, scheduler, notifier, connect, bank } = deps;
+  const { store, conductor, scheduler, notifier, connect, bank, locations } = deps;
   const server = new McpServer({ name: "nibblet", version: "0.1.0" });
   // A plain one isn't told it's a nibblet.
   const kind = nibblet.plain ? "agent" : "nibblet";
@@ -370,6 +372,35 @@ export function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
       return json(
         children.map((c) => ({ id: c.id, name: c.name, status: c.status, detail: c.statusDetail })),
       );
+    },
+  );
+
+  // Always offered, so one shared mid-session can be asked for without a restart.
+  server.registerTool(
+    "location_get",
+    {
+      description:
+        "Asks your person's device where they are now: the neighbourhood, town, region and country, coordinates, their time zone and the time there now. Call it whenever where they are or their local time matters: the weather, opening hours, what's nearby, travel, which country's sites, prices and rules apply, or the time zone for a schedule or heartbeat. Unless they've let a device answer by itself, it asks them, and it can take up to a minute, so call it when you need it, not out of habit. If no device answers, you get where they last shared, if anywhere. It's private: never give it to a site or a person they didn't ask you to.",
+      inputSchema: {},
+    },
+    async () => {
+      const asked = await locations.ask(nibblet.id, conductor.activeTurnId(nibblet.id));
+      const now = new Date();
+      if (asked.kind === "shared") return json(locationAnswer(asked.location, now));
+      if (asked.kind === "declined")
+        return text(
+          "Your person chose not to share where they are just now. Don't ask again straight away; if you need it, ask them in the chat.",
+        );
+      const why =
+        asked.kind === "nobody"
+          ? "No Nibblets was open on their devices to ask"
+          : "Their device didn't answer in time";
+      const last = await store.locationOf(nibblet.id);
+      if (!last)
+        return text(
+          `${why}, and they've never shared where they are. If you need it, ask them in the chat: they can tell you, or share it from the Location section of your settings.`,
+        );
+      return json(locationAnswer(last, now, `${why}, so this is where they last shared.`));
     },
   );
 

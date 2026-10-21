@@ -14,6 +14,7 @@ import {
   nativeImage,
   nativeTheme,
   Notification,
+  session,
   shell,
   Tray,
   type MenuItemConstructorOptions,
@@ -36,6 +37,7 @@ import {
   navigationAllowed,
   openOutside,
   parseSignInLink,
+  sameOrigin,
 } from "./links.ts";
 import { BrowserSignIn, type FinishFailure } from "./browser-sign-in.ts";
 import { adoptShellPath } from "./shell-path.ts";
@@ -158,18 +160,15 @@ function userAgent(base: string): string {
   return `${base} NibbletsDesktop/${process.platform}${local}`;
 }
 
+/** Whether `url` is one of the UIs themselves, not a sign-in page along the way. */
+const isUi = (url: string): boolean =>
+  sameOrigin(url, settings.centralUrl) ||
+  (settings.runServer === true && sameOrigin(url, SERVER_URL));
+
 /** Either UI may send the window to the other: this computer's server, or Connect. */
 const windowAllowed = (target: string): boolean =>
   navigationAllowed(target, settings.centralUrl) ||
   (settings.runServer === true && navigationAllowed(target, SERVER_URL));
-
-const sameOrigin = (a: string, b: string): boolean => {
-  try {
-    return new URL(a).origin === new URL(b).origin;
-  } catch {
-    return false;
-  }
-};
 
 /**
  * Following a link between the two UIs is the choice of which to show: "Just
@@ -746,6 +745,15 @@ app.whenReady().then(async () => {
   // the CLIs, MCP servers and Docker it starts are the ones their terminal finds.
   await adoptShellPath();
   settings = await loadSettings();
+  // Electron grants every permission unless told otherwise. Where the person
+  // is goes only to the UI, for sharing it with a nibblet; macOS asks them first.
+  session.defaultSession.setPermissionRequestHandler((_contents, permission, callback, details) =>
+    callback(permission !== "geolocation" || isUi(details.requestingUrl)),
+  );
+  session.defaultSession.setPermissionCheckHandler(
+    (_contents, permission, requestingOrigin) =>
+      permission !== "geolocation" || isUi(requestingOrigin),
+  );
   ipcMain.on("setup:retry", () => void bringUp());
   setupIpc();
   if (settings.runServer === null) {

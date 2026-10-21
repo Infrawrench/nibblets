@@ -25,6 +25,7 @@ import {
   type LiveMessage,
   type Memory,
   type Nibblet,
+  type NibbletLocation,
   type ConnectStatus,
   type DesktopApp,
   type Schedule,
@@ -47,6 +48,22 @@ import {
 } from "./connection.ts";
 import type { FileRef } from "@nibblet/protocol";
 import { mockFileRef, registerMockFile } from "./files.ts";
+
+/** Where Pip's person shared from, and where every mock lookup lands. */
+const LONDON = {
+  latitude: 51.5246,
+  longitude: -0.0781,
+  accuracyM: 35,
+  timeZone: "Europe/London",
+  place: {
+    neighbourhood: "Shoreditch",
+    city: "London",
+    region: "England",
+    postcode: "E2 7DG",
+    country: "United Kingdom",
+    countryCode: "GB",
+  },
+} satisfies Omit<NibbletLocation, "sharedAt">;
 
 /** What a host's OpenCode might offer: Zen's free models and a couple of its own providers. */
 const mockOpencodeModels = [
@@ -177,6 +194,7 @@ export function createMockServer(): ServerConnection {
     tailscale: null,
     tailnetNode: null,
     spendingLimits: [],
+    location: null,
     statusText: null,
     statusEmoji: null,
     statusUpdatedAt: null,
@@ -195,6 +213,7 @@ export function createMockServer(): ServerConnection {
         status: "working",
         statusText: "Hunting for a cheap flight to Lisbon",
         statusEmoji: "✈️",
+        location: { ...LONDON, sharedAt: ago(60 * 26) },
         spendingLimits: [
           { asset: "USD", amount: "15000", period: "month" },
           { asset: "BTC", amount: "200000", period: "total" },
@@ -1029,6 +1048,18 @@ export function createMockServer(): ServerConnection {
     });
     // Mention a file, or attach one, and the mock hamster shares a sketch back.
     if (attachments.length > 0 || /\bfiles?\b/i.test(text)) mockShare(id, turnId);
+    // Ask about the weather, or where something is, and it asks where you are.
+    if (/\b(where|weather|nearby)\b/i.test(text)) {
+      store(id, {
+        type: "location_request",
+        id: crypto.randomUUID(),
+        turnId,
+        createdAt: now(),
+        status: "pending",
+        place: null,
+        decidedAt: null,
+      });
+    }
     store(id, {
       type: "turn",
       id: turnId,
@@ -1190,6 +1221,11 @@ export function createMockServer(): ServerConnection {
               : current.monthlyBudgetUsd,
           snapshotPolicy: patch.snapshotPolicy ?? current.snapshotPolicy,
           spendingLimits: patch.spendingLimits ?? current.spendingLimits,
+          // No geocoder here: wherever it is, it's London.
+          location:
+            patch.location !== undefined
+              ? patch.location && { ...patch.location, place: LONDON.place, sharedAt: now() }
+              : current.location,
           updatedAt: now(),
         });
       },
@@ -1233,6 +1269,21 @@ export function createMockServer(): ServerConnection {
       tasks: async () => [],
       apps: async () => mockApps,
       stopTask: async () => ({ ok: true }),
+      answerLocation: async ({ id, requestId, location }) => {
+        const found = items.get(id)?.find((s) => s.item.id === requestId)?.item;
+        if (found?.type !== "location_request" || found.status !== "pending")
+          throw new RpcError("not_found", "It isn't waiting to hear where you are any more");
+        store(id, {
+          ...found,
+          status: location ? "shared" : "declined",
+          place: location ? "Shoreditch, London, England, United Kingdom" : null,
+          decidedAt: now(),
+        });
+        // No geocoder here: wherever it is, it's London.
+        if (location)
+          save({ ...get(id), location: { ...location, place: LONDON.place, sharedAt: now() } });
+        return { ok: true };
+      },
       decide: async ({ id, approvalId, approve, reason }) => {
         const found = items.get(id)?.find((s) => s.item.id === approvalId)?.item;
         if (found?.type === "approval" && found.status === "pending") {

@@ -23,6 +23,7 @@ import {
   type Heartbeat,
   type Memory,
   type Nibblet,
+  type NibbletLocation,
   type NibbletStatus,
   type Schedule,
   type StoredItem,
@@ -118,6 +119,7 @@ export function toNibblet(row: NibbletRow): Nibblet {
       : null,
     tailnetNode: row.tailnetNode,
     spendingLimits: row.spendingLimits,
+    location: row.location,
     statusText: row.statusText,
     statusEmoji: row.statusEmoji,
     statusUpdatedAt: iso(row.statusUpdatedAt),
@@ -210,6 +212,23 @@ export class Store {
     const [row] = await this.db.select().from(nibblets).where(eq(nibblets.id, id));
     if (!row) throw new RpcError("not_found", `No nibblet ${id}`);
     return row;
+  }
+
+  /**
+   * Where its person is, as they last shared it: its own, or for a sub-agent
+   * without one, its parent's, or theirs. Null when none has been shared.
+   */
+  async locationOf(id: string): Promise<NibbletLocation | null> {
+    for (let next: string | null = id; next;) {
+      const [row] = await this.db
+        .select({ location: nibblets.location, parentId: nibblets.parentId })
+        .from(nibblets)
+        .where(eq(nibblets.id, next));
+      if (!row) return null;
+      if (row.location) return row.location;
+      next = row.parentId;
+    }
+    return null;
   }
 
   async getNibblet(id: string): Promise<Nibblet> {
@@ -377,6 +396,24 @@ export class Store {
       );
     return rows.flatMap((r) =>
       r.item.type === "approval" ? [{ nibbletId: r.nibbletId, item: r.item }] : [],
+    );
+  }
+
+  /** `location_get` asks still marked pending, across every nibblet. */
+  async pendingLocationRequests(): Promise<
+    { nibbletId: string; item: Extract<ThreadItem, { type: "location_request" }> }[]
+  > {
+    const rows = await this.db
+      .select({ nibbletId: items.nibbletId, item: items.item })
+      .from(items)
+      .where(
+        and(
+          sql`${items.item}->>'type' = 'location_request'`,
+          sql`${items.item}->>'status' = 'pending'`,
+        ),
+      );
+    return rows.flatMap((r) =>
+      r.item.type === "location_request" ? [{ nibbletId: r.nibbletId, item: r.item }] : [],
     );
   }
 
