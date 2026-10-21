@@ -1,14 +1,19 @@
-import { formatAmount, parseAmount, type CardSecret } from "@nibblet/protocol";
+import { formatAmount, MASKED, parseAmount, type CardSecret } from "@nibblet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   allowance,
+  changedLockedFields,
   checkCard,
   defineBankFactory,
   defineBankPlugin,
+  defineField,
   deriveWalletKey,
   loadBankPlugins,
+  maskSettings,
+  mergeSettings,
   periodStart,
-  requireEnv,
+  requireSetting,
+  resolveSettings,
   oneAtATime,
   walletSpent,
   type BankPlugin,
@@ -29,6 +34,9 @@ function fakePlugin(id: string): BankPlugin {
     id,
     label: id,
     asset: { code: "USD", decimals: 2 },
+    instrument: "card",
+    fundAt: null,
+    check: async () => {},
     balance: async () => null,
     issue: async () => ({ ref: "r", display: "•••• 1111", secret }),
     find: async () => null,
@@ -150,30 +158,96 @@ describe("wallet keys", () => {
 });
 
 describe("loading plugins", () => {
+  const key = defineField("FAKE_KEY", "Key", { required: true, secret: true });
+  const other = defineField("BROKEN_OTHER", "Other thing", { required: true });
   const configured = defineBankFactory({
     id: "fake",
-    env: ["FAKE_KEY"],
-    fromEnv: (env) => (env.FAKE_KEY ? fakePlugin("fake") : null),
+    name: "Fake",
+    about: "",
+    instrument: "card",
+    fields: [key],
+    fromSettings: (settings) => (settings.FAKE_KEY ? fakePlugin("fake") : null),
   });
   const broken = defineBankFactory({
     id: "broken",
-    env: ["BROKEN_KEY"],
-    fromEnv: (env) => (env.BROKEN_KEY ? fakePlugin(requireEnv(env, "BROKEN_OTHER")) : null),
+    name: "Broken",
+    about: "",
+    instrument: "card",
+    fields: [defineField("BROKEN_KEY", "Key"), other],
+    fromSettings: (settings) =>
+      settings.BROKEN_KEY ? fakePlugin(requireSetting(settings, other)) : null,
   });
 
   it("loads what's set up, skips what isn't, and reports what's wrong", () => {
     const { plugins, errors } = loadBankPlugins(
       [configured, broken],
-      { FAKE_KEY: "x", BROKEN_KEY: "y" },
+      new Map([
+        ["fake", { FAKE_KEY: "x" }],
+        ["broken", { BROKEN_KEY: "y" }],
+      ]),
       deps,
     );
     expect([...plugins.keys()]).toEqual(["fake"]);
-    expect(errors.get("broken")).toBe("BROKEN_OTHER isn't set");
-    expect(loadBankPlugins([configured], {}, deps).plugins.size).toBe(0);
+    expect(errors.get("broken")).toBe("Other thing is needed");
+    expect(loadBankPlugins([configured], new Map(), deps).plugins.size).toBe(0);
   });
 
   it("refuses two plugins with one id", () => {
-    expect(() => loadBankPlugins([configured, configured], {}, deps)).toThrow(/Two bank plugins/);
+    expect(() => loadBankPlugins([configured, configured], new Map(), deps)).toThrow(
+      /Two bank plugins/,
+    );
+  });
+
+  it("take saved settings over the environment's, and only their own fields from it", () => {
+    const env = { FAKE_KEY: "from-env", PATH: "/bin" };
+    expect(resolveSettings(configured, undefined, env)).toEqual({
+      source: "env",
+      settings: { FAKE_KEY: "from-env" },
+    });
+    expect(resolveSettings(configured, { FAKE_KEY: "saved" }, env)).toEqual({
+      source: "saved",
+      settings: { FAKE_KEY: "saved" },
+    });
+    expect(resolveSettings(configured, undefined, { FAKE_KEY: "  " })).toEqual({
+      source: null,
+      settings: {},
+    });
+  });
+});
+
+describe("settings from a form", () => {
+  const fields = [
+    defineField("KEY", "Key", { secret: true, lockedByCards: true }),
+    defineField("URL", "URL"),
+    defineField("NOTE", "Note"),
+  ];
+
+  it("keep a secret sent masked, drop blanks and strangers, and trim", () => {
+    expect(
+      mergeSettings(
+        fields,
+        { KEY: MASKED, URL: " https://x ", NOTE: "", EXTRA: "y" },
+        {
+          KEY: "secret",
+          NOTE: "old",
+        },
+      ),
+    ).toEqual({ KEY: "secret", URL: "https://x" });
+    expect(mergeSettings(fields, { KEY: "new" }, { KEY: "secret" })).toEqual({ KEY: "new" });
+  });
+
+  it("show secrets masked", () => {
+    expect(maskSettings(fields, { KEY: "secret", URL: "https://x" })).toEqual({
+      KEY: MASKED,
+      URL: "https://x",
+    });
+  });
+
+  it("say which locked fields would change", () => {
+    expect(changedLockedFields(fields, { KEY: "a", URL: "x" }, { KEY: "a", URL: "y" })).toEqual([]);
+    expect(changedLockedFields(fields, { KEY: "a" }, { KEY: "b" }).map((f) => f.key)).toEqual([
+      "KEY",
+    ]);
   });
 });
 

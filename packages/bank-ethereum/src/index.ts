@@ -5,12 +5,14 @@ import {
   defineBankPlugin,
   deriveWalletKey,
   hexBytes,
+  defineField,
   oneAtATime,
-  requireEnv,
+  optionalSetting,
+  requireSetting,
   walletSpent,
   type BankDeps,
-  type BankEnv,
   type BankPlugin,
+  type BankSettingValues,
   type CardRef,
   type CardUsage,
 } from "@nibblet/bank";
@@ -32,10 +34,10 @@ import { privateKeyToAccount } from "viem/accounts";
  * and swept back to the treasury when it's killed. Gas comes out of the
  * card's own balance.
  *
- * Settings: `ETHEREUM_TREASURY_KEY` (hex), `ETHEREUM_RPC_URL`, and optionally
- * `ETHEREUM_CHAIN_ID` (checked against the RPC, so a key meant for a testnet
- * isn't used on mainnet by mistake) and `ETHEREUM_ASSET` (`ETH` by default;
- * `POL` for Polygon, say).
+ * Settings (see `fields`): the treasury's key (hex) and an RPC URL, and
+ * optionally a chain id (checked against the RPC, so a key meant for a
+ * testnet isn't used on mainnet by mistake) and the coin's ticker (`ETH` by
+ * default; `POL` for Polygon, say).
  */
 
 /** A plain transfer always costs this much gas. */
@@ -139,6 +141,19 @@ export function ethereumPlugin(options: EthereumOptions): BankPlugin {
     id: "ethereum",
     label: asset === "ETH" ? "Ethereum" : `Ethereum (${asset})`,
     asset: { code: asset, decimals: 18 },
+    instrument: "wallet",
+    fundAt: treasury,
+
+    async check() {
+      try {
+        await chain();
+        await client.balance(treasury);
+      } catch (err) {
+        if (err instanceof BankError) throw err;
+        // Its own message can carry the RPC URL, and with it the URL's key.
+        throw new BankError("Couldn't reach the RPC");
+      }
+    },
 
     async balance() {
       await chain();
@@ -194,27 +209,56 @@ export function ethereumPlugin(options: EthereumOptions): BankPlugin {
   });
 }
 
+const TREASURY_KEY = defineField("ETHEREUM_TREASURY_KEY", "Treasury key", {
+  required: true,
+  secret: true,
+  generate: "private_key",
+  lockedByCards: true,
+  placeholder: "0x…",
+  hint: "The private key of the account cards are funded from. Make a new one and keep a copy somewhere safe: it's the only way to the treasury's coins.",
+});
+const RPC_URL = defineField("ETHEREUM_RPC_URL", "RPC URL", {
+  required: true,
+  secret: true,
+  placeholder: "https://…",
+  hint: "A JSON-RPC endpoint for the chain. Kept secret, since many carry an API key.",
+});
+const CHAIN_ID = defineField("ETHEREUM_CHAIN_ID", "Chain ID", {
+  lockedByCards: true,
+  placeholder: "Any",
+  hint: "Checked against the RPC before anything is sent: 1 for mainnet, 11155111 for Sepolia.",
+});
+const ASSET = defineField("ETHEREUM_ASSET", "Coin", {
+  lockedByCards: true,
+  placeholder: "ETH",
+  hint: "The chain's own coin, for another EVM chain: POL for Polygon, say.",
+});
+
 export const ethereum = defineBankFactory({
   id: "ethereum",
-  env: ["ETHEREUM_TREASURY_KEY", "ETHEREUM_RPC_URL", "ETHEREUM_CHAIN_ID", "ETHEREUM_ASSET"],
-  fromEnv(env: BankEnv, deps: BankDeps) {
-    if (!env.ETHEREUM_TREASURY_KEY?.trim()) return null;
+  name: "Ethereum",
+  about:
+    "A treasury account on Ethereum or another EVM chain, funding a fresh account for each card.",
+  instrument: "wallet",
+  fields: [TREASURY_KEY, RPC_URL, CHAIN_ID, ASSET],
+  fromSettings(settings: BankSettingValues, deps: BankDeps) {
+    if (!optionalSetting(settings, TREASURY_KEY)) return null;
     let treasuryKey: Uint8Array;
     try {
-      treasuryKey = hexBytes(requireEnv(env, "ETHEREUM_TREASURY_KEY"));
+      treasuryKey = hexBytes(requireSetting(settings, TREASURY_KEY));
     } catch {
-      throw new Error("ETHEREUM_TREASURY_KEY isn't a hex private key");
+      throw new Error(`${TREASURY_KEY.label} isn't a hex private key`);
     }
-    if (treasuryKey.length !== 32) throw new Error("ETHEREUM_TREASURY_KEY isn't a 32-byte key");
-    const url = requireEnv(env, "ETHEREUM_RPC_URL");
-    if (!/^https?:\/\//.test(url)) throw new Error("ETHEREUM_RPC_URL should be an http(s) URL");
-    const chainId = env.ETHEREUM_CHAIN_ID?.trim();
+    if (treasuryKey.length !== 32) throw new Error(`${TREASURY_KEY.label} isn't a 32-byte key`);
+    const url = requireSetting(settings, RPC_URL);
+    if (!/^https?:\/\//.test(url)) throw new Error(`${RPC_URL.label} should be an http(s) URL`);
+    const chainId = optionalSetting(settings, CHAIN_ID);
     if (chainId && !/^[1-9]\d*$/.test(chainId)) {
-      throw new Error("ETHEREUM_CHAIN_ID should be a chain id, e.g. 1 or 11155111");
+      throw new Error(`${CHAIN_ID.label} should be a number, e.g. 1 or 11155111`);
     }
-    const asset = env.ETHEREUM_ASSET?.trim();
+    const asset = optionalSetting(settings, ASSET);
     if (asset && !/^[A-Z0-9]{2,10}$/.test(asset)) {
-      throw new Error("ETHEREUM_ASSET should be a ticker, e.g. ETH");
+      throw new Error(`${ASSET.label} should be a ticker, e.g. ETH`);
     }
     return ethereumPlugin({
       treasuryKey,

@@ -146,22 +146,74 @@ export const CardFile = z.object({
 });
 export type CardFile = z.infer<typeof CardFile>;
 
+/** What a bank hands out: a card to pay with, or a wallet to send from. */
+export const BankInstrument = z.enum(["card", "wallet"]);
+export type BankInstrument = z.infer<typeof BankInstrument>;
+
 /** One bank plugin the server has set up, for Settings. */
 export const BankProvider = z.object({
   id: BankProviderId,
   label: z.string(),
   asset: AssetInfo,
+  instrument: BankInstrument,
   state: z.enum(["ready", "error"]),
   detail: z.string().nullable(),
   /** What's left to fund cards from (the treasury or funding account), when the provider says. */
   balance: MinorAmount.nullable(),
+  /** Where to send money to top it up: a treasury's address. Null for an account topped up elsewhere. */
+  fundAt: z.string().nullable(),
 });
 export type BankProvider = z.infer<typeof BankProvider>;
+
+/** One setting a bank plugin needs, for the form that sets it up. */
+export const BankField = z.object({
+  /** Also the variable that sets it in the server's environment. */
+  key: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
+  label: z.string(),
+  hint: z.string().nullable(),
+  placeholder: z.string().nullable(),
+  required: z.boolean(),
+  /** Shown as `MASKED` once it's set, and never sent back. */
+  secret: z.boolean(),
+  /** A choice of these rather than free text. */
+  options: z.array(z.object({ value: z.string(), label: z.string() })).nullable(),
+  /** What the form can make for it: a fresh random private key. */
+  generate: z.enum(["private_key"]).nullable(),
+  /**
+   * Can't change while the bank has cards that aren't closed, since they
+   * depend on it (wallets come from the treasury's key and network).
+   */
+  lockedByCards: z.boolean(),
+});
+export type BankField = z.infer<typeof BankField>;
+
+/** A bank's settings, by field key. */
+export const BankSettings = z.record(z.string(), z.string().max(4000));
+export type BankSettings = z.infer<typeof BankSettings>;
+
+/** A bank plugin the server knows, set up or not, with what it takes to set it up. */
+export const BankKind = z.object({
+  id: BankProviderId,
+  /** "Bitcoin", without the network a set-up one's label has. */
+  name: z.string(),
+  about: z.string(),
+  instrument: BankInstrument,
+  fields: z.array(BankField),
+  /** Where its settings come from: saved in Settings, the server's environment, or nowhere yet. */
+  source: z.enum(["saved", "env"]).nullable(),
+  /** Its settings as they stand, secrets as `MASKED`. */
+  settings: BankSettings,
+  /** Its cards that aren't closed, which hold its locked fields and keep it from being removed. */
+  liveCards: z.int().min(0),
+});
+export type BankKind = z.infer<typeof BankKind>;
 
 export const BankStatus = z.object({
   providers: z.array(BankProvider),
   /** Plugins whose settings are there but wrong, with why, so they aren't silently missing. */
   problems: z.array(z.object({ id: BankProviderId, detail: z.string() })),
+  /** Every bank plugin the server knows, for setting them up. */
+  kinds: z.array(BankKind),
 });
 export type BankStatus = z.infer<typeof BankStatus>;
 

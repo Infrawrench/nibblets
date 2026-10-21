@@ -206,23 +206,36 @@ describe("ethereum", () => {
     expect(await privateKeyToAccount(treasuryHex).signTransaction(unsigned)).toBe(signed);
   });
 
+  it("says where to top it up, and checks the RPC without repeating its URL", async () => {
+    const { chain, plugin } = setUp();
+    expect(plugin.fundAt).toBe(treasury);
+    await expect(plugin.check()).resolves.toBeUndefined();
+    await expect(setUp({ chainId: 1 }).plugin.check()).rejects.toThrow(
+      "The RPC is on chain 11155111, not 1",
+    );
+    chain.balance = async () => {
+      throw new Error("fetch to https://rpc.example/v2/secret-key failed");
+    };
+    await expect(plugin.check()).rejects.toThrow(/^Couldn't reach the RPC$/);
+  });
+
   it("turns on from its settings, and refuses wrong ones", () => {
     const deps = { fetch: globalThis.fetch, log: () => {} };
     const base = { ETHEREUM_TREASURY_KEY: treasuryHex, ETHEREUM_RPC_URL: "https://rpc.example" };
-    expect(ethereum.fromEnv({}, deps)).toBeNull();
-    expect(ethereum.fromEnv(base, deps)?.label).toBe("Ethereum");
-    expect(ethereum.fromEnv({ ...base, ETHEREUM_ASSET: "POL" }, deps)?.asset).toEqual({
+    expect(ethereum.fromSettings({}, deps)).toBeNull();
+    expect(ethereum.fromSettings(base, deps)?.label).toBe("Ethereum");
+    expect(ethereum.fromSettings({ ...base, ETHEREUM_ASSET: "POL" }, deps)?.asset).toEqual({
       code: "POL",
       decimals: 18,
     });
-    expect(() => ethereum.fromEnv({ ETHEREUM_TREASURY_KEY: treasuryHex }, deps)).toThrow(
-      /ETHEREUM_RPC_URL/,
+    expect(() => ethereum.fromSettings({ ETHEREUM_TREASURY_KEY: treasuryHex }, deps)).toThrow(
+      /RPC URL is needed/,
     );
-    expect(() => ethereum.fromEnv({ ...base, ETHEREUM_TREASURY_KEY: "0x12" }, deps)).toThrow(
+    expect(() => ethereum.fromSettings({ ...base, ETHEREUM_TREASURY_KEY: "0x12" }, deps)).toThrow(
       /32-byte/,
     );
-    expect(() => ethereum.fromEnv({ ...base, ETHEREUM_CHAIN_ID: "main" }, deps)).toThrow(
-      /chain id/,
+    expect(() => ethereum.fromSettings({ ...base, ETHEREUM_CHAIN_ID: "main" }, deps)).toThrow(
+      /Chain ID should be a number/,
     );
   });
 });

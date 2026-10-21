@@ -328,6 +328,9 @@ export function applyLive(qc: QueryClient, server: string, m: LiveMessage): void
       void qc.invalidateQueries({ queryKey: keys.cards(server, m.nibbletId) });
       void qc.invalidateQueries({ queryKey: keys.allowances(server, m.nibbletId) });
       return;
+    case "bank_changed":
+      void qc.invalidateQueries({ queryKey: keys.bank(server) });
+      return;
   }
 }
 

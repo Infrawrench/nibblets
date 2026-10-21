@@ -1,8 +1,12 @@
 import {
   formatAmount,
+  MASKED,
   parseAmount,
   SpendingPeriod,
   type AssetInfo,
+  type BankField,
+  type BankKind,
+  type BankSettings,
   type Card,
   type SpendingLimit,
 } from "@nibblet/protocol";
@@ -83,4 +87,50 @@ export function money(minor: string | bigint, asset: AssetInfo): string {
 export function describeCard(card: Card): string {
   const kind = card.kind === "single_use" ? "Single use" : "Multi use";
   return `${kind} · ${money(card.spent, card.asset)} of ${money(card.limit, card.asset)}`;
+}
+
+/**
+ * A bank's settings form as typed, by field key. A secret is empty unless a
+ * new one is typed, which keeps the one that's saved.
+ */
+export type BankDraft = Record<string, string>;
+
+/** Whether a field already has a secret saved, which the form never sees. */
+export function secretSaved(kind: BankKind, field: BankField): boolean {
+  return field.secret && kind.settings[field.key] === MASKED;
+}
+
+export function bankDraftOf(kind: BankKind): BankDraft {
+  return Object.fromEntries(
+    kind.fields.map((f) => [f.key, secretSaved(kind, f) ? "" : (kind.settings[f.key] ?? "")]),
+  );
+}
+
+/** What to send the server: a secret left empty, but saved, is sent as `MASKED` to keep it. */
+export function bankSettingsOf(kind: BankKind, draft: BankDraft): BankSettings {
+  return Object.fromEntries(
+    kind.fields.map((f) => {
+      const value = draft[f.key]?.trim() ?? "";
+      return [f.key, value === "" && secretSaved(kind, f) ? MASKED : value];
+    }),
+  );
+}
+
+/** The first required field that's neither typed nor saved. */
+export function missingField(kind: BankKind, draft: BankDraft): BankField | null {
+  return (
+    kind.fields.find((f) => f.required && !draft[f.key]?.trim() && !secretSaved(kind, f)) ?? null
+  );
+}
+
+/** Whether the form says anything different from what's saved. */
+export function bankDraftChanged(kind: BankKind, draft: BankDraft): boolean {
+  const saved = bankDraftOf(kind);
+  return kind.fields.some((f) => (draft[f.key]?.trim() ?? "") !== saved[f.key]);
+}
+
+/** A fresh private key: 32 random bytes as hex, which every chain's plugin takes. */
+export function newPrivateKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }

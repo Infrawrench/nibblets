@@ -5,12 +5,14 @@ import {
   defineBankPlugin,
   deriveWalletKey,
   hexBytes,
+  defineField,
   oneAtATime,
-  requireEnv,
+  optionalSetting,
+  requireSetting,
   walletSpent,
   type BankDeps,
-  type BankEnv,
   type BankPlugin,
+  type BankSettingValues,
   type CardRef,
   type CardUsage,
 } from "@nibblet/bank";
@@ -29,11 +31,10 @@ import { z } from "zod";
  * wallet is swept once it has sent anything. The chain is read and written
  * through an Esplora API (mempool.space's by default).
  *
- * Settings: `BITCOIN_TREASURY_KEY` (hex or WIF), `BITCOIN_NETWORK`
- * (`mainnet`, `testnet`, `signet` or `regtest`; required, so a test key
- * can't end up on mainnet by default), and optionally `BITCOIN_ESPLORA_URL`
- * (required for regtest) and `BITCOIN_FEE_RATE` (sat/vB, instead of asking
- * Esplora).
+ * Settings (see `fields`): the treasury's key (hex or WIF) and its network
+ * (required, so a test key can't end up on mainnet by default), and
+ * optionally an Esplora API (required for regtest) and a fee rate in sat/vB,
+ * instead of asking Esplora.
  */
 
 const Network = z.enum(["mainnet", "testnet", "signet", "regtest"]);
@@ -81,6 +82,11 @@ export class Esplora {
   constructor(base: string, fetch: typeof globalThis.fetch) {
     this.base = base.replace(/\/+$/, "");
     this.fetch = fetch;
+  }
+
+  /** Where it is, without any path or credentials in it, for messages. */
+  get host(): string {
+    return URL.parse(this.base)?.host ?? "that address";
   }
 
   async utxos(address: string) {
@@ -182,6 +188,16 @@ export function bitcoinPlugin(options: BitcoinOptions): BankPlugin {
     id: "bitcoin",
     label: options.network === "mainnet" ? "Bitcoin" : `Bitcoin (${options.network})`,
     asset: { code: "BTC", decimals: 8 },
+    instrument: "wallet",
+    fundAt: treasuryAddress,
+
+    async check() {
+      try {
+        await esplora.totals(treasuryAddress);
+      } catch {
+        throw new BankError(`Couldn't read the treasury from the Esplora API at ${esplora.host}`);
+      }
+    },
 
     async balance() {
       const { funded, spent } = await esplora.totals(treasuryAddress);
@@ -272,30 +288,62 @@ export function parseKey(text: string, network: Network): Uint8Array {
   const key = /^(0x)?[0-9a-f]{64}$/i.test(trimmed)
     ? hexBytes(trimmed)
     : WIF(NETWORKS[network]).decode(trimmed);
-  if (key.length !== 32) throw new Error("BITCOIN_TREASURY_KEY isn't a 32-byte key");
+  if (key.length !== 32) throw new Error(`${TREASURY_KEY.label} isn't a 32-byte key`);
   return key;
 }
 
+const NETWORK_FIELD = defineField("BITCOIN_NETWORK", "Network", {
+  required: true,
+  lockedByCards: true,
+  options: [
+    { value: "mainnet", label: "Mainnet" },
+    { value: "testnet", label: "Testnet4" },
+    { value: "signet", label: "Signet" },
+    { value: "regtest", label: "Regtest" },
+  ],
+  hint: "Try it on signet first: its coins are free.",
+});
+const TREASURY_KEY = defineField("BITCOIN_TREASURY_KEY", "Treasury key", {
+  required: true,
+  secret: true,
+  generate: "private_key",
+  lockedByCards: true,
+  placeholder: "Hex or WIF",
+  hint: "The private key of the wallet cards are funded from. Make a new one and keep a copy somewhere safe: it's the only way to the treasury's coins.",
+});
+const ESPLORA_URL = defineField("BITCOIN_ESPLORA_URL", "Esplora API", {
+  placeholder: "mempool.space's",
+  hint: "Where the chain is read and transactions are sent. Needed for regtest.",
+});
+const FEE_RATE = defineField("BITCOIN_FEE_RATE", "Fee rate", {
+  placeholder: "Esplora's estimate",
+  hint: "In sat/vB.",
+});
+
 export const bitcoin = defineBankFactory({
   id: "bitcoin",
-  env: ["BITCOIN_TREASURY_KEY", "BITCOIN_NETWORK", "BITCOIN_ESPLORA_URL", "BITCOIN_FEE_RATE"],
-  fromEnv(env: BankEnv, deps: BankDeps) {
-    if (!env.BITCOIN_TREASURY_KEY?.trim()) return null;
-    const network = Network.safeParse(env.BITCOIN_NETWORK?.trim());
+  name: "Bitcoin",
+  about: "A treasury wallet that funds a fresh wallet for each card, with exactly its limit.",
+  instrument: "wallet",
+  fields: [NETWORK_FIELD, TREASURY_KEY, ESPLORA_URL, FEE_RATE],
+  fromSettings(settings: BankSettingValues, deps: BankDeps) {
+    if (!optionalSetting(settings, TREASURY_KEY)) return null;
+    const network = Network.safeParse(optionalSetting(settings, NETWORK_FIELD));
     if (!network.success) {
-      throw new Error("BITCOIN_NETWORK should be mainnet, testnet, signet or regtest");
+      throw new Error(`${NETWORK_FIELD.label} should be mainnet, testnet, signet or regtest`);
     }
     let treasuryKey: Uint8Array;
     try {
-      treasuryKey = parseKey(requireEnv(env, "BITCOIN_TREASURY_KEY"), network.data);
+      treasuryKey = parseKey(requireSetting(settings, TREASURY_KEY), network.data);
     } catch {
-      throw new Error(`BITCOIN_TREASURY_KEY isn't a hex or ${network.data} WIF private key`);
+      throw new Error(`${TREASURY_KEY.label} isn't a hex or ${network.data} WIF private key`);
     }
-    const url = env.BITCOIN_ESPLORA_URL?.trim() || ESPLORA[network.data];
-    if (!url) throw new Error(`BITCOIN_ESPLORA_URL is needed for ${network.data}`);
-    const rate = env.BITCOIN_FEE_RATE?.trim();
+    const url = optionalSetting(settings, ESPLORA_URL) ?? ESPLORA[network.data];
+    if (!url) throw new Error(`${ESPLORA_URL.label} is needed for ${network.data}`);
+    if (!/^https?:\/\//.test(url)) throw new Error(`${ESPLORA_URL.label} should be an http(s) URL`);
+    const rate = optionalSetting(settings, FEE_RATE);
     if (rate && !/^[1-9]\d*$/.test(rate)) {
-      throw new Error("BITCOIN_FEE_RATE should be a whole number of sat/vB");
+      throw new Error(`${FEE_RATE.label} should be a whole number of sat/vB`);
     }
     return bitcoinPlugin({
       treasuryKey,
