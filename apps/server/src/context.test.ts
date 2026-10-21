@@ -36,6 +36,7 @@ const nibblet: Nibblet = {
   tailscale: null,
   tailnetNode: null,
   spendingLimits: [],
+  location: null,
   statusText: "Watching the deploy",
   statusEmoji: null,
   statusUpdatedAt: null,
@@ -135,6 +136,51 @@ describe("systemPrompt", () => {
       spendingLimits: [{ asset: "USD", amount: "1", period: "day" as const }],
     };
     expect(systemPrompt({ ...base, nibblet: limited, banks: [] })).not.toContain("## Spending");
+  });
+
+  const london = {
+    latitude: 51.52461,
+    longitude: -0.07813,
+    accuracyM: 35,
+    timeZone: "Europe/London",
+    place: {
+      neighbourhood: "Shoreditch",
+      city: "London",
+      region: "England",
+      postcode: "E2 7DG",
+      country: "United Kingdom",
+      countryCode: "GB",
+    },
+    sharedAt: "2026-10-20T08:00:00.000Z",
+  };
+
+  it("tells it where its person is, and the time there", () => {
+    const prompt = systemPrompt({ ...base, nibblet, location: london });
+    expect(prompt).toContain("## Where your person is");
+    expect(prompt).toContain(
+      "They last shared where they are on 20 October 2026, from their device: Shoreditch, London, England, United Kingdom (postcode E2 7DG), at 51.5246, -0.0781, to within about 35 m.",
+    );
+    // Noon UTC is one in the afternoon in London, in BST.
+    expect(prompt).toContain("Their time zone is Europe/London, where it's Wednesday 21 October");
+    expect(prompt).toMatch(/13:00 BST now\./);
+    expect(prompt).toContain("use it for schedules and heartbeat hours");
+  });
+
+  it("gives the coordinates alone when the place couldn't be looked up", () => {
+    const prompt = systemPrompt({
+      ...base,
+      nibblet,
+      location: { ...london, place: null, accuracyM: 2400, timeZone: null },
+    });
+    expect(prompt).toContain("at 51.5246, -0.0781, to within about 2.4 km.");
+    expect(prompt).toContain("work it out from the coordinates");
+    expect(prompt).not.toContain("Their time zone");
+    expect(prompt).not.toContain("heartbeat hours");
+  });
+
+  it("says nothing about a location nobody shared", () => {
+    expect(systemPrompt({ ...base, nibblet })).not.toContain("## Where your person is");
+    expect(systemPrompt({ ...base, nibblet, location: null })).not.toContain("Where your person");
   });
 
   it("includes instructions, memories, recap, and the browser rule", () => {

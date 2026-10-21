@@ -25,6 +25,7 @@ import { Notifier } from "./notifier.ts";
 import { tailscaleStatus } from "./hostmcp.ts";
 import { Bank } from "./bank.ts";
 import { Banks } from "./banks.ts";
+import { Geocoder } from "./geocode.ts";
 
 // The repository's version, which releases are tagged with.
 const VERSION = z
@@ -116,6 +117,7 @@ async function main(): Promise<void> {
       appUpdates,
       bank,
       banks,
+      geocoder: new Geocoder({ url: config.NIBBLET_GEOCODER_URL, version: VERSION }),
     },
     bus,
   );

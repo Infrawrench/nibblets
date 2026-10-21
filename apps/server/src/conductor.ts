@@ -410,6 +410,7 @@ export class Conductor {
           desktop: nibblet.browser
             ? desktopToken(this.config.NIBBLET_OWNER_TOKEN, nibbletId, hashToken(token))
             : "",
+          timeZone: nibblet.location?.timeZone ?? null,
         }),
         {
           sshAgent: nibblet.cliCredentials.includes("ssh"),
@@ -445,15 +446,19 @@ export class Conductor {
       tailscale = null,
       desktop,
       subagent = false,
+      timeZone = null,
     }: {
       /** Whose budget its API-key usage counts against. */
       billTo: string;
       tailscale?: NibbletTailscale | null;
       desktop: string;
       subagent?: boolean;
+      /** Its person's, for the container's clock; a sub-agent's exec keeps its host's. */
+      timeZone?: string | null;
     },
   ) {
     return {
+      ...(timeZone ? { TZ: timeZone } : {}),
       NIBBLET_ID: nibbletId,
       NIBBLET_TOKEN: token,
       NIBBLET_SERVER_WS: `${this.config.NIBBLET_INTERNAL_URL.replace(/^http/, "ws")}/runner`,
@@ -1093,6 +1098,12 @@ export class Conductor {
     const parent = nibblet.parentId
       ? await this.store.getNibblet(nibblet.parentId).catch(() => null)
       : null;
+    // A sub-agent that hasn't been given a location goes by its parent's, or theirs.
+    let location = nibblet.location;
+    for (let above = parent; !location && above;) {
+      location = above.location;
+      above = above.parentId ? await this.store.getNibblet(above.parentId).catch(() => null) : null;
+    }
     // A sub-agent is on the tailnet as its host container's machine.
     const host = nibblet.parentId
       ? await this.store.nibbletRow(await this.hostOf(nibblet)).catch(() => null)
@@ -1103,6 +1114,7 @@ export class Conductor {
       memories: memories.filter((m) => (m.score ?? 0) > 0.45),
       history,
       parent,
+      location,
       now: new Date(),
       onePasswordVaults: this.onePasswordVaults.get(nibbletId),
       banks: this.bank?.providers() ?? [],

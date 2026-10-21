@@ -10,6 +10,7 @@ import type {
   SnapshotPolicy,
   SnapshotTrigger,
   McpServerDef,
+  NibbletLocation,
   ToolRule,
   NibbletStatus,
   NibbletTailscale,
@@ -79,6 +80,8 @@ export const nibblets = pgTable("nibblets", {
   tailscale: jsonb("tailscale").$type<NibbletTailscale>(),
   tailnetNode: jsonb("tailnet_node").$type<TailnetNode>(),
   spendingLimits: jsonb("spending_limits").$type<SpendingLimit[]>().notNull().default([]),
+  /** Where its person last said they were, with the place it's in. */
+  location: jsonb("location").$type<NibbletLocation>(),
   statusText: text("status_text"),
   statusEmoji: text("status_emoji"),
   statusUpdatedAt: timestamp("status_updated_at", { withTimezone: true }),

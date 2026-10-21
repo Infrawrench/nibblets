@@ -90,6 +90,9 @@ services:
       NIBBLET_HOST_NAME: ${NIBBLET_HOST_NAME:-}
       NIBBLET_HOST_PLATFORM: ${NIBBLET_HOST_PLATFORM:-other}
       NIBBLET_LAN_URLS: ${NIBBLET_LAN_URLS:-}
+      # Where a shared location's city, region and country are looked up (Nominatim).
+      # Set it empty to keep locations to coordinates and send them nowhere.
+      NIBBLET_GEOCODER_URL: ${NIBBLET_GEOCODER_URL-https://nominatim.openstreetmap.org}
       # Banks for nibblets' cards (packages/bank-*). Set them up in Settings → Bank;
       # these are only a fallback for a bank with nothing saved there.
       SLASH_API_KEY: ${SLASH_API_KEY:-}

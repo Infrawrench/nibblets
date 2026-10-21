@@ -277,6 +277,12 @@ export const RunnerEnv = z.object({
    */
   NIBBLET_TAILSCALE: z.enum(["0", "1"]).default("0"),
   NIBBLET_TAILSCALE_PORTS: z.string().default(""),
+  /**
+   * Its person's time zone, from the location they shared, so the clock in
+   * the container (the shell's, the browser's) is theirs. UTC without one.
+   * Fixed when the container is made; sub-agents use their host's.
+   */
+  TZ: z.string().optional(),
 });
 export type RunnerEnv = z.infer<typeof RunnerEnv>;
 

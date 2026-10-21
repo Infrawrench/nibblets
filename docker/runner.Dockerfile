@@ -7,10 +7,11 @@ LABEL nibblet.image=runner
 
 # Chromium and what it needs to draw text without a desktop; xkb-data,
 # libxkbcommon and pixman for OpenComputerUse's headless Wayland compositor;
-# Xvfb and the X libraries for its X11 path; git for agents that clone things.
+# Xvfb and the X libraries for its X11 path; git for agents that clone things;
+# tzdata, so the shell's clock can follow TZ, the time zone its person shared.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl git openssh-client tini dbus \
+      ca-certificates curl git openssh-client tini dbus tzdata \
       chromium fonts-liberation fonts-dejavu-core fonts-noto-color-emoji fonts-noto-cjk \
       xkb-data libxkbcommon0 libxkbcommon-x11-0 libpixman-1-0 xvfb libxtst6 libxext6 libx11-6 \
  && rm -rf /var/lib/apt/lists/*

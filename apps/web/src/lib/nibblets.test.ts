@@ -30,6 +30,7 @@ const nibblet = (id: string, parentId: string | null, active: string): Nibblet =
   tailscale: null,
   tailnetNode: null,
   spendingLimits: [],
+  location: null,
   statusText: null,
   statusEmoji: null,
   statusUpdatedAt: null,

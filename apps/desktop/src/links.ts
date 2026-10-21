@@ -38,14 +38,18 @@ const matches = (target: string, hosts: RegExp[]): boolean => {
   }
 };
 
-/** Whether the main window may go to `target`: the UI's own origin, or a step of Clerk's sign-in. */
-export function navigationAllowed(target: string, ui: string): boolean {
+/** Whether `target` is on the UI's own origin. */
+export function sameOrigin(target: string, ui: string): boolean {
   try {
-    if (new URL(target).origin === new URL(ui).origin) return true;
+    return new URL(target).origin === new URL(ui).origin;
   } catch {
     return false;
   }
-  return matches(target, CLERK_HOSTS);
+}
+
+/** Whether the main window may go to `target`: the UI's own origin, or a step of Clerk's sign-in. */
+export function navigationAllowed(target: string, ui: string): boolean {
+  return sameOrigin(target, ui) || matches(target, CLERK_HOSTS);
 }
 
 /** Whether `target` is a social sign-in, to be done in the browser instead. */

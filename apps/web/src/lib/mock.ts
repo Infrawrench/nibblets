@@ -24,6 +24,7 @@ import {
   type LiveMessage,
   type Memory,
   type Nibblet,
+  type NibbletLocation,
   type ConnectStatus,
   type DesktopApp,
   type Schedule,
@@ -46,6 +47,22 @@ import {
 } from "./connection.ts";
 import type { FileRef } from "@nibblet/protocol";
 import { mockFileRef, registerMockFile } from "./files.ts";
+
+/** Where Pip's person shared from, and where every mock lookup lands. */
+const LONDON = {
+  latitude: 51.5246,
+  longitude: -0.0781,
+  accuracyM: 35,
+  timeZone: "Europe/London",
+  place: {
+    neighbourhood: "Shoreditch",
+    city: "London",
+    region: "England",
+    postcode: "E2 7DG",
+    country: "United Kingdom",
+    countryCode: "GB",
+  },
+} satisfies Omit<NibbletLocation, "sharedAt">;
 
 /** What a host's OpenCode might offer: Zen's free models and a couple of its own providers. */
 const mockOpencodeModels = [
@@ -176,6 +193,7 @@ export function createMockServer(): ServerConnection {
     tailscale: null,
     tailnetNode: null,
     spendingLimits: [],
+    location: null,
     statusText: null,
     statusEmoji: null,
     statusUpdatedAt: null,
@@ -194,6 +212,7 @@ export function createMockServer(): ServerConnection {
         status: "working",
         statusText: "Hunting for a cheap flight to Lisbon",
         statusEmoji: "✈️",
+        location: { ...LONDON, sharedAt: ago(60 * 26) },
         spendingLimits: [
           { asset: "USD", amount: "15000", period: "month" },
           { asset: "BTC", amount: "200000", period: "total" },
@@ -1102,6 +1121,11 @@ export function createMockServer(): ServerConnection {
               : current.monthlyBudgetUsd,
           snapshotPolicy: patch.snapshotPolicy ?? current.snapshotPolicy,
           spendingLimits: patch.spendingLimits ?? current.spendingLimits,
+          // No geocoder here: wherever it is, it's London.
+          location:
+            patch.location !== undefined
+              ? patch.location && { ...patch.location, place: LONDON.place, sharedAt: now() }
+              : current.location,
           updatedAt: now(),
         });
       },

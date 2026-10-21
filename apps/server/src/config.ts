@@ -38,6 +38,11 @@ const Env = z.object({
   /** The machine's own name and OS; inside Docker the container can't see them. */
   NIBBLET_HOST_NAME: z.string().default(hostname()),
   NIBBLET_HOST_PLATFORM: z.enum(["darwin", "linux", "win32", "other"]).default("other"),
+  /**
+   * A Nominatim instance to look up the place a shared location is in (its
+   * city, region and country). Empty keeps locations to coordinates alone.
+   */
+  NIBBLET_GEOCODER_URL: z.string().default("https://nominatim.openstreetmap.org"),
   /** Comma-separated addresses this server answers on from the local network, if any. */
   NIBBLET_LAN_URLS: z
     .string()

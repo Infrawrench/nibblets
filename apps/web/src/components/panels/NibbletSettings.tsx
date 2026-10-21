@@ -16,6 +16,7 @@ import { NibbletTools } from "../tools/NibbletTools.tsx";
 import { PromptNameField } from "../PromptNameField.tsx";
 import { NibbletVaults } from "../onepassword/OnePasswordSection.tsx";
 import { BudgetSection } from "./BudgetSection.tsx";
+import { LocationSection } from "./LocationSection.tsx";
 import { ResourcesSection } from "./ResourcesSection.tsx";
 import { NibbletSpending } from "../bank/NibbletSpending.tsx";
 import { TailscaleSection } from "./TailscaleSection.tsx";
@@ -166,6 +167,8 @@ export function NibbletSettings({
           label="Plain"
         />
       </FieldRow>
+
+      <LocationSection connection={connection} nibblet={nibblet} />
 
       <SectionHeading>Model</SectionHeading>
       <FieldRow label="Model">

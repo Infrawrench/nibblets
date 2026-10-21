@@ -118,6 +118,7 @@ export function toNibblet(row: NibbletRow): Nibblet {
       : null,
     tailnetNode: row.tailnetNode,
     spendingLimits: row.spendingLimits,
+    location: row.location,
     statusText: row.statusText,
     statusEmoji: row.statusEmoji,
     statusUpdatedAt: iso(row.statusUpdatedAt),

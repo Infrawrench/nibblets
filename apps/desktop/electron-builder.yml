@@ -41,6 +41,9 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     LSUIElement: false
+    # What macOS shows when the UI asks for the location, to share with a nibblet.
+    NSLocationUsageDescription: Nibblets shares where you are with a nibblet when you ask it to.
+    NSLocationWhenInUseUsageDescription: Nibblets shares where you are with a nibblet when you ask it to.
 win:
   target: nsis
   # Nibblets-setup-x64.exe and Nibblets-setup-arm64.exe. Not code-signed yet,

@@ -1,11 +1,14 @@
 import {
   formatAmount,
+  formatCoordinates,
   nameInPrompt,
+  placeLabel,
   TAILSCALE_PROXY_PORT,
   type AssetInfo,
   type Heartbeat,
   type Memory,
   type Nibblet,
+  type NibbletLocation,
   type SharedVault,
   type TailnetNode,
   type ThreadItem,
@@ -92,6 +95,8 @@ export interface SystemPromptInput {
   /** Set when the harness session is fresh and has no history of its own. */
   history: ThreadItem[] | null;
   parent: Nibblet | null;
+  /** Where its person is: its own, or for a sub-agent without one, its parent's. */
+  location?: NibbletLocation | null;
   now: Date;
   /** 1Password vaults shared with it, if any. */
   onePasswordVaults?: readonly SharedVault[];
@@ -173,6 +178,8 @@ export function systemPrompt(input: SystemPromptInput): string {
       : "## Your heartbeats\n\nNone yet. Set one with `heartbeat_set` once there's something worth checking on regularly.",
   );
 
+  if (input.location) parts.push(locationSection(input.location, input.now));
+
   if (input.onePasswordVaults?.length) {
     const vaults = input.onePasswordVaults
       .map((v) => `- ${v.name} (${v.access === "write" ? "read and write" : "read only"})`)
@@ -204,6 +211,42 @@ export function systemPrompt(input: SystemPromptInput): string {
 
   parts.push(`Current time: ${input.now.toISOString()}.`);
   return parts.join("\n\n");
+}
+
+function distance(metres: number): string {
+  return metres < 1000 ? `${Math.round(metres)} m` : `${(metres / 1000).toFixed(1)} km`;
+}
+
+/** Where its person is, and their local time, as they last shared it. */
+export function locationSection(location: NibbletLocation, now: Date): string {
+  const zone = location.timeZone ?? "UTC";
+  const shared = new Date(location.sharedAt).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: zone,
+  });
+  const label = location.place && placeLabel(location.place);
+  const postcode = location.place?.postcode;
+  const at = `${formatCoordinates(location)}${location.accuracyM !== null ? `, to within about ${distance(location.accuracyM)}` : ""}`;
+  const where = label
+    ? `${label}${postcode ? ` (postcode ${postcode})` : ""}, at ${at}`
+    : `at ${at}. The place it's in couldn't be looked up, so work it out from the coordinates if you need it`;
+  const lines = [`They last shared where they are on ${shared}, from their device: ${where}.`];
+  if (location.timeZone) {
+    const local = now.toLocaleString("en-GB", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+      timeZone: location.timeZone,
+      timeZoneName: "short",
+    });
+    lines.push(`Their time zone is ${location.timeZone}, where it's ${local} now.`);
+  }
+  return `## Where your person is\n\n${lines.join(" ")}\n\nUse it whenever where they are matters: the weather, local times and opening hours, what's nearby, travel, and which country's sites, prices, units and rules apply. Give them times in their time zone${location.timeZone ? ", and use it for schedules and heartbeat hours unless they ask for another" : ""}. They may have moved since they shared it; if being wrong would matter, check with them. It's private: don't give it to a site or a person they didn't ask you to.`;
 }
 
 function tailnetSection(node: TailnetNode, ports: readonly number[]): string {
