@@ -8,7 +8,7 @@ import {
   type LiveMessage,
   type TerminalEvent,
 } from "@nibblet/protocol";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { Hono, type Context, type Next } from "hono";
@@ -16,22 +16,18 @@ import { compress } from "hono/compress";
 import { cors } from "hono/cors";
 import WebSocket from "ws";
 import { z } from "zod";
+import { bearerToken, safeEqual } from "./auth.ts";
 import type { Bus } from "./bus.ts";
 import type { RunnerLink } from "./conductor.ts";
 import { createHandlers, type Services } from "./handlers.ts";
 import { hostMcpHandler } from "./hostmcp.ts";
+import { mountBudgets } from "./budget.ts";
 import { mountGuard } from "./guard.ts";
 import { mcpHandler } from "./mcp.ts";
 import { mountFiles } from "./files.ts";
 import { viewToken } from "./store.ts";
 
 const TICKET_TTL_MS = 30_000;
-
-function safeEqual(a: string, b: string): boolean {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-}
 
 /** Well inside Cloudflare's 100-second idle limit, and the browser's 75-second watchdog. */
 const LIVE_KEEPALIVE_MS = 25_000;
@@ -41,10 +37,7 @@ export function createApp(services: Services, bus: Bus) {
   const dispatch = createDispatcher(contract, createHandlers(services));
   const tickets = new Map<string, number>();
 
-  const bearer = (c: Context): string => {
-    const header = c.req.header("authorization") ?? "";
-    return header.startsWith("Bearer ") ? header.slice(7) : "";
-  };
+  const bearer = (c: Context): string => bearerToken(c.req.header("authorization"));
 
   /**
    * The owner token, a paired device's token, or a short-lived token Nibblets
@@ -189,6 +182,9 @@ export function createApp(services: Services, bus: Bus) {
 
   // The guard in each nibblet's container: its settings and secrets, and approvals.
   mountGuard(app, services);
+
+  // The credential proxy, checking and reporting nibblets' spending on API keys.
+  mountBudgets(app, { config, budgets: conductor.budgets });
 
   app.all("/mcp", mcpHandler(services));
   app.all("/hostmcp/:name", hostMcpHandler(services));

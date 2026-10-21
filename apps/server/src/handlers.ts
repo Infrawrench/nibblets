@@ -139,6 +139,8 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
             "bad_request",
             "A sub-agent is on the tailnet as its parent's machine",
           );
+        if (patch.monthlyBudgetUsd != null && before.parentId)
+          throw new RpcError("bad_request", "A sub-agent spends its parent's budget");
         if (tailscale && !tailscale.authKey && !(await readTailnetOAuth(store)))
           throw new RpcError(
             "bad_request",
@@ -159,6 +161,10 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
           // A different harness can't resume the old one's session.
           ...(harnessChanged ? { harnessSessionId: null } : {}),
         });
+        // A raised budget, or a move off the API key it was spent on, lets
+        // whatever waits on it carry on; before a restart, which returns early.
+        if (patch.monthlyBudgetUsd !== undefined || harnessChanged || model !== before.model)
+          await conductor.recheckBudgetWaits(id);
         // The browser, the SSH agent and Tailscale are fixed when the container is made.
         const sshBefore = before.cliCredentials.includes("ssh");
         const sshAfter = (patch.cliCredentials ?? before.cliCredentials).includes("ssh");
@@ -196,6 +202,7 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
         await conductor.heartbeat(id);
         return ok;
       },
+      spend: ({ id }) => conductor.budgets.status(id),
       resume: async ({ id }) => {
         await conductor.resumeNow(id);
         return ok;

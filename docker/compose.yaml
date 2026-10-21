@@ -48,6 +48,10 @@ services:
       # For DeepSeek nibblets, which run Claude Code on DeepSeek's API. Only
       # the proxy holds it.
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # API keys instead of subscription logins, used when the source above
+      # is api-key. Only the proxy holds them.
+      NIBBLET_ANTHROPIC_API_KEY: ${NIBBLET_ANTHROPIC_API_KEY:-}
+      NIBBLET_OPENAI_API_KEY: ${NIBBLET_OPENAI_API_KEY:-}
     extra_hosts:
       - host.docker.internal:host-gateway
     # On the runners' network too, which the database isn't on.

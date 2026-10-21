@@ -50,6 +50,7 @@ describe("toNibblet", () => {
       status: "idle",
       statusDetail: null,
       resources: { cpus: null, memoryMb: null },
+      monthlyBudgetUsd: null,
       snapshotPolicy: { everyMinutes: 1440, keep: 7 },
       heartbeats: [],
       toolApprovals: [],

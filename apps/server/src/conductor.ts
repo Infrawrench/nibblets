@@ -19,14 +19,18 @@ import {
   VIEW_PORT,
   type McpServerDef,
 } from "@nibblet/protocol";
+import { nibbletProxyKey } from "@nibblet/protocol/proxy-key";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { cliLogins } from "./clilogins.ts";
 import type { Config } from "./config.ts";
 import { Approvals } from "./approvals.ts";
+import { Budgets } from "./budget.ts";
 import { heartbeatInput, isQuiet, mayBeQuiet, QUIET_REPLY, systemPrompt } from "./context.ts";
 import {
+  billedProviderFor,
   LimitWaits,
+  looksLikeBudget,
   looksLikeUsageLimit,
   ProviderLimits,
   providerFor,
@@ -105,6 +109,8 @@ export class Conductor {
   readonly approvals: Approvals;
   /** Nibblets waiting out a subscription usage limit. */
   readonly limits: LimitWaits;
+  /** Each nibblet's monthly budget for API-key usage, and its spending. */
+  readonly budgets: Budgets;
   private readonly providerLimits: ProviderLimits;
   /**
    * Each running sub-agent's current run in its host's container, so the end
@@ -133,6 +139,7 @@ export class Conductor {
     this.config = config;
     this.approvals = new Approvals(store, config.NIBBLET_APPROVAL_TIMEOUT_MINUTES * 60_000);
     this.providerLimits = new ProviderLimits(config);
+    this.budgets = new Budgets(store);
     this.limits = new LimitWaits(store, {
       restoreQueue: (nibbletId, turns) => this.queues.set(nibbletId, [...turns]),
       resume: (nibbletId) => void this.dispatch(nibbletId),
@@ -388,6 +395,7 @@ export class Conductor {
       const containerId = await this.docker.startRunner(
         nibbletId,
         this.runnerEnv(nibbletId, token, nibblet.browser, {
+          billTo: nibbletId,
           tailscale,
           desktop: nibblet.browser
             ? desktopToken(this.config.NIBBLET_OWNER_TOKEN, nibbletId, hashToken(token))
@@ -423,10 +431,17 @@ export class Conductor {
     token: string,
     browser: boolean,
     {
+      billTo,
       tailscale = null,
       desktop,
       subagent = false,
-    }: { tailscale?: NibbletTailscale | null; desktop: string; subagent?: boolean },
+    }: {
+      /** Whose budget its API-key usage counts against. */
+      billTo: string;
+      tailscale?: NibbletTailscale | null;
+      desktop: string;
+      subagent?: boolean;
+    },
   ) {
     return {
       NIBBLET_ID: nibbletId,
@@ -434,7 +449,8 @@ export class Conductor {
       NIBBLET_SERVER_WS: `${this.config.NIBBLET_INTERNAL_URL.replace(/^http/, "ws")}/runner`,
       NIBBLET_MCP_URL: `${this.config.NIBBLET_INTERNAL_URL}/mcp`,
       NIBBLET_CREDPROXY_URL: this.config.CREDPROXY_URL,
-      NIBBLET_CREDPROXY_KEY: this.config.CREDPROXY_KEY,
+      // Its own, so the proxy can tell whose budget a request spends.
+      NIBBLET_CREDPROXY_KEY: nibbletProxyKey(this.config.CREDPROXY_KEY, billTo),
       NIBBLET_BROWSER: browser ? ("1" as const) : ("0" as const),
       // For the entry, which fences off the rest; the auth key is fetched, never put here.
       NIBBLET_TAILSCALE: tailscale ? ("1" as const) : ("0" as const),
@@ -478,6 +494,8 @@ export class Conductor {
         host,
         nibbletId,
         this.runnerEnv(nibbletId, token, nibblet.browser, {
+          // Its host's agent could read its key, so it spends its host's budget.
+          billTo: host,
           desktop: desktop?.token ?? "",
           subagent: true,
         }),
@@ -997,6 +1015,18 @@ export class Conductor {
       ]);
       return;
     }
+    // Nor into an API key it has spent its budget on.
+    const spent = await this.budgetSpent(nibblet);
+    if (spent) {
+      await this.limits.start(
+        nibbletId,
+        null,
+        spent,
+        [...(this.queues.get(nibbletId) ?? [])],
+        "budget",
+      );
+      return;
+    }
     const next = this.queues.get(nibbletId)?.shift();
     if (!next) return;
 
@@ -1099,14 +1129,74 @@ export class Conductor {
     const nibblet = await this.store.getNibblet(nibbletId);
     const provider = providerFor(nibblet);
     this.providerLimits.invalidate();
+    const requeue = async () => {
+      await this.putTurnItem(nibbletId, turn, "interrupted", false, null);
+      const queue = this.queues.get(nibbletId) ?? [];
+      queue.unshift({ turnId: turn.turnId, source: turn.source, input: turn.input });
+      this.queues.set(nibbletId, queue);
+      return queue;
+    };
+    // The proxy refused it because the nibblet's budget is spent.
+    const spent = looksLikeBudget(error) ? await this.budgetSpent(nibblet) : null;
+    if (spent) {
+      await this.limits.start(nibbletId, null, spent, await requeue(), "budget");
+      return true;
+    }
     const limited = provider ? await this.providerLimits.until(provider) : null;
     if (!limited && !looksLikeUsageLimit(error)) return false;
-    await this.putTurnItem(nibbletId, turn, "interrupted", false, null);
-    const queue = this.queues.get(nibbletId) ?? [];
-    queue.unshift({ turnId: turn.turnId, source: turn.source, input: turn.input });
-    this.queues.set(nibbletId, queue);
-    await this.limits.start(nibbletId, provider, resumeAt(limited, new Date()), queue);
+    await this.limits.start(nibbletId, provider, resumeAt(limited, new Date()), await requeue());
     return true;
+  }
+
+  /**
+   * When a nibblet that has spent its monthly budget on an API key can carry
+   * on (the start of next month). Null if it hasn't, or its turns don't go
+   * through an API key. Undefined if that can't be told just now (the proxy
+   * or the database didn't answer); the proxy checks every request itself,
+   * so the turn can go ahead and find out.
+   */
+  private async budgetSpent(nibblet: Nibblet): Promise<Date | null | undefined> {
+    try {
+      const provider = billedProviderFor(nibblet);
+      if (!provider) return null;
+      const keyed = await this.providerLimits.onApiKey(provider);
+      if (keyed !== true) return keyed === false ? null : undefined;
+      const status = await this.budgets.status(nibblet.id);
+      if (status.allowed) return null;
+      // OpenCode on the host's own login goes straight to its provider, not through the proxy.
+      if (nibblet.harness === "opencode") {
+        const login = await hostLoginFor(this.config, "opencode", {
+          model: nibblet.model,
+          warn: () => {},
+        });
+        if (login) return null;
+      }
+      return new Date(status.resetsAt);
+    } catch (err) {
+      console.warn(`couldn't check ${nibblet.id}'s budget`, err);
+      return undefined;
+    }
+  }
+
+  /**
+   * Lets nibblets waiting on a spent budget carry on if they now can: the
+   * budget was raised, or they no longer spend it (another model or harness,
+   * or the proxy back on a subscription). Only those sharing `nibbletId`'s
+   * budget, or every one.
+   */
+  async recheckBudgetWaits(nibbletId?: string): Promise<void> {
+    const owner = nibbletId ? await this.budgets.owner(nibbletId).catch(() => null) : null;
+    if (nibbletId && !owner) return;
+    for (const id of this.limits.waitingFor("budget")) {
+      try {
+        if (owner && (await this.budgets.owner(id)).id !== owner.id) continue;
+        if ((await this.budgetSpent(await this.store.getNibblet(id))) === null) {
+          await this.limits.end(id, "resumed");
+        }
+      } catch (err) {
+        console.warn(`couldn't recheck ${id}'s budget wait`, err);
+      }
+    }
   }
 
   /** Sends a finished sub-agent's answer back to the nibblet that asked for it. */

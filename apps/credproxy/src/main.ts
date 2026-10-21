@@ -4,7 +4,9 @@ import { existsSync } from "node:fs";
 import { serve } from "@hono/node-server";
 import { z } from "zod";
 import { createApp } from "./app.ts";
+import { BudgetGate, serverBudgets } from "./budgets.ts";
 import { anthropicProvider } from "./providers/anthropic.ts";
+import { anthropicKeyProvider, openaiKeyProvider } from "./providers/apikey.ts";
 import { deepseekProvider } from "./providers/deepseek.ts";
 import { openaiProvider } from "./providers/openai.ts";
 import { fileSource } from "./sources/file.ts";
@@ -12,7 +14,8 @@ import { keychainSource } from "./sources/keychain.ts";
 import type { CredentialSource } from "./sources/source.ts";
 import { TokenManager } from "./tokens.ts";
 
-const SourceMode = z.enum(["auto", "file", "keychain", "none"]).default("auto");
+// `api-key` uses the provider's API key instead of a subscription login.
+const SourceMode = z.enum(["auto", "file", "keychain", "api-key", "none"]).default("auto");
 
 const Env = z.object({
   PORT: z.coerce.number().int().default(8787),
@@ -24,8 +27,14 @@ const Env = z.object({
   CODEX_AUTH_SOURCE: SourceMode,
   KEYCHAIN_BRIDGE_URL: z.string().optional(),
   KEYCHAIN_BRIDGE_TOKEN: z.string().optional(),
-  // Compose passes it through empty when it isn't set.
+  // Where nibblets' budgets for API keys are kept.
+  NIBBLET_SERVER_URL: z.string().default("http://server:8420"),
+  // Compose passes these through empty when they aren't set. Not
+  // ANTHROPIC_API_KEY and OPENAI_API_KEY, which the host's own CLIs would
+  // pick up from the .env the host bridge loads.
   DEEPSEEK_API_KEY: z.string().optional(),
+  NIBBLET_ANTHROPIC_API_KEY: z.string().optional(),
+  NIBBLET_OPENAI_API_KEY: z.string().optional(),
 });
 
 const env = Env.parse(process.env);
@@ -41,7 +50,7 @@ const keychains = new Map<"anthropic" | "openai", Keychain>();
  */
 function pickSource(
   provider: "anthropic" | "openai",
-  mode: z.infer<typeof SourceMode>,
+  mode: Exclude<z.infer<typeof SourceMode>, "api-key">,
   file: string,
 ): CredentialSource | null {
   const keychain = () => {
@@ -66,16 +75,24 @@ function pickSource(
   }
 }
 
-const anthropic = new TokenManager({
-  provider: anthropicProvider(),
-  source: pickSource("anthropic", env.CLAUDE_CREDENTIALS_SOURCE, env.CLAUDE_CREDENTIALS_FILE),
-});
-const openai = new TokenManager({
-  provider: openaiProvider(),
-  source: pickSource("openai", env.CODEX_AUTH_SOURCE, env.CODEX_AUTH_FILE),
-});
+const apiKey = (value: string | undefined) => value?.trim() || null;
 
-const deepseek = deepseekProvider(env.DEEPSEEK_API_KEY?.trim() || null);
+const anthropic =
+  env.CLAUDE_CREDENTIALS_SOURCE === "api-key"
+    ? anthropicKeyProvider(apiKey(env.NIBBLET_ANTHROPIC_API_KEY))
+    : new TokenManager({
+        provider: anthropicProvider(),
+        source: pickSource("anthropic", env.CLAUDE_CREDENTIALS_SOURCE, env.CLAUDE_CREDENTIALS_FILE),
+      });
+const openai =
+  env.CODEX_AUTH_SOURCE === "api-key"
+    ? openaiKeyProvider(apiKey(env.NIBBLET_OPENAI_API_KEY))
+    : new TokenManager({
+        provider: openaiProvider(),
+        source: pickSource("openai", env.CODEX_AUTH_SOURCE, env.CODEX_AUTH_FILE),
+      });
+
+const deepseek = deepseekProvider(apiKey(env.DEEPSEEK_API_KEY));
 
 const app = createApp({
   key: env.CREDPROXY_KEY,
@@ -83,6 +100,9 @@ const app = createApp({
   anthropic,
   openai,
   deepseek,
+  budgets: new BudgetGate(
+    serverBudgets({ serverUrl: env.NIBBLET_SERVER_URL, adminKey: env.CREDPROXY_ADMIN_KEY }),
+  ),
   push(provider, text) {
     const keychain = keychains.get(provider);
     if (!keychain) return false;
@@ -94,9 +114,9 @@ const app = createApp({
 serve({ fetch: app.fetch, port: env.PORT, hostname: "0.0.0.0" }, (info) => {
   console.log(`credproxy listening on :${info.port}`);
   for (const m of [anthropic, openai]) {
-    void m
-      .status()
-      .then((s) => console.log(`${s.provider}: ${s.ok ? "ok" : "not ready"}, ${s.detail}`));
+    void Promise.resolve(m.status()).then((s) =>
+      console.log(`${s.provider}: ${s.ok ? "ok" : "not ready"}, ${s.detail}`),
+    );
   }
   if (deepseek.key) console.log("deepseek: ok, API key set");
 });

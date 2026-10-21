@@ -106,6 +106,15 @@ const providerNames: Record<CredentialStatus["provider"], string> = {
   deepseek: "DeepSeek API",
 };
 
+/** Claude and ChatGPT can be an API key instead of a subscription. */
+const keyNames: Partial<Record<CredentialStatus["provider"], string>> = {
+  anthropic: "Anthropic API",
+  openai: "OpenAI API",
+};
+
+const providerName = (c: CredentialStatus) =>
+  (c.source === "env" ? keyNames[c.provider] : undefined) ?? providerNames[c.provider];
+
 /** DeepSeek is an optional extra, so it's only listed once its key is set. */
 const listed = (c: CredentialStatus) => c.provider !== "deepseek" || c.source !== "none";
 
@@ -122,7 +131,7 @@ function CredentialsSection({ connection }: { connection: ServerConnection }) {
       <SectionHeading>Subscriptions</SectionHeading>
       <p className="text-xs text-faint">
         Your nibblets run on the Claude and ChatGPT subscriptions you're signed in to on this
-        computer.
+        computer, or on API keys set when Nibblets was installed.
       </p>
       {info.data?.credentials.filter(listed).map((c) => (
         <div
@@ -136,7 +145,7 @@ function CredentialsSection({ connection }: { connection: ServerConnection }) {
           )}
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="text-sm font-medium">
-              {providerNames[c.provider]}
+              {providerName(c)}
               {c.plan ? (
                 <span className="ml-1.5 font-normal text-dim">{planLabel(c.plan)}</span>
               ) : null}
@@ -169,8 +178,10 @@ function CredentialsSection({ connection }: { connection: ServerConnection }) {
 
 /** What to do when a subscription isn't connected, in words for anyone. */
 const signInHelp: Record<CredentialStatus["provider"], string> = {
-  anthropic: "Not connected. Sign in to Claude Code on this computer, then reopen Nibblets.",
-  openai: "Not connected. Sign in to Codex with your ChatGPT account, then reopen Nibblets.",
+  anthropic:
+    "Not connected. Sign in to Claude Code on this computer, or add an Anthropic API key, then reopen Nibblets.",
+  openai:
+    "Not connected. Sign in to Codex with your ChatGPT account, or add an OpenAI API key, then reopen Nibblets.",
   deepseek: "No API key. Set DEEPSEEK_API_KEY in the server's .env, then restart Nibblets.",
 };
 

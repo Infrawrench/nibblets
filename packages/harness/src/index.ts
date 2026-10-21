@@ -52,8 +52,10 @@ export interface HarnessContext {
   /** Base URL of the credential proxy; `/anthropic` and `/openai` hang off it. */
   credproxyUrl: string;
   /**
-   * Shared secret the proxy checks. Harnesses send it wherever they would
-   * send an API key: `x-api-key` for Anthropic, a bearer token for OpenAI.
+   * The key the proxy checks, made for this nibblet (or its host, for a
+   * sub-agent) so the proxy knows whose budget its API-key usage spends.
+   * Harnesses send it wherever they would send an API key: `x-api-key` for
+   * Anthropic, a bearer token for OpenAI.
    */
   credproxyKey: string;
   log(level: "debug" | "info" | "warn" | "error", message: string): void;

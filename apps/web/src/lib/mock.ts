@@ -30,6 +30,8 @@ import {
   type TailnetOAuth,
   type AppUpdate,
   type HarnessUpdates,
+  budgetMonth,
+  budgetResetsAt,
 } from "@nibblet/protocol";
 import {
   createMockConnection,
@@ -143,6 +145,7 @@ export function createMockServer(): ServerConnection {
     status: "idle",
     statusDetail: null,
     resources: { cpus: null, memoryMb: null },
+    monthlyBudgetUsd: null,
     snapshotPolicy: defaultSnapshotPolicy,
     heartbeats: [
       {
@@ -785,6 +788,7 @@ export function createMockServer(): ServerConnection {
             toolApprovals: input.toolApprovals,
             heartbeats: [],
             resources: { cpus: null, memoryMb: null },
+            monthlyBudgetUsd: null,
             status: "idle",
             createdAt: now(),
             lastActivityAt: now(),
@@ -828,6 +832,10 @@ export function createMockServer(): ServerConnection {
               }
             : {}),
           resources: patch.resources ?? current.resources,
+          monthlyBudgetUsd:
+            patch.monthlyBudgetUsd !== undefined
+              ? patch.monthlyBudgetUsd
+              : current.monthlyBudgetUsd,
           snapshotPolicy: patch.snapshotPolicy ?? current.snapshotPolicy,
           updatedAt: now(),
         });
@@ -855,6 +863,19 @@ export function createMockServer(): ServerConnection {
       resume: async ({ id }) => {
         save({ ...get(id), status: "idle", statusDetail: null });
         return { ok: true };
+      },
+      // The mock has no API keys, so nothing is ever spent.
+      spend: async ({ id }) => {
+        const now = new Date();
+        const budgetUsd = get(id).monthlyBudgetUsd;
+        return {
+          nibbletId: id,
+          budgetUsd,
+          spentUsd: 0,
+          month: budgetMonth(now),
+          resetsAt: budgetResetsAt(now).toISOString(),
+          allowed: true,
+        };
       },
       tasks: async () => [],
       apps: async () => mockApps,

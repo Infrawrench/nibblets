@@ -37,8 +37,13 @@ codex="${CODEX_AUTH_HOST_FILE:-$HOME/.codex/auth.json}"
   [ "$found" = 1 ] || echo "      []"
 } > compose.creds.yaml
 
-[ -f "$claude" ] || echo "No Claude login at $claude. Run 'claude' and sign in (on a Mac, use the desktop app: Claude Code keeps its login in the keychain)."
-[ -f "$codex" ] || echo "No Codex login at $codex. Run 'codex login' to use your ChatGPT subscription."
+# CLAUDE_CREDENTIALS_SOURCE=api-key or CODEX_AUTH_SOURCE=api-key in .env use
+# NIBBLET_ANTHROPIC_API_KEY or NIBBLET_OPENAI_API_KEY instead of a login.
+uses_key() { grep -q "^$1=api-key\$" .env; }
+uses_key CLAUDE_CREDENTIALS_SOURCE || [ -f "$claude" ] ||
+  echo "No Claude login at $claude. Run 'claude' and sign in (on a Mac, use the desktop app: Claude Code keeps its login in the keychain), or use an API key."
+uses_key CODEX_AUTH_SOURCE || [ -f "$codex" ] ||
+  echo "No Codex login at $codex. Run 'codex login' to use your ChatGPT subscription, or use an API key."
 
 if ! grep -q '^HOST_SSH_AUTH_SOCK=' .env; then
   # Docker Desktop and OrbStack forward the host's SSH agent at this path.

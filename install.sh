@@ -13,6 +13,10 @@
 #   NIBBLETS_VERSION which release, like 0.2.0, or a branch, like main
 #                    (default the latest release, or main before there is one)
 #   NIBBLETS_YES=1   answer yes to every question
+#   NIBBLETS_ANTHROPIC_API_KEY  run Claude Code on this Anthropic API key
+#                               instead of a Claude subscription
+#   NIBBLETS_OPENAI_API_KEY     run Codex on this OpenAI API key instead of
+#                               a ChatGPT subscription
 #
 # Copyright (C) 2026 Infrawrench. Licensed under the GNU GPL, version 2.
 
@@ -439,8 +443,8 @@ agent_name() {
 }
 agent_blurb() {
   case "$1" in
-    claude) echo "your Claude subscription" ;;
-    codex) echo "your ChatGPT subscription" ;;
+    claude) echo "your Claude subscription or an API key" ;;
+    codex) echo "your ChatGPT subscription or an API key" ;;
     opencode) echo "API keys, Copilot, and more" ;;
     kimi) echo "your Kimi subscription" ;;
     deepseek) echo "your DeepSeek API key" ;;
@@ -455,16 +459,48 @@ agent_emoji() {
     deepseek) echo "🐋" ;;
   esac
 }
-# DeepSeek runs Claude Code from the runner image, so there's nothing to install here.
-agent_installed() { [ "$1" = deepseek ] || command -v "$1" >/dev/null; }
-agent_signed_in() {
+# Claude Code and Codex can run on an API key instead of a subscription
+# login, and DeepSeek only takes one. The key goes in docker/.env for the
+# credential proxy, which is the only container that gets it.
+key_var() {
+  case "$1" in
+    claude) echo NIBBLET_ANTHROPIC_API_KEY ;;
+    codex) echo NIBBLET_OPENAI_API_KEY ;;
+    deepseek) echo DEEPSEEK_API_KEY ;;
+  esac
+}
+# Where the proxy is told to use the key rather than a login.
+source_var() {
+  case "$1" in
+    claude) echo CLAUDE_CREDENTIALS_SOURCE ;;
+    codex) echo CODEX_AUTH_SOURCE ;;
+  esac
+}
+uses_key() {
+  [ "$1" = deepseek ] && return 0
+  local var
+  var=$(source_var "$1")
+  [ -n "$var" ] && [ "$(env_get "$var")" = api-key ]
+}
+
+# On an API key, Claude Code and Codex run from the runner image, as DeepSeek
+# always does, so there's nothing to install here.
+agent_installed() { uses_key "$1" || command -v "$1" >/dev/null; }
+agent_logged_in() {
   case "$1" in
     claude) [ -s "$HOME/.claude/.credentials.json" ] ;;
     codex) [ -s "$HOME/.codex/auth.json" ] ;;
     opencode) [ -s "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json" ] ;;
     kimi) [ -s "${KIMI_CODE_HOME:-$HOME/.kimi-code}/credentials/kimi-code.json" ] ;;
-    deepseek) [ -n "$(env_get DEEPSEEK_API_KEY)" ] ;;
+    *) return 1 ;;
   esac
+}
+agent_signed_in() {
+  if uses_key "$1"; then
+    [ -n "$(env_get "$(key_var "$1")")" ]
+  else
+    agent_logged_in "$1"
+  fi
 }
 agent_install() {
   case "$1" in
@@ -487,20 +523,83 @@ agent_login() {
     opencode) opencode auth login ;;
     # Device codes too, so it can be approved on any device.
     kimi) kimi login ;;
-    # An API key, which only the credential proxy is given.
-    deepseek) deepseek_key ;;
   esac
 }
 
-deepseek_key() {
-  hint "Make one at https://platform.deepseek.com/api_keys, then paste it here (it won't show)."
-  local k
-  IFS= read -rs -p "  DeepSeek API key: " k </dev/tty || k=""
-  printf '\n'
-  case "$k" in
-    "" | *[!A-Za-z0-9_-]*) warn "That doesn't look like an API key."; return 1 ;;
+key_label() {
+  case "$1" in
+    claude) echo "Anthropic API key" ;;
+    codex) echo "OpenAI API key" ;;
+    deepseek) echo "DeepSeek API key" ;;
   esac
-  env_set DEEPSEEK_API_KEY "$k"
+}
+
+# Saves an agent's API key and switches it over to the key.
+save_key() {
+  case "$2" in
+    "" | *[!A-Za-z0-9_-]*) warn "That doesn't look like an $(key_label "$1")."; return 1 ;;
+  esac
+  env_set "$(key_var "$1")" "$2"
+  local var
+  var=$(source_var "$1")
+  if [ -n "$var" ]; then env_set "$var" api-key; fi
+}
+
+ask_key() {
+  case "$1" in
+    claude) hint "Make one at https://console.anthropic.com/settings/keys, then paste it here (it won't show)." ;;
+    codex) hint "Make one at https://platform.openai.com/api-keys, then paste it here (it won't show)." ;;
+    deepseek) hint "Make one at https://platform.deepseek.com/api_keys, then paste it here (it won't show)." ;;
+  esac
+  hint "Only the credential proxy gets it; your nibblets never see it."
+  local k
+  IFS= read -rs -p "  $(key_label "$1"): " k </dev/tty || k=""
+  printf '\n'
+  save_key "$1" "$k"
+}
+
+# Back to the subscription login, dropping the key it no longer uses.
+use_login() {
+  uses_key "$1" || return 0
+  env_set "$(source_var "$1")" auto
+  env_set "$(key_var "$1")" ""
+}
+
+# Keys passed to the installer, for setting up without questions.
+given_keys() {
+  if [ -n "${NIBBLETS_ANTHROPIC_API_KEY:-}" ]; then
+    save_key claude "$NIBBLETS_ANTHROPIC_API_KEY" && ok "Claude Code will use your Anthropic API key"
+  fi
+  if [ -n "${NIBBLETS_OPENAI_API_KEY:-}" ]; then
+    save_key codex "$NIBBLETS_OPENAI_API_KEY" && ok "Codex will use your OpenAI API key"
+  fi
+  return 0
+}
+
+# Sets HOW to login or key: whether to sign in to a subscription or paste an
+# API key. Fails when the question is put away with q.
+HOW=login
+choose_how() {
+  HOW=login
+  if [ "$1" = deepseek ]; then HOW=key && return 0; fi
+  [ -n "$(source_var "$1")" ] || return 0
+  local sub
+  case "$1" in
+    claude) sub="your Claude subscription (Pro or Max)" ;;
+    codex) sub="your ChatGPT subscription (Plus or Pro)" ;;
+  esac
+  say "How should $(agent_name "$1") pay for its work?"
+  printf '\n   %s  🎟️  %s\n' "${B}${PINK}[1]${R}" "$sub"
+  printf '   %s  🔑 %s %s\n\n' "${B}${PINK}[2]${R}" "an $(key_label "$1")" "${D}(billed per use)${R}"
+  local k
+  while true; do
+    k=$(key)
+    case "$k" in
+      1 | "") return 0 ;;
+      2) HOW=key && return 0 ;;
+      q | Q) return 1 ;;
+    esac
+  done
 }
 
 any_signed_in() {
@@ -515,7 +614,9 @@ draw_agents() {
   for a in "${AGENTS[@]}"; do
     i=$((i + 1))
     name=$(agent_name "$a")
-    if agent_signed_in "$a"; then
+    if agent_signed_in "$a" && uses_key "$a"; then
+      state="✔ API key" colour=$GREEN
+    elif agent_signed_in "$a"; then
       state="✔ signed in" colour=$GREEN
     elif agent_installed "$a"; then
       state="◐ needs signing in" colour=$YELLOW
@@ -532,6 +633,7 @@ draw_agents() {
 
 setup_agents() {
   step "🤖 Agents"
+  given_keys
   if [ "$INTERACTIVE" != 1 ]; then
     draw_agents
     any_signed_in || warn "No agent is signed in. Run this again in a terminal to set one up."
@@ -559,9 +661,19 @@ setup_agents() {
         local name
         name=$(agent_name "$a")
         printf '\n'
+        choose_how "$a" || continue
         # Ctrl-C stops the install or sign-in and comes back here, rather than quitting.
         trap 'printf "\n"' INT
-        if ! agent_installed "$a"; then
+        if [ "$HOW" = key ]; then
+          if ask_key "$a"; then
+            ok "$name will use your $(key_label "$a") 🎉"
+          else
+            warn "$name isn't set up yet. Press $k to try again."
+          fi
+          trap - INT
+          continue
+        fi
+        if ! command -v "$a" >/dev/null; then
           say "📦 Installing $name…"
           if agent_install "$a" </dev/tty; then
             hash -r
@@ -570,10 +682,11 @@ setup_agents() {
             warn "$name didn't install."
           fi
         fi
-        if agent_installed "$a"; then
+        if command -v "$a" >/dev/null; then
           say "🔑 Signing in to $name. Follow along below; open the link on any device."
           printf '\n'
-          if agent_login "$a" </dev/tty && agent_signed_in "$a"; then
+          if agent_login "$a" </dev/tty && agent_logged_in "$a"; then
+            use_login "$a"
             printf '\n'
             ok "$name is ready 🎉"
           else

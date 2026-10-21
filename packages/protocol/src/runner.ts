@@ -233,7 +233,7 @@ export const RunnerEnv = z.object({
   NIBBLET_MCP_URL: z.string(),
   /** e.g. `http://credproxy:8787`; harnesses get `/anthropic` and `/openai` under it. */
   NIBBLET_CREDPROXY_URL: z.string(),
-  /** Shared secret for the proxy; see `HarnessContext.credproxyKey`. */
+  /** This nibblet's key for the proxy; see `HarnessContext.credproxyKey`. */
   NIBBLET_CREDPROXY_KEY: z.string(),
   /** Set when the nibblet has a browser: OpenComputerUse is registered as an MCP server. */
   NIBBLET_BROWSER: z.enum(["0", "1"]).default("0"),

@@ -1,6 +1,7 @@
 import {
   CredentialStatus,
   FileRef,
+  type BilledProvider,
   TurnSource,
   type HarnessId,
   type ThreadItemOf,
@@ -10,10 +11,11 @@ import type { Config } from "./config.ts";
 import { newId, type Store } from "./store.ts";
 
 /**
- * Waiting out subscription usage limits. When a turn fails because the
- * nibblet's subscription is out of usage, it isn't reported as a failure:
- * the turn goes back on the queue and runs again once the limit resets. The
- * wait is kept in settings so a server restart doesn't lose it.
+ * Waiting out subscription usage limits, and nibblets' own monthly budgets
+ * for API keys. When a turn fails because the nibblet's subscription is out
+ * of usage, or its budget is spent, it isn't reported as a failure: the turn
+ * goes back on the queue and runs again once the limit resets (or the budget
+ * is raised). The wait is kept in settings so a server restart doesn't lose it.
  */
 
 export type LimitProvider = "anthropic" | "openai";
@@ -25,6 +27,19 @@ export function providerFor(nibblet: { harness: HarnessId; model: string }): Lim
   // OpenCode models are `provider/model`; only these two go through the proxy.
   const prefix = nibblet.model.split("/")[0];
   return prefix === "anthropic" || prefix === "openai" ? prefix : null;
+}
+
+/** Which API a nibblet's turns go to through the proxy, whether or not it's billed. */
+export function billedProviderFor(nibblet: {
+  harness: HarnessId;
+  model: string;
+}): BilledProvider | null {
+  return nibblet.harness === "deepseek" ? "deepseek" : providerFor(nibblet);
+}
+
+/** Whether an error is the credential proxy refusing a request over the nibblet's budget. */
+export function looksLikeBudget(text: string | null): boolean {
+  return text !== null && /monthly budget/i.test(text);
 }
 
 /** Whether an error message is a usage limit rather than a real failure. */
@@ -55,7 +70,12 @@ export const WaitingTurn = z.object({
 });
 export type WaitingTurn = z.infer<typeof WaitingTurn>;
 
+export const WaitReason = z.enum(["usage", "budget"]);
+export type WaitReason = z.infer<typeof WaitReason>;
+
 const Wait = z.object({
+  /** Waits saved before budgets were all for usage limits. */
+  reason: WaitReason.default("usage"),
   until: z.iso.datetime(),
   provider: z.enum(["anthropic", "openai"]).nullable(),
   itemId: z.string(),
@@ -67,9 +87,17 @@ const Waits = z.record(z.string(), Wait);
 const SETTING = "limitWaits";
 const STATUS_TTL_MS = 15_000;
 
-/** The proxy's view of which subscriptions are limited, briefly cached. */
+interface ProxyView {
+  /** Whether the proxy answered; nothing below is known if it didn't. */
+  known: boolean;
+  until: Map<LimitProvider, Date>;
+  /** Providers the proxy reaches on an API key rather than a subscription. */
+  keyed: Set<BilledProvider>;
+}
+
+/** The proxy's view of which subscriptions are limited, and which are API keys, briefly cached. */
 export class ProviderLimits {
-  private cached: { at: number; until: Map<LimitProvider, Date> } | null = null;
+  private cached: ({ at: number } & ProxyView) | null = null;
   private readonly config: Config;
   private readonly fetchImpl: typeof fetch;
 
@@ -79,12 +107,25 @@ export class ProviderLimits {
   }
 
   async until(provider: LimitProvider): Promise<Date | null> {
+    const until = (await this.view()).until.get(provider);
+    return until && until.getTime() > Date.now() ? until : null;
+  }
+
+  /**
+   * Whether the proxy reaches this provider on an API key, so its usage
+   * costs money; null when the proxy couldn't be asked.
+   */
+  async onApiKey(provider: BilledProvider): Promise<boolean | null> {
+    const view = await this.view();
+    return view.known ? view.keyed.has(provider) : null;
+  }
+
+  private async view(): Promise<ProxyView> {
     const now = Date.now();
     if (!this.cached || now - this.cached.at > STATUS_TTL_MS) {
-      this.cached = { at: now, until: await this.load() };
+      this.cached = { at: now, ...(await this.load()) };
     }
-    const until = this.cached.until.get(provider);
-    return until && until.getTime() > now ? until : null;
+    return this.cached;
   }
 
   /** Forget the cache, e.g. right before deciding whether a failure was a limit. */
@@ -92,18 +133,21 @@ export class ProviderLimits {
     this.cached = null;
   }
 
-  private async load(): Promise<Map<LimitProvider, Date>> {
-    const out = new Map<LimitProvider, Date>();
+  private async load(): Promise<ProxyView> {
+    const out: ProxyView = { known: false, until: new Map(), keyed: new Set() };
     try {
       const res = await this.fetchImpl(`${this.config.CREDPROXY_URL}/status`, {
         headers: { authorization: `Bearer ${this.config.CREDPROXY_ADMIN_KEY}` },
         signal: AbortSignal.timeout(3000),
       });
       if (!res.ok) return out;
-      for (const status of z.array(CredentialStatus).parse(await res.json())) {
+      const statuses = z.array(CredentialStatus).parse(await res.json());
+      out.known = true;
+      for (const status of statuses) {
+        if (status.source === "env") out.keyed.add(status.provider);
         // DeepSeek is an API key, with no subscription limit to wait out.
         if (status.limitedUntil && status.provider !== "deepseek")
-          out.set(status.provider, new Date(status.limitedUntil));
+          out.until.set(status.provider, new Date(status.limitedUntil));
       }
     } catch {
       // No proxy answer: nothing known to be limited.
@@ -140,6 +184,11 @@ export class LimitWaits {
     return this.waits.has(nibbletId);
   }
 
+  /** The nibblets waiting, for this reason. */
+  waitingFor(reason: WaitReason): string[] {
+    return [...this.waits].filter(([, w]) => w.reason === reason).map(([id]) => id);
+  }
+
   /** Re-arms waits saved before a restart, resuming at once any that already passed. */
   async restore(): Promise<void> {
     const saved = await this.store.getSetting(SETTING, (v) => Waits.parse(v), {});
@@ -156,9 +205,11 @@ export class LimitWaits {
     provider: LimitProvider | null,
     until: Date,
     turns: WaitingTurn[],
+    reason: WaitReason = "usage",
   ): Promise<void> {
     const existing = this.waits.get(nibbletId);
     const wait: Wait = {
+      reason,
       until: until.toISOString(),
       provider,
       itemId: existing?.itemId ?? newId("limit"),
@@ -170,7 +221,9 @@ export class LimitWaits {
     await this.store.setStatus(
       nibbletId,
       "waiting",
-      `Usage limit reached, resuming at ${clock(until)}`,
+      reason === "budget"
+        ? `Monthly budget spent, resuming ${until.toISOString().slice(0, 10)}`
+        : `Usage limit reached, resuming at ${clock(until)}`,
     );
     this.arm(nibbletId, until);
   }
@@ -231,6 +284,7 @@ export class LimitWaits {
     await this.store.putItem(nibbletId, {
       type: "limit_wait",
       id: wait.itemId,
+      reason: wait.reason,
       turnId: wait.turns[0]?.turnId ?? null,
       createdAt: existing?.createdAt ?? this.now().toISOString(),
       provider: wait.provider,

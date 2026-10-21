@@ -78,6 +78,13 @@
       "when": 1792573092242,
       "tag": "0010_prompt_name",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792575383186,
+      "tag": "0011_budgets",
+      "breakpoints": true
     }
   ]
 }

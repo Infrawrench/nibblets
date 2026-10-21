@@ -177,7 +177,7 @@ export function randomHamsterLook(random: () => number = Math.random): HamsterLo
   };
 }
 
-/** `waiting`: its subscription's usage limit is hit; it carries on when that resets. */
+/** `waiting`: its usage limit or budget is hit; it carries on when that resets. */
 export const NibbletStatus = z.enum(["stopped", "starting", "idle", "working", "waiting", "error"]);
 export type NibbletStatus = z.infer<typeof NibbletStatus>;
 
@@ -195,6 +195,9 @@ export const Resources = z.object({
 });
 export type Resources = z.infer<typeof Resources>;
 export const DEFAULT_MEMORY_MB = 4096;
+
+/** A nibblet's monthly budget for API-key usage, in US dollars. */
+export const MonthlyBudget = z.number().positive().max(1_000_000);
 export const defaultResources: Resources = { cpus: null, memoryMb: null };
 
 export const PromptName = z.string().trim().max(80);
@@ -221,6 +224,12 @@ export const Nibblet = z.object({
   statusDetail: z.string().nullable(),
   heartbeats: z.array(Heartbeat),
   resources: Resources,
+  /**
+   * The most its API-key usage may cost in a calendar month (UTC), in US
+   * dollars, or null for no limit. A sub-agent's usage counts against its
+   * host's, and a subscription doesn't count at all.
+   */
+  monthlyBudgetUsd: z.number().nullable(),
   snapshotPolicy: SnapshotPolicy,
   /** Whether the container gets a browser it and the user can drive. */
   browser: z.boolean(),
@@ -297,6 +306,8 @@ export const UpdateNibblet = z.object({
   tailscale: NibbletTailscale.nullable().optional(),
   // No heartbeats: the nibblet sets its own with the `heartbeat_*` tools.
   resources: Resources.optional(),
+  /** Null for no limit. */
+  monthlyBudgetUsd: MonthlyBudget.nullable().optional(),
   snapshotPolicy: SnapshotPolicy.optional(),
 });
 
@@ -388,9 +399,14 @@ export const ThreadItem = z.discriminatedUnion("type", [
     reason: z.string().nullable(),
     decidedAt: Timestamp.nullable(),
   }),
-  /** The nibblet hit its subscription's usage limit and is waiting for it to reset. */
+  /**
+   * The nibblet hit its subscription's usage limit, or its own monthly budget,
+   * and is waiting for it to reset.
+   */
   ItemBase.extend({
     type: z.literal("limit_wait"),
+    /** Waits from before budgets were all for usage limits. */
+    reason: z.enum(["usage", "budget"]).default("usage"),
     provider: z.enum(["anthropic", "openai"]).nullable(),
     /** When it carries on. */
     until: Timestamp,
@@ -497,9 +513,12 @@ export const Memory = z.object({
 export type Memory = z.infer<typeof Memory>;
 
 export const CredentialStatus = z.object({
-  /** `deepseek` is an API key rather than a subscription login. */
+  /**
+   * `deepseek` is always an API key; `anthropic` and `openai` are a
+   * subscription login, or an API key when `source` is `env`.
+   */
   provider: z.enum(["anthropic", "openai", "deepseek"]),
-  /** Where the proxy reads the credential from. */
+  /** Where the proxy reads the credential from: `env` is an API key in its settings. */
   source: z.enum(["keychain", "file", "env", "none"]),
   ok: z.boolean(),
   detail: z.string(),

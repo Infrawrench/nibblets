@@ -18,7 +18,7 @@ On a Linux server or VM, one command sets up Docker or Podman, your agents, and 
 curl -fsSL https://nibblets.dev/install.sh | bash
 ```
 
-Run it again to update or to sign in to another agent.
+Run it again to update or to sign in to another agent. Claude Code and Codex can use an Anthropic or OpenAI API key instead of a subscription: pick that when the installer asks, or pass `NIBBLETS_ANTHROPIC_API_KEY` or `NIBBLETS_OPENAI_API_KEY` to it. Each nibblet can then have a monthly budget for what it spends, in its settings.
 
 On a Mac, the desktop app (`apps/desktop`) does all of this for you: it checks Docker, finds your Claude and Codex logins, starts the stack, and opens the UI signed in.
 
@@ -39,7 +39,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md). In short:
 
 - **server**: the API, the UI, the scheduler and heartbeats, the nibblet tools (over MCP), and Docker orchestration
 - **db**: Postgres with pgvector, which holds every durable thing
-- **credproxy**: holds your Claude and ChatGPT subscription credentials and injects them into harness traffic, so containers never see those tokens
+- **credproxy**: holds your Claude and ChatGPT subscription credentials (or API keys, if you'd rather pay per use) and injects them into harness traffic, so containers never see those tokens
 - **one runner container per nibblet**: its harness, run as one user, and a guard, run as another, which holds the browser (OpenComputerUse driving Chromium on a headless Wayland display), 1Password and the nibblet's MCP servers behind "ask me first" rules
 - **tunnel**: `cloudflared`, run when the server is linked to Nibblets Connect
 - **Nibblets Connect** (`apps/connect`): the central service on Cloudflare Workers where you sign in and see every server
