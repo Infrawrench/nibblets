@@ -44,6 +44,8 @@ export interface StackOptions {
   hostFromDocker?: string;
   /** The Hyper-V switch VMs go out through, where there's no Default Switch. */
   hypervSwitch?: string;
+  /** Offer macOS guests, which are off unless asked for. */
+  macosGuests?: boolean;
   log?: (line: string) => void;
 }
 
@@ -155,6 +157,7 @@ export class TestStack {
             ? { appleHelper: process.env.NIBBLET_TEST_APPLE_HELPER }
             : {}),
           ...(this.opts.hypervSwitch ? { hypervSwitch: this.opts.hypervSwitch } : {}),
+          macosGuests: this.opts.macosGuests ?? false,
           log: (m) => this.log(`bridge: ${m}`),
         }),
         log: (m) => this.log(`bridge: ${m}`),

@@ -56,11 +56,13 @@ const missing = !backend
 /** A Linux VM's first start makes its image from the runner image: minutes. */
 const FIRST_START_MS = vm ? 30 * 60_000 : 5 * 60_000;
 /**
- * Installing Windows from its ISO, or macOS from Apple's restore image, then
- * Node and the runner: half an hour or so with a hypervisor's acceleration,
- * so longer means it's stuck (the hypervisor's own limit is longer).
+ * How long a guest's image may take. Windows' (installing from its ISO,
+ * then Node and the runner) is half an hour or so with a hypervisor's
+ * acceleration, so longer means it's stuck (the hypervisor's own limit is
+ * longer). macOS's starts by downloading Apple's restore image, 25 GB for
+ * macOS 26, which on an ordinary connection takes hours.
  */
-const INSTALL_MS = 90 * 60_000;
+const INSTALL_MS = (guest === "macos" ? 4 * 60 : 90) * 60_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -109,6 +111,8 @@ describe.skipIf(missing !== null)(title, () => {
     ...(process.env.NIBBLET_TEST_HYPERV_SWITCH
       ? { hypervSwitch: process.env.NIBBLET_TEST_HYPERV_SWITCH }
       : {}),
+    // Off on every host unless asked for, and asked for by testing them.
+    macosGuests: guest === "macos",
     log: process.env.NIBBLET_TEST_VERBOSE ? (line) => console.log(line) : undefined,
   });
   /** A runner of another stack's, which this one's server must leave alone. */

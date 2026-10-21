@@ -16,6 +16,8 @@ export interface HostMachinesConfig {
   appleHelper?: string;
   /** The Hyper-V switch VMs go out through: the Default Switch, unless there isn't one (Windows Server). */
   hypervSwitch?: string;
+  /** Whether to offer macOS guests on Apple silicon, which are off for now: NIBBLET_MACOS_GUESTS=1 unless given. */
+  macosGuests?: boolean;
   /** The nibblet server and the credential proxy, as this host reaches them. */
   server?: string;
   credproxy?: string;
@@ -24,11 +26,16 @@ export interface HostMachinesConfig {
 
 /** The hypervisor plugin for this OS: there's one of each, and only one fits. */
 export function hypervisorsHere(
-  config: Pick<HostMachinesConfig, "appleHelper" | "hypervSwitch">,
+  config: Pick<HostMachinesConfig, "appleHelper" | "hypervSwitch" | "macosGuests">,
 ): HypervisorPlugin[] {
   switch (process.platform) {
     case "darwin":
-      return [new AppleVirtualization(config.appleHelper ? { helper: config.appleHelper } : {})];
+      return [
+        new AppleVirtualization({
+          ...(config.appleHelper ? { helper: config.appleHelper } : {}),
+          macos: config.macosGuests ?? process.env.NIBBLET_MACOS_GUESTS === "1",
+        }),
+      ];
     case "win32":
       return [new HyperV(config.hypervSwitch ? { switch: config.hypervSwitch } : {})];
     case "linux":

@@ -34,8 +34,11 @@ NIBBLET_TEST_MACHINE=apple NIBBLET_TEST_GUEST=macos pnpm test:integration
 
 Windows and macOS are installed first, through the API as Settings would:
 Windows from your ISO (an evaluation one from Microsoft does), and macOS
-from Apple's restore image, which is about 15 GB and asks for an
-administrator's password in a window. Each takes up to an hour. They then
+from Apple's restore image, which is about 25 GB for macOS 26 and asks for an
+administrator's password in a window. Windows takes up to an hour; macOS
+needs about 55 GB free, and its download can take hours. macOS guests are
+off for now (a bridge offers them only with `NIBBLET_MACOS_GUESTS=1`): the
+test turns them on for its own bridge. They then
 install the runner from GitHub at this commit, so push it first, or set
 `NIBBLET_TEST_GUEST_REF` (and `NIBBLET_TEST_GUEST_REPO` for a fork).
 

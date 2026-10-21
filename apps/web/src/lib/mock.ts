@@ -1122,8 +1122,6 @@ export function createMockServer(): ServerConnection {
     sshAgent: false,
     liveResources: false,
   };
-  // As vmCapabilities says: Linux and Windows guests have both, macOS guests neither yet.
-  const macosVm: MachineCapabilities = { ...guestVm, browser: false, tailscale: false };
   const ready: GuestImage = { state: "ready", detail: null, progress: null, source: "none" };
   const mockMachines: MachineBackend[] = [
     {
@@ -1148,10 +1146,7 @@ export function createMockServer(): ServerConnection {
       available: true,
       detail: null,
       recommended: false,
-      guests: [
-        { os: "linux", image: { ...ready, state: "missing" }, capabilities: guestVm },
-        { os: "macos", image: { ...ready, state: "missing" }, capabilities: macosVm },
-      ],
+      guests: [{ os: "linux", image: { ...ready, state: "missing" }, capabilities: guestVm }],
     },
     {
       id: "hyperv",
