@@ -1,0 +1,17 @@
+{
+  "name": "@nibblet/bank-stripe",
+  "version": "0.3.2",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@nibblet/bank": "workspace:*",
+    "@nibblet/protocol": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}

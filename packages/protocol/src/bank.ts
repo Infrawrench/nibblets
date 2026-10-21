@@ -19,7 +19,7 @@ const Timestamp = z.iso.datetime();
 export const BankProviderId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/);
 export type BankProviderId = z.infer<typeof BankProviderId>;
 
-/** An asset's code: `USD`, `BTC`, `ETH`. */
+/** An asset's code: `USD`, `EUR`, `BTC`, `ETH`. */
 export const AssetCode = z.string().regex(/^[A-Z0-9]{2,10}$/);
 export type AssetCode = z.infer<typeof AssetCode>;
 

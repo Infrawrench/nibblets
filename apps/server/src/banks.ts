@@ -16,6 +16,7 @@ import {
 import { bitcoin } from "@nibblet/bank-bitcoin";
 import { ethereum } from "@nibblet/bank-ethereum";
 import { slash } from "@nibblet/bank-slash";
+import { stripe } from "@nibblet/bank-stripe";
 import {
   BankName,
   BankProviderId,
@@ -34,7 +35,7 @@ import type { CardRow, Store } from "./store.ts";
  * saved under its own id can also have one from the server's environment
  * (variables named like its fields; see `docker/compose.yaml`).
  */
-export const BANK_PLUGINS: readonly BankPluginFactory[] = [slash, bitcoin, ethereum];
+export const BANK_PLUGINS: readonly BankPluginFactory[] = [slash, stripe, bitcoin, ethereum];
 
 const SETTING = "banks";
 const Saved = z.array(

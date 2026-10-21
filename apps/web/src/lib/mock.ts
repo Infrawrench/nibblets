@@ -315,6 +315,34 @@ export function createMockServer(): ServerConnection {
       ],
     },
     {
+      id: "stripe",
+      name: "Stripe",
+      about: "Virtual cards from Stripe Issuing, on your Stripe account.",
+      instrument: "card",
+      fields: [
+        field("STRIPE_API_KEY", "API key", {
+          required: true,
+          secret: true,
+          placeholder: "sk_live_… or rk_live_…",
+          hint: "A secret key, or a restricted key with write access to Issuing cards and read access to Issuing cardholders, authorizations and transactions, and balances.",
+        }),
+        field("STRIPE_CARDHOLDER_ID", "Cardholder ID", {
+          required: true,
+          placeholder: "ich_…",
+          hint: "The Issuing cardholder cards are made for. Make one in Stripe's dashboard; its billing address goes with each card.",
+        }),
+        field("STRIPE_CURRENCY", "Currency", {
+          lockedByCards: true,
+          options: [
+            { value: "usd", label: "US dollars" },
+            { value: "eur", label: "Euros" },
+            { value: "gbp", label: "Pounds sterling" },
+          ],
+          hint: "Your Issuing balance's currency. US dollars if it's blank.",
+        }),
+      ],
+    },
+    {
       id: "bitcoin",
       name: "Bitcoin",
       about: "A treasury wallet that funds a fresh wallet for each card, with exactly its limit.",

@@ -17,6 +17,7 @@
     "@nibblet/bank-bitcoin": "workspace:*",
     "@nibblet/bank-ethereum": "workspace:*",
     "@nibblet/bank-slash": "workspace:*",
+    "@nibblet/bank-stripe": "workspace:*",
     "@nibblet/db": "workspace:*",
     "@nibblet/protocol": "workspace:*",
     "croner": "^10.0.1",
