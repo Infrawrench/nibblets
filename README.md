@@ -63,6 +63,10 @@ The server and runner run TypeScript directly on Node 24, with no build step. Th
 
 `pnpm release 0.2.0` sets every package's version, commits and pushes. The Release workflow then publishes the server, runner and credential proxy images to GHCR for both architectures, builds the Mac app on Apple Silicon and Intel, signs and notarises it, and makes the `v0.2.0` GitHub release. [nibblets.dev](https://nibblets.dev) serves its downloads, and servers and the app offer it as an update.
 
+### API
+
+A running server describes its API in OpenAPI 3.1 at `/api/openapi.json`, built from what it serves: the contract's procedures (`packages/protocol`) and the plain HTTP routes, which are mounted through `Routes` (`apps/server/src/http.ts`) so each is declared once, with its description.
+
 Harnesses are plugins (`packages/harness-*`) that implement `HarnessPlugin` from `@nibblet/harness`. Where nibblets run is too: `packages/machine-*` implement `@nibblet/machine`'s contracts, a container plugin for the server and a hypervisor plugin for each host OS. Credential sources in the proxy and embedding backends in the server follow the same pattern.
 
 ## Licence

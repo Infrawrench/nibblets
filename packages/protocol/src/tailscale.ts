@@ -73,7 +73,7 @@ export const NibbletTailscale = z.object({
     .array(TailnetPort)
     .max(20)
     .default([])
-    .transform((ports) => [...new Set(ports)].sort((a, b) => a - b)),
+    .overwrite((ports) => [...new Set(ports)].sort((a, b) => a - b)),
 });
 export type NibbletTailscale = z.infer<typeof NibbletTailscale>;
 

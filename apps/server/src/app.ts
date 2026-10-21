@@ -3,11 +3,14 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import {
   contract,
   createDispatcher,
+  HttpError,
+  LiveMessage,
+  RpcErrorCode,
   RunnerToServer,
+  TerminalEvent,
   TerminalInput,
-  type LiveMessage,
-  type TerminalEvent,
 } from "@nibblet/protocol";
+import { openApiDocument } from "@nibblet/protocol/openapi";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -21,6 +24,7 @@ import { bearerToken, safeEqual } from "./auth.ts";
 import type { Bus } from "./bus.ts";
 import type { RunnerLink } from "./conductor.ts";
 import { createHandlers, type Services } from "./handlers.ts";
+import { Routes, type Auth } from "./http.ts";
 import { hostMcpHandler } from "./hostmcp.ts";
 import { mountBudgets } from "./budget.ts";
 import { purchasePath } from "./banks.ts";
@@ -66,7 +70,25 @@ export function createApp(services: Services, bus: Bus) {
     await next();
   };
 
+  const signedOut = {
+    description: "Not signed in.",
+    body: z.object({
+      ok: z.literal(false),
+      error: z.object({ code: RpcErrorCode, message: z.string() }),
+    }),
+  };
+  const auth = {
+    anyone: { security: [] },
+    user: { check: requireUser, security: [{ bearer: [] }], rejects: signedOut },
+    ticket: {
+      check: requireTicket,
+      security: [{ ticket: [] }],
+      rejects: { description: "No ticket, or it has expired." },
+    },
+  } satisfies Record<string, Auth>;
+
   const app = new Hono();
+  const routes = new Routes(app);
 
   // Nibblets Connect, open in the desktop app, reaches the app's own server on
   // 127.0.0.1; the browser asks first whether a public page may.
@@ -88,13 +110,39 @@ export function createApp(services: Services, bus: Bus) {
   // Nibblets Connect's UI checks which route to a server answers before using it.
   app.use("/healthz", cors({ origin: "*", maxAge: 600 }));
 
-  app.get("/healthz", (c) => c.json({ ok: true }));
+  routes.get(
+    "/healthz",
+    {
+      summary: "Whether the server is up.",
+      tags: ["server"],
+      auth: auth.anyone,
+      responses: { 200: { description: "It is.", body: z.object({ ok: z.literal(true) }) } },
+    },
+    (c) => c.json({ ok: true }),
+  );
 
   // A card provider asking, from the internet, whether a purchase may go
   // through. No one signs in: the bank checks the provider's signature.
-  app.post(
+  app.use(
     purchasePath(":kind"),
     bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.text("Too large", 413) }),
+  );
+  routes.post(
+    purchasePath(":kind"),
+    {
+      summary: "A card provider asking whether a purchase may go through.",
+      description:
+        "Set up as the provider's purchase webhook (`bank.status` says where). The body and answer are in the provider's own form, and only a bank set up here whose signature checks out is answered.",
+      tags: ["bank"],
+      auth: auth.anyone,
+      params: { kind: "The bank's plugin, such as `stripe`." },
+      body: "binary",
+      responses: {
+        200: { description: "The bank's answer, as its provider expects it.", body: "binary" },
+        400: { description: "Not signed by a bank set up here." },
+        413: { description: "Larger than 256 KiB." },
+      },
+    },
     async (c) => {
       const answer = await services.banks.purchase(c.req.param("kind") ?? "", {
         headers: c.req.raw.headers,
@@ -105,24 +153,65 @@ export function createApp(services: Services, bus: Bus) {
     },
   );
 
-  app.post("/api/pair", async (c) => {
-    const body = z
-      .object({ code: z.string(), label: z.string().max(100).optional() })
-      .safeParse(await c.req.json().catch(() => null));
-    if (!body.success || !(await store.redeemPairingCode(body.data.code))) {
-      return c.json({ error: "That pairing link has expired or was already used" }, 401);
-    }
-    const token = await store.issueAuthToken(body.data.label ?? "Browser");
-    return c.json({ token });
-  });
+  // What the API looks like is no secret: the source is public. Built on the
+  // first request, once every route is mounted.
+  let openapi: ReturnType<typeof openApiDocument> | null = null;
+  routes.get(
+    "/api/openapi.json",
+    {
+      summary: "This description of the API.",
+      tags: ["server"],
+      auth: auth.anyone,
+      responses: { 200: { description: "An OpenAPI 3.1 document." } },
+    },
+    (c) =>
+      c.json(
+        (openapi ??= openApiDocument({ version: services.version, routes: routes.described })),
+      ),
+  );
 
-  app.post("/api/ticket", requireUser, (c) => {
-    const now = Date.now();
-    for (const [t, exp] of tickets) if (exp < now) tickets.delete(t);
-    const ticket = randomBytes(24).toString("base64url");
-    tickets.set(ticket, now + TICKET_TTL_MS);
-    return c.json({ ticket });
-  });
+  routes.post(
+    "/api/pair",
+    {
+      summary: "Trades a pairing link's code for a token to sign in with.",
+      description:
+        "`auth.createPairingLink` (or `cli.ts pair`) makes the link; its code works once.",
+      tags: ["auth"],
+      auth: auth.anyone,
+      body: z.object({
+        code: z.string(),
+        label: z.string().max(100).optional().describe("What to call this device."),
+      }),
+      responses: {
+        200: { description: "A bearer token.", body: z.object({ token: z.string() }) },
+        401: { description: "The code has expired or was already used.", body: HttpError },
+      },
+    },
+    async (c, { body }) => {
+      if (!(await store.redeemPairingCode(body.code))) {
+        return c.json({ error: "That pairing link has expired or was already used" }, 401);
+      }
+      const token = await store.issueAuthToken(body.label ?? "Browser");
+      return c.json({ token });
+    },
+  );
+
+  routes.post(
+    "/api/ticket",
+    {
+      summary: "A one-time ticket to open a WebSocket with, good for 30 seconds.",
+      tags: ["auth"],
+      auth: auth.user,
+      responses: { 200: { description: "The ticket.", body: z.object({ ticket: z.string() }) } },
+    },
+    (c) => {
+      const now = Date.now();
+      for (const [t, exp] of tickets) if (exp < now) tickets.delete(t);
+      const ticket = randomBytes(24).toString("base64url");
+      tickets.set(ticket, now + TICKET_TTL_MS);
+      return c.json({ ticket });
+    },
+  );
 
   app.post("/api/rpc/:path", requireUser, async (c) => {
     const input: unknown = await c.req.json().catch(() => ({}));
@@ -139,27 +228,36 @@ export function createApp(services: Services, bus: Bus) {
     return c.json(res, status);
   });
 
-  app.get(
+  const live = upgradeWebSocket(() => {
+    let unsubscribe: (() => void) | null = null;
+    let keepalive: ReturnType<typeof setInterval> | null = null;
+    return {
+      onOpen(_event, ws) {
+        unsubscribe = bus.subscribeUi((message: LiveMessage) =>
+          ws.send(JSON.stringify(message), { compress: true }),
+        );
+        // Tunnels and proxies close sockets that go quiet (Cloudflare's after
+        // 100 seconds), and the browser uses this to spot a dead one.
+        keepalive = setInterval(() => ws.send("ping"), LIVE_KEEPALIVE_MS);
+      },
+      onClose() {
+        unsubscribe?.();
+        if (keepalive) clearInterval(keepalive);
+      },
+    };
+  });
+  routes.get(
     "/api/live",
-    requireTicket,
-    upgradeWebSocket(() => {
-      let unsubscribe: (() => void) | null = null;
-      let keepalive: ReturnType<typeof setInterval> | null = null;
-      return {
-        onOpen(_event, ws) {
-          unsubscribe = bus.subscribeUi((message: LiveMessage) =>
-            ws.send(JSON.stringify(message), { compress: true }),
-          );
-          // Tunnels and proxies close sockets that go quiet (Cloudflare's after
-          // 100 seconds), and the browser uses this to spot a dead one.
-          keepalive = setInterval(() => ws.send("ping"), LIVE_KEEPALIVE_MS);
-        },
-        onClose() {
-          unsubscribe?.();
-          if (keepalive) clearInterval(keepalive);
-        },
-      };
-    }),
+    {
+      summary: "Live updates, over a WebSocket.",
+      description:
+        "Each message is a `LiveMessage` as JSON, apart from a bare `ping` every 25 seconds.",
+      tags: ["live"],
+      auth: auth.ticket,
+      responses: { 101: { description: "Switching to a WebSocket." } },
+      websocket: { receive: LiveMessage },
+    },
+    (c, _input, next) => live(c, next),
   );
 
   // Runners authenticate with their nibblet's token in a header; they aren't browsers.
@@ -212,57 +310,73 @@ export function createApp(services: Services, bus: Bus) {
   app.all("/hostmcp/:name", hostMcpHandler(services));
 
   // A terminal in the nibblet's container, as its agent's user, carried over the runner's socket.
-  app.get(
+  const size = (fallback: number) => z.coerce.number().int().min(1).max(1000).catch(fallback);
+  routes.get(
     "/api/nibblets/:id/terminal",
-    requireTicket,
-    upgradeWebSocket((c) => {
-      const nibbletId = c.req.param("id") ?? "";
-      const size = (name: string, fallback: number) => {
-        const n = Number(c.req.query(name));
-        return Number.isInteger(n) && n >= 1 && n <= 1000 ? n : fallback;
-      };
-      const taskId = c.req.query("task") || null;
-      let terminalId: string | null = null;
-      return {
-        onOpen(_event, ws) {
-          const send = (event: TerminalEvent) => ws.send(JSON.stringify(event), { compress: true });
-          terminalId = conductor.terminals.openTerminal(
-            nibbletId,
-            { cols: size("cols", 80), rows: size("rows", 24) },
-            taskId,
-            {
-              output: (data) => send({ type: "output", data }),
-              exit: (code) => {
-                terminalId = null;
-                send({ type: "exit", code });
-                ws.close(1000, "exited");
+    {
+      summary: "A terminal in the nibblet's container, over a WebSocket.",
+      description:
+        "Send `TerminalInput` messages and receive `TerminalEvent` ones, as JSON. The socket closes after `exit` or `error`.",
+      tags: ["nibblets"],
+      auth: auth.ticket,
+      params: { id: "The nibblet's id." },
+      query: z.object({
+        cols: size(80),
+        rows: size(24),
+        task: z
+          .string()
+          .optional()
+          .describe("A background task's id, to attach to its terminal rather than a new shell."),
+      }),
+      responses: { 101: { description: "Switching to a WebSocket." } },
+      websocket: { send: TerminalInput, receive: TerminalEvent },
+    },
+    (c, { query }, next) =>
+      upgradeWebSocket(() => {
+        const nibbletId = c.req.param("id") ?? "";
+        const taskId = query.task || null;
+        let terminalId: string | null = null;
+        return {
+          onOpen(_event, ws) {
+            const send = (event: TerminalEvent) =>
+              ws.send(JSON.stringify(event), { compress: true });
+            terminalId = conductor.terminals.openTerminal(
+              nibbletId,
+              { cols: query.cols, rows: query.rows },
+              taskId,
+              {
+                output: (data) => send({ type: "output", data }),
+                exit: (code) => {
+                  terminalId = null;
+                  send({ type: "exit", code });
+                  ws.close(1000, "exited");
+                },
               },
-            },
-          );
-          if (!terminalId) {
-            send({ type: "error", message: "It's asleep. Wake it to open a terminal." });
-            ws.close(1000, "not running");
-          }
-        },
-        onMessage(event) {
-          if (!terminalId) return;
-          let raw: unknown;
-          try {
-            raw = JSON.parse(String(event.data));
-          } catch {
-            return;
-          }
-          const msg = TerminalInput.safeParse(raw);
-          if (!msg.success) return;
-          if (msg.data.type === "input") conductor.terminals.input(terminalId, msg.data.data);
-          else if (msg.data.type === "ack") conductor.terminals.ack(terminalId, msg.data.chars);
-          else conductor.terminals.resize(terminalId, msg.data);
-        },
-        onClose() {
-          if (terminalId) conductor.terminals.close(terminalId);
-        },
-      };
-    }),
+            );
+            if (!terminalId) {
+              send({ type: "error", message: "It's asleep. Wake it to open a terminal." });
+              ws.close(1000, "not running");
+            }
+          },
+          onMessage(event) {
+            if (!terminalId) return;
+            let raw: unknown;
+            try {
+              raw = JSON.parse(String(event.data));
+            } catch {
+              return;
+            }
+            const msg = TerminalInput.safeParse(raw);
+            if (!msg.success) return;
+            if (msg.data.type === "input") conductor.terminals.input(terminalId, msg.data.data);
+            else if (msg.data.type === "ack") conductor.terminals.ack(terminalId, msg.data.chars);
+            else conductor.terminals.resize(terminalId, msg.data);
+          },
+          onClose() {
+            if (terminalId) conductor.terminals.close(terminalId);
+          },
+        };
+      })(c, next),
   );
 
   // OpenComputerUse's view servers inside the container, live, and taking
@@ -365,7 +479,7 @@ export function createApp(services: Services, bus: Bus) {
     });
   }
 
-  mountFiles(app, services.files, { store, config, bus, requireUser });
+  mountFiles(app, services.files, { store, config, bus, routes, user: auth.user });
 
   const webDist = config.NIBBLET_WEB_DIST ?? new URL("../../web/dist", import.meta.url).pathname;
   if (existsSync(webDist)) {

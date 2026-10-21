@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./openapi": "./src/openapi.ts",
     "./proxy-key": "./src/proxy-key.ts"
   },
   "scripts": {

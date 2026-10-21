@@ -1,5 +1,5 @@
 import { files } from "@nibblet/db";
-import { RpcError, type FileRef, type ThreadItem } from "@nibblet/protocol";
+import { FileRef, HttpError, RpcError, type ThreadItem } from "@nibblet/protocol";
 import { and, eq, inArray } from "drizzle-orm";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
@@ -7,10 +7,11 @@ import { mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import type { Context, Hono, Next } from "hono";
+import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { Bus } from "./bus.ts";
 import type { Config } from "./config.ts";
+import type { Auth, Routes } from "./http.ts";
 import { newId, type Store } from "./store.ts";
 
 const Limits = z.object({
@@ -80,8 +81,10 @@ interface FileDeps {
   store: Store;
   config: Config;
   bus: Bus;
-  /** Authenticates a person (owner, paired device, Nibblets Connect). */
-  requireUser: (c: Context, next: Next) => Promise<Response | void>;
+  /** Mounts and describes the routes people call. */
+  routes: Routes;
+  /** A person (owner, paired device, Nibblets Connect). */
+  user: Auth;
 }
 
 /** Files on the server: the store, the HTTP routes, and what the conductor needs. */
@@ -279,7 +282,7 @@ const now = () => new Date().toISOString();
  * through `/runner/files`, authenticated by their nibblet's token.
  */
 export function mountFiles(app: Hono, filesService: Files, deps: FileDeps): void {
-  const { store, requireUser } = deps;
+  const { store, routes, user } = deps;
 
   const nibbletFromRunner = async (c: Context) => {
     const auth = c.req.header("authorization") ?? "";
@@ -287,58 +290,110 @@ export function mountFiles(app: Hono, filesService: Files, deps: FileDeps): void
     return token ? store.nibbletByToken(token) : null;
   };
 
-  app.post("/api/nibblets/:id/files", requireUser, async (c) => {
-    const nibbletId = c.req.param("id") ?? "";
-    const nibblet = await store.getNibblet(nibbletId).catch(() => null);
-    if (!nibblet) return c.json({ error: "No such nibblet" }, 404);
-    const body = c.req.raw.body;
-    if (!body) return c.json({ error: "Send the file as the request body" }, 400);
-    const declared = Number(c.req.header("content-length") ?? "0");
-    let row: FileRow;
-    try {
-      row = await filesService.create({
-        nibbletId,
-        name: c.req.query("name") ?? "file",
-        mime: (c.req.header("content-type") ?? "").split(";")[0] ?? "",
-        size: Number.isFinite(declared) ? declared : 0,
-        direction: "user",
-      });
-    } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : String(err) }, 413);
-    }
-    try {
-      const { size, sha256 } = await filesService.receive(row, body, () => {});
-      const done = await filesService.finish(row.id, { status: "ready", size, sha256 });
-      return c.json(done ? toFileRef(done) : toFileRef(row));
-    } catch (err) {
-      await filesService.finish(row.id, { status: "failed" });
-      return c.json({ error: err instanceof Error ? err.message : String(err) }, 413);
-    }
-  });
+  routes.post(
+    "/api/nibblets/:id/files",
+    {
+      summary: "Uploads a file to attach to a message.",
+      description:
+        "The body is the file itself. Pass the `fileId` it answers with in `nibblets.send`'s `attachments`.",
+      tags: ["files"],
+      auth: user,
+      params: { id: "The nibblet's id." },
+      query: z.object({ name: z.string().default("file").describe("The file's name.") }),
+      body: "binary",
+      responses: {
+        200: { description: "The stored file.", body: FileRef },
+        404: { description: "No such nibblet.", body: HttpError },
+        413: { description: "Too large, or the upload failed.", body: HttpError },
+      },
+    },
+    async (c, { query }) => {
+      const nibbletId = c.req.param("id") ?? "";
+      const nibblet = await store.getNibblet(nibbletId).catch(() => null);
+      if (!nibblet) return c.json({ error: "No such nibblet" }, 404);
+      const body = c.req.raw.body;
+      if (!body) return c.json({ error: "Send the file as the request body" }, 400);
+      const declared = Number(c.req.header("content-length") ?? "0");
+      let row: FileRow;
+      try {
+        row = await filesService.create({
+          nibbletId,
+          name: query.name,
+          mime: (c.req.header("content-type") ?? "").split(";")[0] ?? "",
+          size: Number.isFinite(declared) ? declared : 0,
+          direction: "user",
+        });
+      } catch (err) {
+        return c.json({ error: err instanceof Error ? err.message : String(err) }, 413);
+      }
+      try {
+        const { size, sha256 } = await filesService.receive(row, body, () => {});
+        const done = await filesService.finish(row.id, { status: "ready", size, sha256 });
+        return c.json(done ? toFileRef(done) : toFileRef(row));
+      } catch (err) {
+        await filesService.finish(row.id, { status: "failed" });
+        return c.json({ error: err instanceof Error ? err.message : String(err) }, 413);
+      }
+    },
+  );
 
-  app.post("/api/files/:id/link", requireUser, async (c) => {
-    const id = c.req.param("id") ?? "";
-    const row = await filesService.row(id);
-    if (!row) return c.json({ error: "No such file" }, 404);
-    return c.json({ url: filesService.signedUrl(id) });
-  });
+  routes.post(
+    "/api/files/:id/link",
+    {
+      summary: "A link that downloads a file without signing in, for an hour.",
+      tags: ["files"],
+      auth: user,
+      params: { id: "The file's id." },
+      responses: {
+        200: {
+          description: "The link, relative to the server.",
+          body: z.object({ url: z.string() }),
+        },
+        404: { description: "No such file.", body: HttpError },
+      },
+    },
+    async (c) => {
+      const id = c.req.param("id") ?? "";
+      const row = await filesService.row(id);
+      if (!row) return c.json({ error: "No such file" }, 404);
+      return c.json({ url: filesService.signedUrl(id) });
+    },
+  );
 
-  app.get("/api/files/:id", async (c) => {
-    const id = c.req.param("id") ?? "";
-    const exp = c.req.query("exp");
-    const sig = c.req.query("sig");
-    const signed = exp && sig ? filesService.signer.verify("get", id, exp, sig) : false;
-    if (!signed) {
-      // Fall back to the usual sign-in for API clients that can send headers.
-      let allowed = false;
-      await requireUser(c, async () => {
-        allowed = true;
-      });
-      if (!allowed) return c.json({ error: "Sign in first" }, 401);
-    }
-    const row = await filesService.row(id);
-    return row ? filesService.respond(c, row) : c.json({ error: "No such file" }, 404);
-  });
+  routes.get(
+    "/api/files/:id",
+    {
+      summary: "Downloads a file, whole or a `Range` of it.",
+      description:
+        "Sign in, or pass the `exp` and `sig` of a link from `POST /api/files/{id}/link`.",
+      tags: ["files"],
+      // It checks for itself: a signed link will do instead.
+      auth: { security: [{ bearer: [] }, {}] },
+      params: { id: "The file's id." },
+      query: z.object({ exp: z.string().optional(), sig: z.string().optional() }),
+      responses: {
+        200: { description: "The file.", body: "binary" },
+        206: { description: "The range asked for.", body: "binary" },
+        401: { description: "Neither signed in nor a working link.", body: HttpError },
+        404: { description: "No such file.", body: HttpError },
+        416: { description: "The range is outside the file." },
+      },
+    },
+    async (c, { query: { exp, sig } }) => {
+      const id = c.req.param("id") ?? "";
+      const signed = exp && sig ? filesService.signer.verify("get", id, exp, sig) : false;
+      if (!signed) {
+        // Fall back to the usual sign-in for API clients that can send headers.
+        let allowed = false;
+        await user.check?.(c, async () => {
+          allowed = true;
+        });
+        if (!allowed) return c.json({ error: "Sign in first" }, 401);
+      }
+      const row = await filesService.row(id);
+      return row ? filesService.respond(c, row) : c.json({ error: "No such file" }, 404);
+    },
+  );
 
   // Runners: fetch the user's attachments for a turn.
   app.get("/runner/files/:id", async (c) => {
