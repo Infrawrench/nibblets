@@ -1,5 +1,10 @@
 import { BankError, defineBankFactory, defineBankPlugin, defineField } from "@nibblet/bank";
-import { MASKED, type BankProviderId, type CardSecret } from "@nibblet/protocol";
+import {
+  MASKED,
+  type BankProviderId,
+  type CardSecret,
+  type PublicAddress,
+} from "@nibblet/protocol";
 import { describe, expect, it } from "vitest";
 import { Banks } from "./banks.ts";
 
@@ -22,6 +27,7 @@ const fake = defineBankFactory({
   about: "Cards for tests.",
   instrument: "card",
   fields: [KEY, ACCOUNT],
+  purchaseHook: { where: "In Fake's settings." },
   fromSettings(settings) {
     const key = settings.FAKE_KEY;
     if (!key) return null;
@@ -51,6 +57,11 @@ function setUp(env: Record<string, string> = {}) {
   const live: { provider: string }[] = [];
   const loaded: string[][] = [];
   const logs: string[] = [];
+  /** Which banks each purchase request was offered to. */
+  const asked: string[][] = [];
+  const reached: { address: PublicAddress } = {
+    address: { url: null, via: null, proxy: null },
+  };
   let plugins = new Map<BankProviderId, { label: string }>();
   const banks = new Banks({
     store: {
@@ -73,6 +84,7 @@ function setUp(env: Record<string, string> = {}) {
           detail: null,
           balance: "500",
           fundAt: null,
+          approvesPurchases: false,
         })),
         problems: [],
       }),
@@ -80,13 +92,18 @@ function setUp(env: Record<string, string> = {}) {
         plugins = new Map([...next].map(([id, p]) => [id, { label: p.label }]));
         loaded.push([...next.keys()]);
       },
+      purchase: async (ids) => {
+        asked.push([...ids]);
+        return null;
+      },
     },
+    address: { current: async () => reached.address },
     env,
     factories: [fake],
     plugin: { fetch: globalThis.fetch, log: () => {} },
     log: (m) => logs.push(m),
   });
-  return { banks, settings, live, loaded, logs };
+  return { banks, settings, live, loaded, logs, asked, reached };
 }
 
 /** A change to the fake bank: a new one, unless `id` says which. */
@@ -224,5 +241,31 @@ describe("setting banks up", () => {
     expect((await banks.status()).banks.find((b) => b.id === "fake")).toMatchObject({
       source: "env",
     });
+  });
+});
+
+describe("providers that ask about purchases", () => {
+  it("are given the address this server is reached at, once it has one", async () => {
+    const { banks, reached } = setUp();
+    const hook = async () => (await banks.status()).kinds[0]?.purchaseHook;
+    expect(await hook()).toEqual({ url: null, changes: false, where: "In Fake's settings." });
+    reached.address = { url: "https://pip.nibblets.dev", via: "tunnel", proxy: null };
+    expect(await hook()).toEqual({
+      url: "https://pip.nibblets.dev/bank/fake/purchases",
+      changes: false,
+      where: "In Fake's settings.",
+    });
+    reached.address = { url: "https://a-b.trycloudflare.com", via: "quick_tunnel", proxy: null };
+    expect(await hook()).toMatchObject({ changes: true });
+  });
+
+  it("have a request offered to the banks on its plugin", async () => {
+    const { banks, asked } = setUp();
+    await banks.configure(change({ FAKE_KEY: "k1" }));
+    await banks.configure(change({ FAKE_KEY: "k2" }, { name: "Travel" }));
+    const request = { headers: new Headers(), body: "{}" };
+    expect(await banks.purchase("fake", request)).toBeNull();
+    await banks.purchase("slash", request);
+    expect(asked).toEqual([["fake", "fake-travel"], []]);
   });
 });

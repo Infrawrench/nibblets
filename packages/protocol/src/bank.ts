@@ -19,7 +19,7 @@ const Timestamp = z.iso.datetime();
 export const BankProviderId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/);
 export type BankProviderId = z.infer<typeof BankProviderId>;
 
-/** An asset's code: `USD`, `BTC`, `ETH`. */
+/** An asset's code: `USD`, `EUR`, `BTC`, `ETH`. */
 export const AssetCode = z.string().regex(/^[A-Z0-9]{2,10}$/);
 export type AssetCode = z.infer<typeof AssetCode>;
 
@@ -165,6 +165,8 @@ export const BankProvider = z.object({
   balance: MinorAmount.nullable(),
   /** Where to send money to top it up: a treasury's address. Null for an account topped up elsewhere. */
   fundAt: z.string().nullable(),
+  /** Whether its provider asks this server before each purchase, which it approves only within the card. */
+  approvesPurchases: z.boolean().default(false),
 });
 export type BankProvider = z.infer<typeof BankProvider>;
 
@@ -202,6 +204,16 @@ export const BankKind = z.object({
   about: z.string(),
   instrument: BankInstrument,
   fields: z.array(BankField),
+  /**
+   * For a provider that can ask this server about each purchase: the
+   * address to give it (null while the server can't be reached from the
+   * internet), whether that address changes (a quick tunnel's does, each
+   * time it starts), and where to give it.
+   */
+  purchaseHook: z
+    .object({ url: z.string().nullable(), changes: z.boolean(), where: z.string() })
+    .nullable()
+    .default(null),
 });
 export type BankKind = z.infer<typeof BankKind>;
 

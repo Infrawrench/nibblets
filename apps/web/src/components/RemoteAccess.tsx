@@ -1,8 +1,15 @@
 import { openWeb } from "../lib/links.ts";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Globe, Loader2, Network, Unplug, Wifi } from "lucide-react";
-import type { ConnectStatus, RouteKind, ServerRoutes, TailscaleStatus } from "@nibblet/protocol";
+import {
+  ProxyUrl,
+  type ConnectStatus,
+  type PublicAddress,
+  type RouteKind,
+  type ServerRoutes,
+  type TailscaleStatus,
+} from "@nibblet/protocol";
 import type { ServerConnection } from "../lib/connection.ts";
 import type { ChosenRouteKind } from "../lib/central.ts";
 import { keys, useServers } from "../lib/servers.tsx";
@@ -45,6 +52,7 @@ export function RemoteAccessSection({ connection }: { connection: ServerConnecti
       <SectionHeading>Remote access</SectionHeading>
       <AccountCard connection={connection} />
       <TailscaleRow connection={connection} />
+      <ReverseProxyRow connection={connection} />
     </>
   );
 }
@@ -269,6 +277,94 @@ function TailscaleRow({ connection }: { connection: ServerConnection }) {
       </div>
     </FieldRow>
   );
+}
+
+/**
+ * The person's own reverse proxy, if this server is behind one: where
+ * anything that has to reach it from the internet (a card provider asking
+ * about a purchase, a pairing link) is told to, over Connect's tunnel.
+ */
+function ReverseProxyRow({ connection }: { connection: ServerConnection }) {
+  const qc = useQueryClient();
+  const key = keys.publicAddress(connection.id);
+  const address = useQuery({
+    queryKey: key,
+    queryFn: () => connection.client.publicAddress.status({}),
+  });
+  // The account card above keeps the link's status fresh; when its tunnel
+  // comes, goes or moves, so does the address, unless a reverse proxy's set.
+  const link = useQuery({
+    queryKey: keys.connect(connection.id),
+    queryFn: () => connection.client.connect.status({}),
+  });
+  const tunnel = link.data?.state === "linked" ? link.data.routes.tunnel : null;
+  useEffect(() => {
+    void qc.invalidateQueries({ queryKey: key });
+  }, [tunnel]);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const saved = address.data?.proxy ?? "";
+  const value = draft ?? saved;
+  const save = async (url: string | null) => {
+    let next = url;
+    if (next !== null) {
+      const parsed = ProxyUrl.safeParse(next.trim());
+      if (!parsed.success) {
+        setError("That should be an https address, like https://nibblets.example.com");
+        return;
+      }
+      next = parsed.data;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      qc.setQueryData(key, await connection.client.publicAddress.setProxy({ url: next }));
+      setDraft(null);
+      // Banks show the address to give their providers.
+      void qc.invalidateQueries({ queryKey: keys.bank(connection.id) });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <FieldRow label="Reverse proxy" top hint={error ?? reachedHint(address.data)}>
+      <span className="flex gap-1.5">
+        <Input
+          value={value}
+          disabled={busy}
+          placeholder="https://nibblets.example.com"
+          spellCheck={false}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        {saved && value === saved ? (
+          <Button size="sm" disabled={busy} onClick={() => void save(null)}>
+            Stop using it
+          </Button>
+        ) : (
+          <Button size="sm" disabled={busy || !value.trim()} onClick={() => void save(value)}>
+            Use it
+          </Button>
+        )}
+      </span>
+    </FieldRow>
+  );
+}
+
+function reachedHint(address: PublicAddress | undefined): string {
+  if (!address) return "Checking…";
+  switch (address.via) {
+    case "proxy":
+      return `Reached from the internet at ${address.url}, rather than through Nibblets Connect.`;
+    case "tunnel":
+      return `Reached from the internet through Nibblets Connect, at ${address.url}. If it's behind your own reverse proxy, give its address to use that instead.`;
+    case "quick_tunnel":
+      return `Reached from the internet through a quick tunnel, at ${address.url}, which changes whenever it starts. A reverse proxy's address stays put.`;
+    case null:
+      return "Not reached from the internet yet. Link it to Nibblets Connect above, or if it's behind your own reverse proxy, give the https address it's reached at.";
+  }
 }
 
 /** Opens a link outside the app: a new tab, or the desktop app's own browser handling. */

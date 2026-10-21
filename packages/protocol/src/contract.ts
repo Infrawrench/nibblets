@@ -10,7 +10,7 @@ import {
 import { LocationFix } from "./location.ts";
 import { CliStatuses, HostTools } from "./mcp.ts";
 import { HarnessId, HarnessModels } from "./models.ts";
-import { ConnectStatus, TailscaleStatus } from "./connect.ts";
+import { ConnectStatus, ProxyUrl, PublicAddress, TailscaleStatus } from "./connect.ts";
 import { OnePasswordGrants, OnePasswordStatus, VaultGrant } from "./onepassword.ts";
 import { procedure } from "./rpc.ts";
 import { Snapshot, SnapshotActivity, SnapshotTimeline } from "./snapshots.ts";
@@ -137,6 +137,15 @@ export const contract = {
     cancel: procedure(z.object({}), ConnectStatus),
     /** Forgets the account and stops the tunnel. */
     unlink: procedure(z.object({}), ConnectStatus),
+  },
+  publicAddress: {
+    /** How this server is reached from the internet, if it is. */
+    status: procedure(z.object({}), PublicAddress),
+    /**
+     * Says this server is behind the person's own reverse proxy at `url`,
+     * or (null) that it isn't, so Nibblets Connect's tunnel is used.
+     */
+    setProxy: procedure(z.object({ url: ProxyUrl.nullable() }), PublicAddress),
   },
   tailscale: {
     status: procedure(z.object({}), TailscaleStatus),

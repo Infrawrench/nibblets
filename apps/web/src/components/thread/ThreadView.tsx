@@ -10,6 +10,7 @@ import {
   Check,
   ChevronRight,
   Clock,
+  CreditCard,
   GitBranch,
   Globe,
   HeartPulse,
@@ -22,6 +23,8 @@ import {
   X,
 } from "lucide-react";
 import type { Nibblet, StoredItem, ThreadItemOf, TurnSource } from "@nibblet/protocol";
+import { z } from "zod";
+import { openPanel } from "../../lib/panels.ts";
 import { buildTimeline, sourceLabels, type TimelineEntry } from "../../lib/thread.ts";
 import { clockTime } from "../../lib/time.ts";
 import { cn } from "../../lib/cn.ts";
@@ -166,7 +169,11 @@ function Entry({
         case "notice":
           return <Notice item={item} />;
         case "approval":
-          return <Approval item={item} onDecide={onDecide} />;
+          return isCardVerify(item) ? (
+            <CardVerify item={item} onDecide={onDecide} />
+          ) : (
+            <Approval item={item} onDecide={onDecide} />
+          );
         case "location_request":
           return <LocationRequest item={item} onLocation={onLocation} />;
         case "limit_wait":
@@ -590,6 +597,98 @@ function Approval({ item, onDecide }: { item: ThreadItemOf<"approval">; onDecide
               </Button>
             </>
           )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** What a nibblet's `card_verify` asks its person to do. */
+const CardVerifyInput = z.object({ display: z.string(), merchant: z.string(), asks: z.string() });
+
+function isCardVerify(item: ThreadItemOf<"approval">): boolean {
+  return (
+    item.server === "nibblet" &&
+    item.tool === "card_verify" &&
+    CardVerifyInput.safeParse(item.input).success
+  );
+}
+
+const verifyOutcome: typeof approvalOutcome = {
+  approved: { label: "Verified", className: "text-ok" },
+  denied: { label: "Not verified", className: "text-danger" },
+  expired: { label: "Not done in time", className: "text-faint" },
+};
+
+/**
+ * A checkout asking to verify a card payment (3-D Secure), which the
+ * nibblet leaves to its person: they do it in its browser, so the code
+ * never reaches the nibblet, then say whether it's done.
+ */
+function CardVerify({ item, onDecide }: { item: ThreadItemOf<"approval">; onDecide?: DecideFn }) {
+  const [busy, setBusy] = useState(false);
+  const input = CardVerifyInput.safeParse(item.input);
+  if (!input.success) return null;
+  const { display, merchant, asks } = input.data;
+  const pending = item.status === "pending";
+  const decide = async (done: boolean) => {
+    if (!onDecide) return;
+    setBusy(true);
+    try {
+      await onDecide(item.id, done);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div
+      className={cn(
+        "rounded-lg border text-xs",
+        pending ? "border-warning/60 bg-warning/5" : "border-line bg-panel",
+      )}
+    >
+      <div className="flex items-start gap-2 px-2.5 py-2">
+        <CreditCard
+          className={cn("mt-px size-4 shrink-0", pending ? "text-warning" : "text-faint")}
+        />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span>
+            {pending ? "Needs you to verify a payment to " : "Asked you to verify a payment to "}
+            <span className="font-medium">{merchant}</span>
+            <span className="text-faint"> on {display}</span>
+          </span>
+          <span className="text-dim">{asks}</span>
+          {pending ? (
+            <span className="text-faint">
+              Do it in its browser yourself, so the code never goes to the nibblet, then say whether
+              it worked.
+            </span>
+          ) : null}
+        </span>
+        {item.status === "pending" ? null : (
+          <span className={verifyOutcome[item.status].className}>
+            {verifyOutcome[item.status].label}
+          </span>
+        )}
+      </div>
+      {!pending && item.reason ? (
+        <div className="px-2.5 pb-2 text-faint">Reason: {item.reason}</div>
+      ) : null}
+      {pending && onDecide ? (
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-line px-2.5 py-2">
+          <Button size="sm" variant="secondary" onClick={() => openPanel("browser")}>
+            <Globe />
+            Open its browser
+          </Button>
+          <span className="flex-1" />
+          <Button size="sm" variant="primary" disabled={busy} onClick={() => void decide(true)}>
+            <Check />
+            Done
+          </Button>
+          <Button size="sm" variant="secondary" disabled={busy} onClick={() => void decide(false)}>
+            <X />
+            Couldn't
+          </Button>
         </div>
       ) : null}
     </div>

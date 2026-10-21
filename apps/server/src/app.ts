@@ -12,6 +12,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { Hono, type Context, type Next } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { compress } from "hono/compress";
 import { cors } from "hono/cors";
 import WebSocket from "ws";
@@ -22,6 +23,7 @@ import type { RunnerLink } from "./conductor.ts";
 import { createHandlers, type Services } from "./handlers.ts";
 import { hostMcpHandler } from "./hostmcp.ts";
 import { mountBudgets } from "./budget.ts";
+import { purchasePath } from "./banks.ts";
 import { mountGuard } from "./guard.ts";
 import { mcpHandler } from "./mcp.ts";
 import { mountFiles } from "./files.ts";
@@ -87,6 +89,21 @@ export function createApp(services: Services, bus: Bus) {
   app.use("/healthz", cors({ origin: "*", maxAge: 600 }));
 
   app.get("/healthz", (c) => c.json({ ok: true }));
+
+  // A card provider asking, from the internet, whether a purchase may go
+  // through. No one signs in: the bank checks the provider's signature.
+  app.post(
+    purchasePath(":kind"),
+    bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.text("Too large", 413) }),
+    async (c) => {
+      const answer = await services.banks.purchase(c.req.param("kind") ?? "", {
+        headers: c.req.raw.headers,
+        body: await c.req.text(),
+      });
+      if (!answer) return c.text("Not from a bank set up here", 400);
+      return new Response(answer.body, { status: answer.status, headers: answer.headers });
+    },
+  );
 
   app.post("/api/pair", async (c) => {
     const body = z

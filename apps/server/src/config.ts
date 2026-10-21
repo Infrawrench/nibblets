@@ -8,7 +8,10 @@ const Env = z.object({
   NIBBLET_OWNER_TOKEN: z.string().min(16),
   /** How runners and tool calls reach this server from inside the Docker network. */
   NIBBLET_INTERNAL_URL: z.string().default("http://server:8420"),
-  /** How people reach this server, for pairing links. The tunnel URL wins when there is one. */
+  /**
+   * How people reach this server, for pairing links, when it has no public
+   * address (a reverse proxy's, or the tunnel's) to use instead.
+   */
   NIBBLET_PUBLIC_URL: z.string().default("http://127.0.0.1:8420"),
   NIBBLET_NETWORK: z.string().default("nibblet"),
   NIBBLET_RUNNER_IMAGE: z.string().default("nibblet/runner:dev"),

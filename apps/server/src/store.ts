@@ -496,6 +496,16 @@ export class Store {
       .orderBy(desc(cards.createdAt));
   }
 
+  /** The card a bank knows by `ref`, its own id for it. */
+  async cardByRef(provider: string, ref: string): Promise<CardRow | null> {
+    if (!ref) return null;
+    const [row] = await this.db
+      .select()
+      .from(cards)
+      .where(and(eq(cards.provider, provider), eq(cards.ref, ref)));
+    return row ?? null;
+  }
+
   /** Every card that isn't closed yet, on any nibblet: open, pending or closing. */
   async liveCards(): Promise<CardRow[]> {
     return this.db.select().from(cards).where(ne(cards.state, "closed"));

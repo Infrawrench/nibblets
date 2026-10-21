@@ -10,12 +10,15 @@ import {
   type BankPlugin,
   type BankPluginFactory,
   type BankSettingValues,
+  type HookRequest,
+  type HookResponse,
   type ResolvedBank,
   type SavedBank,
 } from "@nibblet/bank";
 import { bitcoin } from "@nibblet/bank-bitcoin";
 import { ethereum } from "@nibblet/bank-ethereum";
 import { slash } from "@nibblet/bank-slash";
+import { stripe } from "@nibblet/bank-stripe";
 import {
   BankName,
   BankProviderId,
@@ -25,6 +28,7 @@ import {
 } from "@nibblet/protocol";
 import { z } from "zod";
 import type { Bank } from "./bank.ts";
+import type { PublicAddresses } from "./public-address.ts";
 import type { CardRow, Store } from "./store.ts";
 
 /**
@@ -34,7 +38,7 @@ import type { CardRow, Store } from "./store.ts";
  * saved under its own id can also have one from the server's environment
  * (variables named like its fields; see `docker/compose.yaml`).
  */
-export const BANK_PLUGINS: readonly BankPluginFactory[] = [slash, bitcoin, ethereum];
+export const BANK_PLUGINS: readonly BankPluginFactory[] = [slash, stripe, bitcoin, ethereum];
 
 const SETTING = "banks";
 const Saved = z.array(
@@ -45,7 +49,9 @@ export interface BanksDeps {
   store: Pick<Store, "getSetting" | "setSetting"> & {
     liveCards(): Promise<readonly Pick<CardRow, "provider">[]>;
   };
-  bank: Pick<Bank, "status" | "use">;
+  bank: Pick<Bank, "status" | "use" | "purchase">;
+  /** Where providers that ask about purchases reach this server. */
+  address: Pick<PublicAddresses, "current">;
   env: BankSettingValues;
   factories?: readonly BankPluginFactory[];
   plugin?: BankDeps;
@@ -73,6 +79,8 @@ export class Banks {
   private readonly log: (message: string) => void;
   /** One change at a time, so two saves can't each write over the other's. */
   private queue: Promise<unknown> = Promise.resolve();
+  /** The banks as last loaded, to know which are on which plugin. */
+  private loaded: readonly ResolvedBank[] = [];
 
   constructor(deps: BanksDeps) {
     this.deps = deps;
@@ -83,17 +91,20 @@ export class Banks {
 
   /** Loads every bank as it's set up now into the `Bank`. */
   async load(): Promise<void> {
-    const { plugins, errors } = loadBankPlugins(this.factories, await this.banks(), this.plugin);
+    const banks = await this.banks();
+    const { plugins, errors } = loadBankPlugins(this.factories, banks, this.plugin);
+    this.loaded = banks;
     for (const plugin of plugins.values()) console.log(`bank: ${plugin.label} is set up`);
     for (const [id, problem] of errors) this.log(`${id} isn't set up: ${problem}`);
     this.deps.bank.use(plugins, errors);
   }
 
   async status(): Promise<BankStatus> {
-    const [health, banks, live] = await Promise.all([
+    const [health, banks, live, address] = await Promise.all([
       this.deps.bank.status(),
       this.banks(),
       this.deps.store.liveCards(),
+      this.deps.address.current(),
     ]);
     return {
       ...health,
@@ -103,6 +114,13 @@ export class Banks {
         about: f.about,
         instrument: f.instrument,
         fields: [...f.fields],
+        purchaseHook: f.purchaseHook
+          ? {
+              url: address.url ? `${address.url}${purchasePath(f.id)}` : null,
+              changes: address.via === "quick_tunnel",
+              where: f.purchaseHook.where,
+            }
+          : null,
       })),
       banks: banks.map((b) => ({
         id: b.id,
@@ -204,6 +222,15 @@ export class Banks {
     });
   }
 
+  /**
+   * Answers a provider asking about a purchase at `purchasePath(kind)`;
+   * null when no bank on that plugin signed it.
+   */
+  purchase(kind: string, request: HookRequest): Promise<HookResponse | null> {
+    const ids = this.loaded.filter((b) => b.kind === kind).map((b) => b.id);
+    return this.deps.bank.purchase(ids, request);
+  }
+
   private build(factory: BankPluginFactory, settings: BankSettings): BankPlugin {
     let plugin: BankPlugin | null;
     try {
@@ -244,6 +271,11 @@ export class Banks {
     this.queue = next.catch(() => undefined);
     return next;
   }
+}
+
+/** Where a plugin's providers ask about purchases. */
+export function purchasePath(kind: string): string {
+  return `/bank/${kind}/purchases`;
 }
 
 /** "Travel (Slash)", or just "Slash". */
