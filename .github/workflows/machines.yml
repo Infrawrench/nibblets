@@ -1,24 +1,13 @@
 name: Machines
 
 # The slow integration runs, whose guests are installed from scratch:
-# Windows on KVM, and Linux and Windows on Hyper-V, for changes to
-# machines, weekly, or by hand. Apple Virtualization isn't on hosted
-# runners; test/integration/README.md says how to run it.
+# Windows on KVM, and Linux and Windows on Hyper-V, for each commit to
+# main, or by hand. Apple Virtualization isn't on hosted runners;
+# test/integration/README.md says how to run it.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 3 * * 1"
-  pull_request:
-    paths:
-      - "packages/machine/**"
-      - "packages/machine-kvm/**"
-      - "packages/machine-hyperv/**"
-      - "packages/host-mcp/**"
-      - "packages/protocol/src/guest.ts"
-      - "apps/runner/src/entry/**"
-      - "apps/runner/src/machine/**"
-      - "test/integration/**"
-      - ".github/workflows/machines.yml"
+  push:
+    branches: [main]
 
 concurrency:
   group: machines-${{ github.ref }}
@@ -76,8 +65,7 @@ jobs:
           NIBBLET_TEST_MACHINE: kvm
           NIBBLET_TEST_GUEST: windows
           NIBBLET_TEST_WINDOWS_ISO: ${{ runner.temp }}/windows.iso
-          # A PR's run is of its merge commit, which isn't on GitHub to download.
-          NIBBLET_TEST_GUEST_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+          NIBBLET_TEST_GUEST_REF: ${{ github.sha }}
           NIBBLET_TEST_MACHINES_DIR: ${{ runner.temp }}/machines
           NIBBLET_TEST_VERBOSE: "1"
       - name: Keep the installer's screen and logs
@@ -196,7 +184,7 @@ jobs:
           NIBBLET_TEST_MACHINE: hyperv
           NIBBLET_TEST_GUEST: ${{ matrix.guest }}
           NIBBLET_TEST_WINDOWS_ISO: ${{ matrix.guest == 'windows' && format('{0}\windows.iso', runner.temp) || '' }}
-          NIBBLET_TEST_GUEST_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+          NIBBLET_TEST_GUEST_REF: ${{ github.sha }}
           NIBBLET_TEST_MACHINES_DIR: ${{ runner.temp }}\machines
           NIBBLET_TEST_DOCKER_IN_WSL: "1"
           NIBBLET_TEST_HYPERV_SWITCH: nibblets
