@@ -18,6 +18,9 @@ import {
 
 export const QUIET_REPLY = "NO_REPLY";
 
+/** The setting holding what the user adds to every nibblet's system prompt. */
+export const SYSTEM_PROMPT_SETTING = "systemPrompt";
+
 /** What it lives in, as the prompt says it: "container" or "machine", and the whole of it. */
 function machineWords(nibblet: Nibblet): { box: string; home: string } {
   if (nibblet.machine.backend === "docker") {
@@ -139,6 +142,8 @@ export interface SystemPromptInput {
   desktop?: boolean;
   /** Its container's machine on the user's tailnet, once it has joined. */
   tailnet?: { node: TailnetNode; ports: readonly number[] } | null;
+  /** What the user adds to every nibblet's system prompt on this server. */
+  extra?: string;
 }
 
 export function systemPrompt(input: SystemPromptInput): string {
@@ -168,6 +173,13 @@ export function systemPrompt(input: SystemPromptInput): string {
       ? `## Your instructions\n\n${nibblet.instructions.trim()}`
       : "## Your instructions\n\nYou don't have any yet. Work out what the user wants you for from your conversation, then write it down with `instructions_update`.",
   );
+
+  const extra = input.extra?.trim();
+  if (extra) {
+    parts.push(
+      `## From the user, for every ${nibblet.plain ? "agent" : "nibblet"} on this server\n\nThe user set this in the server's settings; it isn't yours to change.\n\n${extra}`,
+    );
+  }
 
   const rules = [
     ...(nibblet.plain

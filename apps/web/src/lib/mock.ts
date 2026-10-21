@@ -945,6 +945,7 @@ export function createMockServer(): ServerConnection {
     action: null,
   };
   let serverName = "Astrid's Mac mini";
+  let systemPromptExtra = "";
   let harnessUpdates: HarnessUpdates = {
     auto: true,
     checkedAt: ago(42),
@@ -1197,6 +1198,11 @@ export function createMockServer(): ServerConnection {
       }),
       rename: async ({ name }) => {
         serverName = name;
+        return { ok: true };
+      },
+      systemPrompt: async () => ({ text: systemPromptExtra }),
+      setSystemPrompt: async ({ text }) => {
+        systemPromptExtra = text;
         return { ok: true };
       },
     },

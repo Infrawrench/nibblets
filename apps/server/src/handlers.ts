@@ -12,6 +12,7 @@ import {
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { cliStatuses } from "./clilogins.ts";
+import { SYSTEM_PROMPT_SETTING } from "./context.ts";
 import { readTailnetOAuth, setTailnetKeys, tailnetKeys } from "./tailnet-keys.ts";
 import { forgetGrants, onePasswordStatus, readGrants, setGrants } from "./onepassword.ts";
 import type { Bank } from "./bank.ts";
@@ -92,6 +93,11 @@ export function serverName(store: Store, hostName: string): Promise<string> {
   return store.getSetting("name", (v) => z.string().parse(v), machine);
 }
 
+/** What the user adds to every nibblet's system prompt, or "" for nothing. */
+export function systemPromptExtra(store: Store): Promise<string> {
+  return store.getSetting(SYSTEM_PROMPT_SETTING, (v) => z.string().parse(v), "");
+}
+
 export function createHandlers(s: Services): Handlers<Contract, Record<string, never>> {
   const { store, conductor, scheduler, tunnel } = s;
 
@@ -113,6 +119,11 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       rename: async ({ name }) => {
         await store.setSetting("name", name);
         conductor.serverName = name;
+        return ok;
+      },
+      systemPrompt: async () => ({ text: await systemPromptExtra(store) }),
+      setSystemPrompt: async ({ text }) => {
+        await store.setSetting(SYSTEM_PROMPT_SETTING, text);
         return ok;
       },
     },

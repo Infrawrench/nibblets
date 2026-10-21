@@ -117,6 +117,25 @@ describe("systemPrompt", () => {
     { id: "bitcoin", label: "Bitcoin", asset: { code: "BTC", decimals: 8 } },
   ];
 
+  it("adds what the user set for every nibblet, after its own instructions", () => {
+    const prompt = systemPrompt({ ...base, nibblet, extra: "  Write in British English.\n" });
+    expect(prompt).toContain(
+      "## From the user, for every nibblet on this server\n\nThe user set this in the server's settings; it isn't yours to change.\n\nWrite in British English.\n\n## How you work",
+    );
+    expect(prompt.indexOf("Look after the deploys.")).toBeLessThan(
+      prompt.indexOf("Write in British English."),
+    );
+    expect(systemPrompt({ ...base, nibblet: { ...nibblet, plain: true }, extra: "x" })).toContain(
+      "## From the user, for every agent on this server",
+    );
+  });
+
+  it("adds nothing when the user set nothing", () => {
+    for (const extra of [undefined, "", "  \n"]) {
+      expect(systemPrompt({ ...base, nibblet, extra })).not.toContain("## From the user");
+    }
+  });
+
   it("tells a nibblet what it may spend, and where", () => {
     const prompt = systemPrompt({
       ...base,
