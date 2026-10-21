@@ -11,6 +11,7 @@ import {
   mergeMcpServers,
   tailnetHostname,
   randomHamsterLook,
+  type Card,
   type Contract,
   type OnePasswordGrants,
   type HostTool,
@@ -189,6 +190,10 @@ export function createMockServer(): ServerConnection {
         status: "working",
         statusText: "Hunting for a cheap flight to Lisbon",
         statusEmoji: "✈️",
+        spendingLimits: [
+          { asset: "USD", amount: "15000", period: "month" },
+          { asset: "BTC", amount: "200000", period: "total" },
+        ],
         statusUpdatedAt: ago(3),
         instructions:
           "Look after my inbox and calendar. Summarise anything important each morning.",
@@ -264,6 +269,71 @@ export function createMockServer(): ServerConnection {
       }),
     ].map((n) => [n.id, n]),
   );
+
+  const usd = { code: "USD", decimals: 2 };
+  const btc = { code: "BTC", decimals: 8 };
+  const cards: Card[] = [
+    {
+      id: "card_flights",
+      nibbletId: "pip",
+      provider: "slash",
+      asset: usd,
+      kind: "multi_use",
+      limit: "12000",
+      spent: "0",
+      purpose: "Flight to Lisbon, if the fare drops under £80",
+      display: "•••• 4821",
+      state: "open",
+      closedBy: null,
+      createdAt: ago(40),
+      closedAt: null,
+    },
+    {
+      id: "card_domain",
+      nibbletId: "pip",
+      provider: "slash",
+      asset: usd,
+      kind: "single_use",
+      limit: "1500",
+      spent: "1288",
+      purpose: "Renew nibblets.dev at the registrar",
+      display: "•••• 0193",
+      state: "closed",
+      closedBy: "provider",
+      createdAt: ago(60 * 26),
+      closedAt: ago(60 * 26 - 4),
+    },
+    {
+      id: "card_relay",
+      nibbletId: "pip",
+      provider: "bitcoin",
+      asset: btc,
+      kind: "single_use",
+      limit: "50000",
+      spent: "0",
+      purpose: "Pay for a month of the VPN relay",
+      display: "tb1q9h7garjr0e3y0ls6dx5l2s5k6l3e0zq0d6v5wl",
+      state: "open",
+      closedBy: null,
+      createdAt: ago(12),
+      closedAt: null,
+    },
+    {
+      id: "card_tip",
+      nibbletId: "pip",
+      provider: "bitcoin",
+      asset: btc,
+      kind: "multi_use",
+      limit: "20000",
+      spent: "0",
+      purpose: "Tip the podcast for the Lisbon recommendations",
+      display: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+      state: "closing",
+      closedBy: "nibblet",
+      createdAt: ago(9),
+      closedAt: null,
+    },
+  ];
 
   const items = new Map<string, StoredItem[]>();
   const store = (nibbletId: string, item: ThreadItem) => {
@@ -953,11 +1023,51 @@ export function createMockServer(): ServerConnection {
       },
     },
     bank: {
-      status: async () => ({ providers: [], problems: [] }),
-      cards: async () => [],
-      allowances: async () => [],
+      status: async () => ({
+        providers: [
+          {
+            id: "slash",
+            label: "Slash",
+            asset: usd,
+            state: "ready",
+            detail: null,
+            balance: "248650",
+          },
+          {
+            id: "bitcoin",
+            label: "Bitcoin (signet)",
+            asset: btc,
+            state: "ready",
+            detail: null,
+            balance: "4180000",
+          },
+        ],
+        problems: [],
+      }),
+      cards: async ({ nibbletId }) => cards.filter((c) => c.nibbletId === nibbletId),
+      allowances: async ({ nibbletId }) => {
+        const n = nibblets.get(nibbletId);
+        return (n?.spendingLimits ?? []).map((limit) => {
+          const used = cards
+            .filter((c) => c.nibbletId === nibbletId && c.asset.code === limit.asset)
+            .reduce((sum, c) => sum + BigInt(c.state === "open" ? c.limit : c.spent), 0n);
+          const cap = BigInt(limit.amount);
+          return {
+            limit,
+            used: used.toString(),
+            remaining: (used >= cap ? 0n : cap - used).toString(),
+            since: ago(60 * 24 * 18),
+          };
+        });
+      },
       kill: async ({ id }) => {
-        throw new RpcError("not_found", `No card ${id}`);
+        const i = cards.findIndex((c) => c.id === id);
+        const card = cards[i];
+        if (!card) throw new RpcError("not_found", `No card ${id}`);
+        const killed: Card = { ...card, state: "closed", closedBy: "user", closedAt: now() };
+        cards[i] = killed;
+        push({ type: "cards_changed", nibbletId: card.nibbletId });
+        return killed;
       },
     },
     snapshots: {
