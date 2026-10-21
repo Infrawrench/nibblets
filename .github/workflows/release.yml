@@ -199,9 +199,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile --filter "@nibblet/server..."
       - name: What a server serves at /api/openapi.json
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
         run: |
           node apps/server/src/cli.ts openapi > openapi.json
-          jq -e --arg version "${{ needs.check.outputs.version }}" '.info.version == $version' openapi.json
+          jq -e --arg version "$VERSION" '.info.version == $version' openapi.json
       - uses: actions/upload-artifact@v4
         with:
           name: openapi
