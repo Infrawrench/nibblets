@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CardFile } from "./bank.ts";
 import { Effort, HarnessId } from "./models.ts";
 import { CliLogin, McpServerDef, ToolRule } from "./mcp.ts";
 import { SharedVault } from "./onepassword.ts";
@@ -172,6 +173,13 @@ export const ServerToRunner = z.discriminatedUnion("type", [
   z.object({ type: z.literal("task_stop"), taskId: z.string() }),
   /** Look again for desktop apps, and send them in an `apps`. */
   z.object({ type: z.literal("apps_scan") }),
+  /**
+   * Write a card's file where the agent can read it, replacing any it had.
+   * The runner answers with `card_done`.
+   */
+  z.object({ type: z.literal("card_put"), requestId: z.string(), file: CardFile }),
+  /** Delete a card's file, once it's been killed. Answered with `card_done`. */
+  z.object({ type: z.literal("card_remove"), requestId: z.string(), cardId: z.string() }),
 ]);
 export type ServerToRunner = z.infer<typeof ServerToRunner>;
 
@@ -215,6 +223,13 @@ export const RunnerToServer = z.discriminatedUnion("type", [
   z.object({ type: z.literal("tasks"), tasks: z.array(BackgroundTask) }),
   /** The desktop apps installed in its container, on every connect and whenever they change. */
   z.object({ type: z.literal("apps"), apps: z.array(DesktopApp) }),
+  /** A `card_put` or `card_remove` done: where the file is (for a put), or why it couldn't be. */
+  z.object({
+    type: z.literal("card_done"),
+    requestId: z.string(),
+    path: z.string().nullable(),
+    error: z.string().nullable(),
+  }),
   z.object({
     type: z.literal("log"),
     level: z.enum(["debug", "info", "warn", "error"]),

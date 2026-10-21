@@ -28,7 +28,20 @@ import {
   type StoredItem,
   type ThreadItem,
 } from "@nibblet/protocol";
-import { and, asc, cosineDistance, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  cosineDistance,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lt,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import type { Bus } from "./bus.ts";
 import type { Embedder } from "./embeddings.ts";
@@ -446,9 +459,14 @@ export class Store {
       .orderBy(desc(cards.createdAt));
   }
 
-  /** Every card that's still open, on any nibblet. */
-  async openCards(): Promise<CardRow[]> {
-    return this.db.select().from(cards).where(eq(cards.state, "open"));
+  /** Every card that isn't closed yet, on any nibblet: open, pending or closing. */
+  async liveCards(): Promise<CardRow[]> {
+    return this.db.select().from(cards).where(ne(cards.state, "closed"));
+  }
+
+  /** Only for a card that was never made. */
+  async deleteCard(id: string): Promise<void> {
+    await this.db.delete(cards).where(eq(cards.id, id));
   }
 
   async updateCard(

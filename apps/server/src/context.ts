@@ -1,6 +1,8 @@
 import {
+  formatAmount,
   nameInPrompt,
   TAILSCALE_PROXY_PORT,
+  type AssetInfo,
   type Heartbeat,
   type Memory,
   type Nibblet,
@@ -93,6 +95,8 @@ export interface SystemPromptInput {
   now: Date;
   /** 1Password vaults shared with it, if any. */
   onePasswordVaults?: readonly SharedVault[];
+  /** The banks it could get cards from, if its limits allow. */
+  banks?: readonly { id: string; label: string; asset: AssetInfo }[];
   /** Whether its container has a desktop for apps other than the browser. */
   desktop?: boolean;
   /** Its container's machine on the user's tailnet, once it has joined. */
@@ -178,6 +182,9 @@ export function systemPrompt(input: SystemPromptInput): string {
     );
   }
 
+  const spending = spendingSection(nibblet, input.banks ?? []);
+  if (spending) parts.push(spending);
+
   if (input.tailnet) {
     parts.push(tailnetSection(input.tailnet.node, input.tailnet.ports));
   }
@@ -207,4 +214,22 @@ function tailnetSection(node: TailnetNode, ports: readonly number[]): string {
       ? `The user's other machines can reach servers you run on ${ports.length === 1 ? "port" : "ports"} ${ports.join(", ")} at ${name} (for example \`http://${name}:${ports[0]}\`), and nothing else in your container. Listen on \`0.0.0.0\` or \`127.0.0.1\`, and give the user that address rather than \`localhost\`. To share another port, the user adds it in your settings.`
       : "Nothing in your container is reachable from the tailnet: if the user wants to open something you run from their other machines, they add its port in your settings.";
   return `## Tailscale\n\nYour container is a machine on the user's tailnet${node.tailnet ? ` (${node.tailnet})` : ""}: ${where}. ${shared}\n\nTo reach machines on the tailnet, go through Tailscale's proxy at \`127.0.0.1:${TAILSCALE_PROXY_PORT}\`, which speaks HTTP and SOCKS5 and resolves tailnet names: \`curl -x http://127.0.0.1:${TAILSCALE_PROXY_PORT} http://some-machine:8080\`, \`ALL_PROXY=socks5h://127.0.0.1:${TAILSCALE_PROXY_PORT}\` for tools that take it, or for SSH \`-o ProxyCommand='nc -X 5 -x 127.0.0.1:${TAILSCALE_PROXY_PORT} %h %p'\`. Without it, tailnet names don't resolve and tailnet addresses aren't routed. The \`tailscale\` command isn't yours to use.`;
+}
+
+/** What it may spend and how, when it has limits and a bank to spend them at. */
+function spendingSection(
+  nibblet: Nibblet,
+  banks: readonly { id: string; label: string; asset: AssetInfo }[],
+): string | null {
+  const lines = nibblet.spendingLimits.flatMap((limit) => {
+    const at = banks.filter((b) => b.asset.code === limit.asset);
+    const first = at[0];
+    if (!first) return [];
+    const per = limit.period === "total" ? "in total" : `a ${limit.period} (UTC)`;
+    return [
+      `- ${formatAmount(limit.amount, first.asset.decimals)} ${limit.asset} ${per}, from ${at.map((b) => `\`${b.id}\``).join(" or ")}`,
+    ];
+  });
+  if (lines.length === 0) return null;
+  return `## Spending\n\nYour person lets you spend money, up to:\n${lines.join("\n")}\n\nFor a purchase, get a card with \`card_request\` for what it needs (single use where one payment will do), pay with the details from the file it names, then kill it with \`card_kill\` as soon as you're done; \`card_list\` shows your cards and what's left. Only spend on what your person asked for or would clearly want, and tell them what you bought. Card numbers, codes and keys stay in their files: never put them in the chat, your memory, other files or your status, and never give them to a site you didn't choose to pay.`;
 }

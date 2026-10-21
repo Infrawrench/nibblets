@@ -14,6 +14,7 @@ import { z } from "zod";
 import { cliStatuses } from "./clilogins.ts";
 import { readTailnetOAuth, setTailnetKeys, tailnetKeys } from "./tailnet-keys.ts";
 import { forgetGrants, onePasswordStatus, readGrants, setGrants } from "./onepassword.ts";
+import type { Bank } from "./bank.ts";
 import type { Conductor } from "./conductor.ts";
 import type { HarnessModelLists } from "./opencode.ts";
 import {
@@ -48,6 +49,7 @@ export interface Services {
   notifier: Notifier;
   harnessUpdates: HarnessUpdater;
   appUpdates: AppUpdater;
+  bank: Bank;
 }
 
 const ok = { ok: true } as const;
@@ -267,6 +269,12 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       },
     },
 
+    bank: {
+      status: () => s.bank.status(),
+      cards: ({ nibbletId }) => s.bank.cards(nibbletId),
+      allowances: ({ nibbletId }) => s.bank.allowances(nibbletId),
+      kill: ({ id }) => s.bank.kill(id, "user"),
+    },
     snapshots: {
       list: ({ nibbletId }) => s.snapshots.list(nibbletId),
       create: ({ nibbletId, label }) => s.snapshots.create(nibbletId, label ?? null),

@@ -95,6 +95,48 @@ describe("withinActiveHours", () => {
 });
 
 describe("systemPrompt", () => {
+  const base = {
+    serverName: "home",
+    memories: [],
+    history: null,
+    parent: null,
+    now: new Date("2026-10-21T12:00:00Z"),
+  };
+  const banks = [
+    { id: "slash", label: "Slash", asset: { code: "USD", decimals: 2 } },
+    { id: "bitcoin", label: "Bitcoin", asset: { code: "BTC", decimals: 8 } },
+  ];
+
+  it("tells a nibblet what it may spend, and where", () => {
+    const prompt = systemPrompt({
+      ...base,
+      nibblet: {
+        ...nibblet,
+        spendingLimits: [
+          { asset: "USD", amount: "5000", period: "month" },
+          { asset: "BTC", amount: "100000", period: "total" },
+          // No bank deals in this one, so it isn't mentioned.
+          { asset: "ETH", amount: "1", period: "day" },
+        ],
+      },
+      banks,
+    });
+    expect(prompt).toContain("## Spending");
+    expect(prompt).toContain("- 50.00 USD a month (UTC), from `slash`");
+    expect(prompt).toContain("- 0.001 BTC in total, from `bitcoin`");
+    expect(prompt).not.toContain("ETH");
+    expect(prompt).toContain("`card_kill`");
+  });
+
+  it("says nothing about spending without a limit or a bank", () => {
+    expect(systemPrompt({ ...base, nibblet, banks })).not.toContain("## Spending");
+    const limited = {
+      ...nibblet,
+      spendingLimits: [{ asset: "USD", amount: "1", period: "day" as const }],
+    };
+    expect(systemPrompt({ ...base, nibblet: limited, banks: [] })).not.toContain("## Spending");
+  });
+
   it("includes instructions, memories, recap, and the browser rule", () => {
     const prompt = systemPrompt({
       nibblet,

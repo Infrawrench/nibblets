@@ -952,6 +952,14 @@ export function createMockServer(): ServerConnection {
         return { ok: true };
       },
     },
+    bank: {
+      status: async () => ({ providers: [], problems: [] }),
+      cards: async () => [],
+      allowances: async () => [],
+      kill: async ({ id }) => {
+        throw new RpcError("not_found", `No card ${id}`);
+      },
+    },
     snapshots: {
       list: async ({ nibbletId }) => {
         const position = positions.get(nibbletId);

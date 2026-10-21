@@ -23,6 +23,8 @@ import { Connect } from "./connect.ts";
 import { AppUpdater, HarnessUpdater } from "./updates.ts";
 import { Notifier } from "./notifier.ts";
 import { tailscaleStatus } from "./hostmcp.ts";
+import { Bank } from "./bank.ts";
+import { loadBanks } from "./banks.ts";
 
 // The repository's version, which releases are tagged with.
 const VERSION = z
@@ -55,6 +57,16 @@ async function main(): Promise<void> {
   conductor.terminals.onTasks = (nibbletId, tasks) =>
     bus.publish({ type: "tasks", nibbletId, tasks });
   conductor.terminals.onApps = (nibbletId, apps) => bus.publish({ type: "apps", nibbletId, apps });
+  const banks = loadBanks();
+  const bank = new Bank({
+    store,
+    plugins: banks.plugins,
+    errors: banks.errors,
+    files: conductor.cardFiles,
+    publish: (message) => bus.publish(message),
+    log: (message) => console.warn(`bank: ${message}`),
+  });
+  conductor.bank = bank;
   const scheduler = new Scheduler(store, conductor);
   const snapshots = new Snapshots({
     store,
@@ -102,6 +114,7 @@ async function main(): Promise<void> {
       snapshots,
       harnessUpdates,
       appUpdates,
+      bank,
     },
     bus,
   );
@@ -125,6 +138,7 @@ async function main(): Promise<void> {
   await scheduler.start();
   snapshots.start();
   harnessUpdates.start();
+  bank.start();
   // An update leaves the last release's images behind; reconcile has just
   // moved running nibblets off them. Again daily, for those that were stopped.
   const prune = () =>
@@ -146,6 +160,7 @@ async function main(): Promise<void> {
     scheduler.stop();
     snapshots.stop();
     harnessUpdates.stop();
+    bank.stop();
     clearInterval(pruning);
     clearInterval(budgetSweep);
     central.stop();

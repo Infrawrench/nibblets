@@ -43,6 +43,8 @@ import { keyId, mintAuthKey, readTailnetOAuth } from "./tailnet-keys.ts";
 import { hostLoginFor } from "./host-login.ts";
 import { runnerName, type Orchestrator } from "./docker.ts";
 import { TerminalHub } from "./terminals.ts";
+import type { Bank } from "./bank.ts";
+import { CardFiles } from "./card-files.ts";
 import { desktopToken, guardToken, hashToken, newId, viewToken, type Store } from "./store.ts";
 
 export interface RunnerLink {
@@ -131,6 +133,14 @@ export class Conductor {
     link?.send(message);
     return link !== undefined;
   });
+  /** Card files in the containers, written over the runner socket. */
+  readonly cardFiles = new CardFiles((nibbletId, message) => {
+    const link = this.links.get(nibbletId);
+    link?.send(message);
+    return link !== undefined;
+  });
+  /** Nibblets' cards, once the bank is set up; it writes their files through `cardFiles`. */
+  bank: Bank | null = null;
   serverName = "nibblet";
 
   constructor(store: Store, docker: Orchestrator, config: Config) {
@@ -543,6 +553,7 @@ export class Conductor {
     this.links.get(nibbletId)?.close();
     this.links.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
+    this.cardFiles.runnerGone(nibbletId);
     const host = await this.hostOf(nibblet).catch(() => null);
     if (host && !(await this.docker.runnerRunning(host).catch(() => false))) {
       // It went down with its parent's container.
@@ -605,6 +616,7 @@ export class Conductor {
     this.links.get(nibbletId)?.close();
     this.links.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
+    this.cardFiles.runnerGone(nibbletId);
     // Mark it stopped first, so the container's exit event reads as expected.
     const stopped = await this.store.updateNibblet(nibbletId, {
       status: "stopped",
@@ -626,6 +638,9 @@ export class Conductor {
 
   async delete(nibbletId: string): Promise<void> {
     // At the same time: each waits for its own processes to stop.
+    // Its cards die with it, at their providers too, not just in the database;
+    // if any can't be closed, it isn't deleted, so their records aren't lost.
+    await this.bank?.killAll(nibbletId);
     await Promise.all((await this.store.children(nibbletId)).map((child) => this.delete(child.id)));
     await this.stop(nibbletId).catch(() => undefined);
     this.queues.delete(nibbletId);
@@ -791,7 +806,10 @@ export class Conductor {
   async attach(nibbletId: string, link: RunnerLink): Promise<void> {
     const previous = this.links.get(nibbletId);
     previous?.close();
-    if (previous && previous !== link) this.terminals.runnerGone(nibbletId);
+    if (previous && previous !== link) {
+      this.terminals.runnerGone(nibbletId);
+      this.cardFiles.runnerGone(nibbletId);
+    }
     this.links.set(nibbletId, link);
     const row = await this.store.nibbletRow(nibbletId);
     const onePassword = await onePasswordLogin(this.config, this.store, nibbletId, (m) =>
@@ -918,6 +936,7 @@ export class Conductor {
     this.links.delete(nibbletId);
     this.views.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
+    this.cardFiles.runnerGone(nibbletId);
     this.failActive(nibbletId, "failed", "Lost touch with its container");
   }
 
@@ -938,6 +957,10 @@ export class Conductor {
         }
         await this.store.setStatus(nibbletId, this.active.has(nibbletId) ? "working" : "idle");
         await this.dispatch(nibbletId);
+        // A fresh container has lost its card files; a reconnect just rewrites them.
+        void this.bank
+          ?.restore(nibbletId)
+          .catch((err: unknown) => console.warn(`[${nibbletId}] couldn't restore its cards`, err));
         return;
       }
       case "item": {
@@ -978,6 +1001,9 @@ export class Conductor {
           .catch((err: unknown) => console.error(`approval for ${nibbletId} failed`, err));
         return;
       }
+      case "card_done":
+        this.cardFiles.fromRunner(nibbletId, message);
+        return;
       case "terminal_output":
       case "terminal_exit":
       case "tasks":
@@ -1079,6 +1105,7 @@ export class Conductor {
       parent,
       now: new Date(),
       onePasswordVaults: this.onePasswordVaults.get(nibbletId),
+      banks: this.bank?.providers() ?? [],
       // Its container's, which comes with the host's browser.
       desktop: host?.browser ?? false,
       tailnet:
@@ -1241,6 +1268,7 @@ export class Conductor {
     if (!nibblet || nibblet.status === "stopped") return;
     this.links.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
+    this.cardFiles.runnerGone(nibbletId);
     this.failActive(nibbletId, "failed", "Its container stopped");
     await this.subagentsGone(nibbletId, "Its parent's container stopped");
     const logs = await this.docker.runnerLogs(nibbletId, 20);

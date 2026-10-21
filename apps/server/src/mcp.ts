@@ -2,14 +2,19 @@ import { StreamableHTTPTransport } from "@hono/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   ActiveHours,
+  CardKind,
+  formatAmount,
   HeartbeatName,
   MAX_HEARTBEATS,
   nameInPrompt,
+  RpcError,
+  type Card,
   type Nibblet,
 } from "@nibblet/protocol";
 import { Cron } from "croner";
 import type { Context } from "hono";
 import { z } from "zod";
+import type { Bank } from "./bank.ts";
 import type { Conductor } from "./conductor.ts";
 import type { Connect } from "./connect.ts";
 import type { Notifier } from "./notifier.ts";
@@ -23,6 +28,7 @@ interface ToolDeps {
   scheduler: Scheduler;
   notifier: Pick<Notifier, "askForHelp">;
   connect: Pick<Connect, "status">;
+  bank: Bank;
 }
 
 const text = (value: string) => ({ content: [{ type: "text" as const, text: value }] });
@@ -39,7 +45,7 @@ function validCron(pattern: string, timezone: string): string | null {
 
 /** The nibblet tools, scoped to the nibblet whose token made the call. */
 function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
-  const { store, conductor, scheduler, notifier, connect } = deps;
+  const { store, conductor, scheduler, notifier, connect, bank } = deps;
   const server = new McpServer({ name: "nibblet", version: "0.1.0" });
   // A plain one isn't told it's a nibblet.
   const kind = nibblet.plain ? "agent" : "nibblet";
@@ -366,7 +372,128 @@ function buildServer(nibblet: Nibblet, deps: ToolDeps): McpServer {
     },
   );
 
+  if (bank.enabled) registerCardTools(server, nibblet, bank);
+
   return server;
+}
+
+/** A card as a tool shows it: never what it can be spent with. */
+function describeCard(card: Card, path: string | null) {
+  const { decimals, code } = card.asset;
+  return {
+    id: card.id,
+    bank: card.provider,
+    card: card.display,
+    kind: card.kind,
+    limit: `${formatAmount(card.limit, decimals)} ${code}`,
+    spent: `${formatAmount(card.spent, decimals)} ${code}`,
+    purpose: card.purpose,
+    state: card.state,
+    ...(card.closedBy ? { closedBy: card.closedBy } : {}),
+    ...(path && card.state === "open" ? { file: path } : {}),
+    createdAt: card.createdAt,
+  };
+}
+
+/** A tool's error as text the agent can act on, rather than a failed call. */
+/** A card tool's result, or its refusal as a tool error the agent can tell from success. */
+async function answer(work: () => Promise<ReturnType<typeof text>>) {
+  try {
+    return await work();
+  } catch (err) {
+    if (err instanceof RpcError) return { ...text(err.message), isError: true };
+    throw err;
+  }
+}
+
+function registerCardTools(server: McpServer, nibblet: Nibblet, bank: Bank): void {
+  const banks = bank.providers();
+  server.registerTool(
+    "card_request",
+    {
+      description: `Get a virtual card (or, for crypto, a funded wallet) to pay for something, within the spending limit your person set you. Its details are written to a file in your container, never shown here: read the file when you fill in the payment, and don't copy them anywhere else. A single_use card closes after one purchase; a multi_use one stays open until you kill it with card_kill, which you should do as soon as you're finished with it. Ask for what the purchase needs, not your whole limit: an open card counts against your limit in full. Banks here: ${banks.map((b) => `${b.id} (${b.asset.code}, ${b.label})`).join("; ")}.`,
+      inputSchema: {
+        bank: z.string().describe("Which bank, by id"),
+        limit: z
+          .string()
+          .regex(/^\d+(\.\d+)?$/)
+          .describe("The most it can ever spend, in the bank's asset, e.g. 25.00"),
+        kind: CardKind,
+        purpose: z
+          .string()
+          .min(1)
+          .max(200)
+          .describe("What it's for, e.g. 'Domain renewal at Namecheap'"),
+      },
+    },
+    ({ bank: provider, limit, kind, purpose }) =>
+      answer(async () => {
+        const { card, path, details } = await bank.request(nibblet.id, {
+          provider,
+          limit,
+          kind,
+          purpose,
+        });
+        const { decimals, code } = card.asset;
+        const fields =
+          details === "card"
+            ? "pan, cvv, expMonth, expYear and maybe billingAddress"
+            : "chain, network, address and privateKey, funded with the limit; network fees come out of it";
+        return text(
+          `Card ${card.id} is ready: ${card.display}, ${kind === "single_use" ? "single use" : "multi use"}, up to ${formatAmount(card.limit, decimals)} ${code}. Its details are in ${path} (JSON; "details" has ${fields}). Read them from there when you pay, and never paste them into the chat, your memory, other files or your status. Kill it with card_kill when you're done.`,
+        );
+      }),
+  );
+
+  server.registerTool(
+    "card_list",
+    {
+      description:
+        "List your cards, open and closed, with what's been spent on each and where each open card's file is, and how much of your spending limits is left.",
+      inputSchema: {},
+    },
+    () =>
+      answer(async () => {
+        const cards = await bank.cards(nibblet.id);
+        const allowances = await bank.allowances(nibblet.id);
+        return json({
+          limits: allowances.map((a) => {
+            const decimals = banks.find((b) => b.asset.code === a.limit.asset)?.asset.decimals;
+            const show = (m: string) =>
+              decimals === undefined ? `${m} (minor units)` : formatAmount(m, decimals);
+            return {
+              asset: a.limit.asset,
+              per: a.limit.period,
+              limit: show(a.limit.amount),
+              left: show(a.remaining),
+              since: a.since,
+            };
+          }),
+          cards: cards.map((c) => describeCard(c, bank.pathOf(c.id))),
+        });
+      }),
+  );
+
+  server.registerTool(
+    "card_kill",
+    {
+      description:
+        "Kill one of your cards for good, as soon as you're done with it. A wallet's unspent balance goes back to the treasury, and what wasn't spent is freed up in your limit. Its file is deleted.",
+      inputSchema: { id: z.string().describe("The card's id, e.g. card_…") },
+    },
+    ({ id }) =>
+      answer(async () => {
+        const card = await bank.kill(id, "nibblet", nibblet.id);
+        if (card.state !== "closed") {
+          return text(
+            `Killed ${card.id} (${card.display}): its file is gone and it can't be used again, but ${card.provider} hasn't settled it yet, so it counts against your limit in full until the server finishes closing it.`,
+          );
+        }
+        return text(
+          `Killed ${card.id} (${card.display}). ${formatAmount(card.spent, card.asset.decimals)} ${card.asset.code} was spent on it.`,
+        );
+      }),
+  );
 }
 
 /** Handles `/mcp`: authenticates the nibblet by token and serves its tools statelessly. */
