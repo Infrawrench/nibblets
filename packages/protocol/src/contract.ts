@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { BankProviderId, BankSettings, BankStatus, Card, SpendingAllowance } from "./bank.ts";
+import {
+  BankName,
+  BankProviderId,
+  BankSettings,
+  BankStatus,
+  Card,
+  SpendingAllowance,
+} from "./bank.ts";
 import { CliStatuses, HostTools } from "./mcp.ts";
 import { HarnessId, HarnessModels } from "./models.ts";
 import { ConnectStatus, TailscaleStatus } from "./connect.ts";
@@ -177,10 +184,18 @@ export const contract = {
     /** Kills a card for good. */
     kill: procedure(Id, Card),
     /**
-     * Sets a bank up, or changes its settings, once its provider answers to
-     * them. A secret given as `MASKED` keeps the one it has.
+     * Sets a bank up (with no `id`), or changes one, once its provider
+     * answers to the settings. A secret given as `MASKED` keeps the one it has.
      */
-    configure: procedure(z.object({ id: BankProviderId, settings: BankSettings }), BankStatus),
+    configure: procedure(
+      z.object({
+        id: BankProviderId.nullable(),
+        kind: BankProviderId,
+        name: BankName,
+        settings: BankSettings,
+      }),
+      BankStatus,
+    ),
     /** Forgets a bank's saved settings. Refused while it has cards that aren't closed. */
     remove: procedure(z.object({ id: BankProviderId }), BankStatus),
   },

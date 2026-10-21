@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronRight, Copy, CreditCard, KeyRound, Wallet } from "lucide-react";
-import type { BankField, BankInstrument, BankKind, BankStatus } from "@nibblet/protocol";
+import type { BankField, BankInstrument, BankKind, BankSetup, BankStatus } from "@nibblet/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import {
   bankDraftChanged,
   bankDraftOf,
   bankSettingsOf,
+  bankTitle,
   missingField,
+  needsName,
   newPrivateKey,
   secretSaved,
   type BankDraft,
@@ -23,27 +25,34 @@ export const instrumentIcons: Record<BankInstrument, typeof CreditCard> = {
 };
 
 /**
- * Setting a bank up, or changing one: a choice of the banks the server
- * knows, then the form its plugin describes. Nothing here knows one bank
- * from another; each plugin says what it needs (`BankKind.fields`).
+ * Setting a bank up, or changing one: a choice of the plugins the server
+ * knows, then the form the plugin describes. Nothing here knows one bank
+ * from another; each plugin says what it needs (`BankKind.fields`). There
+ * can be several banks on one plugin, each with a name.
  */
 export function BankDialog({
   connection,
   kinds,
+  banks,
   chosen,
   onClose,
 }: {
   connection: ServerConnection;
   kinds: readonly BankKind[];
-  /** A bank's id to open its form, null to choose one to add, undefined when closed. */
+  banks: readonly BankSetup[];
+  /** A bank's id to open its form, null to choose a plugin to add one on, undefined when closed. */
   chosen: string | null | undefined;
   onClose: () => void;
 }) {
   const [picked, setPicked] = useState<string | null>(null);
   useEffect(() => setPicked(null), [chosen]);
-  const id = chosen ?? picked;
-  const kind = kinds.find((k) => k.id === id) ?? null;
-  const title = kind ? (kind.source ? kind.name : `Set up ${kind.name}`) : "Add a bank";
+  const bank = banks.find((b) => b.id === chosen) ?? null;
+  const kind = kinds.find((k) => k.id === (bank?.kind ?? picked)) ?? null;
+  const title = !kind
+    ? "Add a bank"
+    : bank
+      ? bankTitle(bank.name, kind.name)
+      : `Set up ${banks.some((b) => b.kind === kind.id) ? "another " : ""}${kind.name}`;
   return (
     <Modal
       open={chosen !== undefined}
@@ -53,14 +62,16 @@ export function BankDialog({
     >
       {kind ? (
         <BankForm
-          key={kind.id}
+          key={bank?.id ?? kind.id}
           connection={connection}
           kind={kind}
+          bank={bank}
+          banks={banks}
           onBack={chosen === null ? () => setPicked(null) : null}
           onDone={onClose}
         />
       ) : (
-        <BankChoice kinds={kinds.filter((k) => k.source === null)} onChoose={setPicked} />
+        <BankChoice kinds={kinds} banks={banks} onChoose={setPicked} />
       )}
     </Modal>
   );
@@ -68,18 +79,18 @@ export function BankDialog({
 
 function BankChoice({
   kinds,
+  banks,
   onChoose,
 }: {
   kinds: readonly BankKind[];
+  banks: readonly BankSetup[];
   onChoose: (id: string) => void;
 }) {
-  if (kinds.length === 0) {
-    return <p className="p-4 text-sm text-dim">Every bank this server knows is set up.</p>;
-  }
   return (
     <div className="flex flex-col gap-1 p-3">
       {kinds.map((kind) => {
         const Icon = instrumentIcons[kind.instrument];
+        const count = banks.filter((b) => b.kind === kind.id).length;
         return (
           <button
             key={kind.id}
@@ -89,7 +100,14 @@ function BankChoice({
           >
             <Icon className="size-5 shrink-0 text-dim" />
             <span className="flex min-w-0 flex-1 flex-col">
-              <span className="text-sm font-medium">{kind.name}</span>
+              <span className="text-sm font-medium">
+                {kind.name}
+                {count > 0 ? (
+                  <span className="ml-1.5 text-xs font-normal text-faint">
+                    {count === 1 ? "1 set up" : `${count} set up`}
+                  </span>
+                ) : null}
+              </span>
               <span className="text-xs text-faint">{kind.about}</span>
             </span>
             <ChevronRight className="size-4 shrink-0 text-faint" />
@@ -103,24 +121,34 @@ function BankChoice({
 function BankForm({
   connection,
   kind,
+  bank,
+  banks,
   onBack,
   onDone,
 }: {
   connection: ServerConnection;
   kind: BankKind;
+  /** Null for a new one. */
+  bank: BankSetup | null;
+  banks: readonly BankSetup[];
   onBack: (() => void) | null;
   onDone: () => void;
 }) {
   const qc = useQueryClient();
-  const [draft, setDraft] = useState<BankDraft>(() => bankDraftOf(kind));
+  const saved = bank?.settings ?? {};
+  const [draft, setDraft] = useState<BankDraft>(() => bankDraftOf(kind, saved));
+  const [name, setName] = useState(bank?.name ?? "");
   /** Keys the form made, shown in the clear so they can be copied before they're saved. */
   const [generated, setGenerated] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const missing = missingField(kind, draft);
-  const changed = kind.source === null || bankDraftChanged(kind, draft);
-  const locked = (field: BankField) =>
-    field.lockedByCards && kind.source !== null && kind.liveCards > 0;
+  const named = needsName(banks, kind.id, bank?.id ?? null);
+  const others = banks.filter((b) => b.kind === kind.id && b.id !== bank?.id).length;
+  const alone = others === 0;
+  const missing = missingField(kind, saved, draft);
+  const changed =
+    bank === null || name.trim() !== bank.name || bankDraftChanged(kind, saved, draft);
+  const locked = (field: BankField) => field.lockedByCards && (bank?.liveCards ?? 0) > 0;
 
   const run = async (call: () => Promise<BankStatus>) => {
     setBusy(true);
@@ -136,19 +164,44 @@ function BankForm({
   };
   const save = () =>
     run(() =>
-      connection.client.bank.configure({ id: kind.id, settings: bankSettingsOf(kind, draft) }),
+      connection.client.bank.configure({
+        id: bank?.id ?? null,
+        kind: kind.id,
+        name: name.trim(),
+        settings: bankSettingsOf(kind, saved, draft),
+      }),
     );
-  const remove = () => run(() => connection.client.bank.remove({ id: kind.id }));
+  const remove = () => run(() => connection.client.bank.remove({ id: bank?.id ?? "" }));
+  const title = bankTitle(bank?.name ?? "", kind.name);
 
   return (
     <>
       <div className="flex flex-col gap-3 p-4">
         <p className="text-xs text-dim">
           {kind.about}
-          {kind.source === "env"
+          {bank?.source === "env"
             ? " It's set up from the server's environment now; saving here takes over from that."
             : null}
         </p>
+        <FieldRow
+          label="Name"
+          top
+          hint={
+            named
+              ? `To tell it from your other ${kind.name} bank${others === 1 ? "" : "s"}.`
+              : alone
+                ? `Only needed once you have more than one ${kind.name} bank.`
+                : `One ${kind.name} bank can go without; the others have names.`
+          }
+        >
+          <Input
+            value={name}
+            maxLength={40}
+            disabled={busy}
+            placeholder={named ? "Travel, say" : "Optional"}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </FieldRow>
         {kind.fields.map((field) => (
           <FieldRow
             key={field.key}
@@ -156,14 +209,14 @@ function BankForm({
             top
             hint={
               locked(field)
-                ? `Can't change while ${kind.name} has cards that aren't closed.`
+                ? `Can't change while ${title} has cards that aren't closed.`
                 : (field.hint ?? undefined)
             }
           >
             <FieldInput
               field={field}
               value={draft[field.key] ?? ""}
-              saved={secretSaved(kind, field)}
+              saved={secretSaved(saved, field)}
               shown={generated.has(field.key)}
               disabled={busy || locked(field)}
               onChange={(value) => setDraft({ ...draft, [field.key]: value })}
@@ -182,7 +235,7 @@ function BankForm({
             Back
           </Button>
         ) : null}
-        {kind.source === "saved" ? (
+        {bank?.source === "saved" ? (
           <Button variant="danger" disabled={busy} onClick={() => void remove()}>
             Remove
           </Button>
@@ -190,16 +243,18 @@ function BankForm({
         <span className={`mr-auto min-w-0 flex-1 text-xs ${error ? "text-danger" : "text-faint"}`}>
           {error
             ? error
-            : missing
-              ? `${missing.label} is needed.`
-              : `It's checked with ${kind.name} when you save.`}
+            : named && !name.trim()
+              ? "Give it a name."
+              : missing
+                ? `${missing.label} is needed.`
+                : `It's checked with ${kind.name} when you save.`}
         </span>
         <Button
           variant="primary"
-          disabled={busy || missing !== null || !changed}
+          disabled={busy || missing !== null || (named && !name.trim()) || !changed}
           onClick={() => void save()}
         >
-          {busy ? "Checking…" : kind.source ? "Save" : `Set up ${kind.name}`}
+          {busy ? "Checking…" : bank ? "Save" : `Set up ${kind.name}`}
         </Button>
       </div>
     </>

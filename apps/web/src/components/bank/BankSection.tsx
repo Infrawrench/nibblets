@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Copy, Plus, XCircle } from "lucide-react";
-import type { BankKind, BankProvider } from "@nibblet/protocol";
+import type { BankProvider, BankSetup } from "@nibblet/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
-import { money } from "../../lib/bank.ts";
+import { bankTitle, money } from "../../lib/bank.ts";
 import { keys } from "../../lib/servers.tsx";
 import { Button } from "../ui/Button.tsx";
 import { SectionHeading } from "../ui/Field.tsx";
@@ -28,13 +28,15 @@ export function BankSection({ connection }: { connection: ServerConnection }) {
     void status.refetch();
   };
   const kinds = status.data?.kinds ?? [];
-  const setUp = kinds.filter((k) => k.source !== null);
-  const addable = kinds.some((k) => k.source === null);
+  // Each plugin's banks together, in the order the server lists its plugins.
+  const banks = [...(status.data?.banks ?? [])].sort(
+    (a, b) => kinds.findIndex((k) => k.id === a.kind) - kinds.findIndex((k) => k.id === b.kind),
+  );
   return (
     <>
       <SectionHeading
         action={
-          addable ? (
+          kinds.length > 0 ? (
             <Button size="sm" variant="ghost" onClick={() => open(null)}>
               <Plus />
               Add a bank
@@ -45,22 +47,24 @@ export function BankSection({ connection }: { connection: ServerConnection }) {
         Bank
       </SectionHeading>
       <p className="text-xs text-faint">
-        {setUp.length === 0
+        {banks.length === 0
           ? "No bank is set up, so nibblets can't have cards. Add a card issuer or a crypto treasury, then give each nibblet a spending limit in its settings."
           : "Nibblets get cards from these, within the spending limit you give each one in its settings."}
       </p>
-      {setUp.map((kind) => (
+      {banks.map((bank) => (
         <BankRow
-          key={kind.id}
-          kind={kind}
-          provider={status.data?.providers.find((p) => p.id === kind.id) ?? null}
-          problem={status.data?.problems.find((p) => p.id === kind.id)?.detail ?? null}
-          onEdit={() => open(kind.id)}
+          key={bank.id}
+          bank={bank}
+          kindName={kinds.find((k) => k.id === bank.kind)?.name ?? bank.kind}
+          provider={status.data?.providers.find((p) => p.id === bank.id) ?? null}
+          problem={status.data?.problems.find((p) => p.id === bank.id)?.detail ?? null}
+          onEdit={() => open(bank.id)}
         />
       ))}
       <BankDialog
         connection={connection}
         kinds={kinds}
+        banks={banks}
         chosen={dialog}
         onClose={() => setDialog(undefined)}
       />
@@ -69,12 +73,15 @@ export function BankSection({ connection }: { connection: ServerConnection }) {
 }
 
 function BankRow({
-  kind,
+  bank,
+  kindName,
   provider,
   problem,
   onEdit,
 }: {
-  kind: BankKind;
+  bank: BankSetup;
+  /** Its plugin's name, "Slash". */
+  kindName: string;
   provider: BankProvider | null;
   /** Why its settings don't load, if they don't. */
   problem: string | null;
@@ -98,7 +105,7 @@ function BankRow({
       )}
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="text-sm font-medium">
-          {provider?.label ?? kind.name}
+          {provider?.label ?? bankTitle(bank.name, kindName)}
           {provider ? (
             <span className="ml-1.5 font-normal text-dim">{provider.asset.code}</span>
           ) : null}
@@ -128,7 +135,7 @@ function BankRow({
             {copied ? <span className="shrink-0">Copied</span> : null}
           </span>
         ) : null}
-        {kind.source === "env" ? (
+        {bank.source === "env" ? (
           <span className="text-2xs text-faint">From the server's environment</span>
         ) : null}
       </div>

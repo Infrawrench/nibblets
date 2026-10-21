@@ -21,8 +21,9 @@ export * from "./wallet.ts";
  * never leave the server.
  */
 export interface BankPlugin {
+  /** The bank's id. A factory makes it with its own; the loader gives it the bank's. */
   readonly id: BankProviderId;
-  /** For Settings, e.g. "Lithic (sandbox)". */
+  /** For Settings, e.g. "Lithic (sandbox)"; the loader puts the bank's name in front. */
   readonly label: string;
   /** The one asset its cards are in. */
   readonly asset: AssetInfo;
@@ -180,57 +181,123 @@ export function defineField(
 
 export interface LoadedBanks {
   plugins: Map<BankProviderId, BankPlugin>;
-  /** Plugins whose settings are there but wrong, with why. */
+  /** Banks whose settings are there but wrong, with why. */
   errors: Map<BankProviderId, string>;
 }
 
-/** Loads every factory whose settings are present. */
+/** One bank to load: which plugin, with what settings. */
+export interface BankEntry {
+  id: BankProviderId;
+  kind: BankProviderId;
+  name: string;
+  settings: BankSettingValues;
+}
+
+/** Loads every bank whose settings are complete, each under its own id. */
 export function loadBankPlugins(
   factories: readonly BankPluginFactory[],
-  settings: ReadonlyMap<BankProviderId, BankSettingValues>,
+  banks: readonly BankEntry[],
   deps: BankDeps,
 ): LoadedBanks {
+  const byId = new Map<BankProviderId, BankPluginFactory>();
+  for (const factory of factories) {
+    if (byId.has(factory.id)) throw new Error(`Two bank plugins are called ${factory.id}`);
+    byId.set(factory.id, factory);
+  }
   const plugins = new Map<BankProviderId, BankPlugin>();
   const errors = new Map<BankProviderId, string>();
-  const seen = new Set<BankProviderId>();
-  for (const factory of factories) {
-    if (seen.has(factory.id)) throw new Error(`Two bank plugins are called ${factory.id}`);
-    seen.add(factory.id);
+  for (const bank of banks) {
+    if (plugins.has(bank.id) || errors.has(bank.id)) {
+      throw new Error(`Two banks are called ${bank.id}`);
+    }
     try {
-      const plugin = factory.fromSettings(settings.get(factory.id) ?? {}, deps);
+      const factory = byId.get(bank.kind);
+      if (!factory) throw new Error(`there's no bank plugin called ${bank.kind}`);
+      const plugin = factory.fromSettings(bank.settings, deps);
       if (!plugin) continue;
       if (plugin.id !== factory.id) {
         throw new Error(`it calls itself ${plugin.id}, not ${factory.id}`);
       }
-      plugins.set(plugin.id, plugin);
+      plugins.set(bank.id, asBank(plugin, bank.id, bank.name));
     } catch (err) {
-      errors.set(factory.id, err instanceof Error ? err.message : String(err));
+      errors.set(bank.id, err instanceof Error ? err.message : String(err));
     }
   }
   return { plugins, errors };
 }
 
-export interface ResolvedSettings {
-  source: "saved" | "env" | null;
+/** A plugin as one bank: its own methods, under the bank's id, with its name in its label. */
+function asBank(plugin: BankPlugin, id: BankProviderId, name: string): BankPlugin {
+  return {
+    id,
+    label: name ? `${name} · ${plugin.label}` : plugin.label,
+    asset: plugin.asset,
+    instrument: plugin.instrument,
+    fundAt: plugin.fundAt,
+    check: () => plugin.check(),
+    balance: () => plugin.balance(),
+    issue: (request) => plugin.issue(request),
+    find: (cardId) => plugin.find(cardId),
+    reveal: (card) => plugin.reveal(card),
+    inspect: (card) => plugin.inspect(card),
+    close: (card) => plugin.close(card),
+  };
+}
+
+/** A bank as Settings saved it. */
+export interface SavedBank {
+  id: BankProviderId;
+  kind: BankProviderId;
+  name: string;
   settings: BankSettings;
 }
 
+export interface ResolvedBank extends SavedBank {
+  source: "saved" | "env";
+}
+
 /**
- * A plugin's settings and where they're from: the ones saved in Settings if
- * there are any, or else whichever of its fields the environment sets.
+ * Every bank set up: the ones saved in Settings, and for each plugin, one
+ * from whichever of its fields the server's environment sets, under the
+ * plugin's own id, unless a saved bank has taken that id over.
  */
-export function resolveSettings(
-  factory: BankPluginFactory,
-  saved: BankSettings | undefined,
+export function resolveBanks(
+  factories: readonly BankPluginFactory[],
+  saved: readonly SavedBank[],
   env: BankSettingValues,
-): ResolvedSettings {
-  if (saved) return { source: "saved", settings: saved };
-  const settings: BankSettings = {};
-  for (const field of factory.fields) {
-    const value = env[field.key]?.trim();
-    if (value) settings[field.key] = value;
+): ResolvedBank[] {
+  const banks: ResolvedBank[] = saved.map((b) => ({ ...b, source: "saved" }));
+  for (const factory of factories) {
+    if (banks.some((b) => b.id === factory.id)) continue;
+    const settings: BankSettings = {};
+    for (const field of factory.fields) {
+      const value = env[field.key]?.trim();
+      if (value) settings[field.key] = value;
+    }
+    if (Object.keys(settings).length > 0) {
+      banks.push({ id: factory.id, kind: factory.id, name: "", settings, source: "env" });
+    }
   }
-  return { source: Object.keys(settings).length > 0 ? "env" : null, settings };
+  return banks;
+}
+
+/**
+ * An id for a new bank on a plugin: the plugin's own while it's free (so the
+ * first bank has it), else the plugin's with the bank's name, made unique.
+ */
+export function newBankId(
+  kind: BankProviderId,
+  name: string,
+  taken: ReadonlySet<BankProviderId>,
+): BankProviderId {
+  if (!taken.has(kind)) return kind;
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const stem = (slug ? `${kind}-${slug}` : kind).slice(0, 35).replace(/-+$/, "");
+  if (stem !== kind && !taken.has(stem)) return stem;
+  for (let n = 2; ; n++) if (!taken.has(`${stem}-${n}`)) return `${stem}-${n}`;
 }
 
 /**
