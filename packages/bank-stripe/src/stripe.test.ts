@@ -210,7 +210,7 @@ describe("stripe", () => {
 
   it("cancels a card again when Stripe won't hand over its number", async () => {
     const api = fakeStripe({ hideNumber: true });
-    await expect(stripePlugin(options, api).issue(request)).rejects.toThrow(/live mode/);
+    await expect(stripePlugin(options, api).issue(request)).rejects.toThrow(/card's number/);
     expect(api.cards.get("ic_1")?.status).toBe("canceled");
   });
 

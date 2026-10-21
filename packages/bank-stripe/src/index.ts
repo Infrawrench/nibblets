@@ -188,7 +188,7 @@ export function stripePlugin(options: StripeOptions, deps: Pick<BankDeps, "fetch
   function secret(card: StripeCard): CardSecret {
     if (!card.number || !card.cvc) {
       throw new BankError(
-        "Stripe didn't send the card's number. In live mode, Stripe has to turn on handing card numbers over the API for your account.",
+        "Stripe didn't send the card's number. Check that the API key can read Issuing cards.",
       );
     }
     const address = card.cardholder.billing.address;
