@@ -37,7 +37,7 @@ interface TunnelDocker {
 }
 
 type TunnelStore = Pick<Store, "getSetting" | "setSetting">;
-type TunnelEnv = Pick<Config, "NIBBLET_INTERNAL_URL" | "NIBBLET_PUBLIC_URL" | "NIBBLET_NETWORK">;
+type TunnelEnv = Pick<Config, "NIBBLET_INTERNAL_URL" | "NIBBLET_NETWORK">;
 
 /** Docker's logs endpoint takes Unix seconds; without a usable start time, read the whole log. */
 function unixSeconds(timestamp: string): number {
@@ -75,13 +75,6 @@ export class Tunnel {
     return this.status;
   }
 
-  /** The address people should use, preferring the tunnel's. */
-  publicUrl(): string {
-    return this.status.state === "up" && this.status.url
-      ? this.status.url
-      : this.config.NIBBLET_PUBLIC_URL;
-  }
-
   async restore(): Promise<void> {
     const generation = this.generation;
     const saved = await this.store.getSetting("tunnel", (v) => TunnelConfig.parse(v), {
@@ -97,7 +90,7 @@ export class Tunnel {
     this.startingPollMs = STARTING_POLL_MS;
     const applied = JSON.stringify(config);
     // Reconfiguring a healthy tunnel with the same config keeps its status, so
-    // publicUrl() doesn't drop to the local URL while reconcile re-checks it.
+    // the server's public address doesn't drop out while reconcile re-checks it.
     const unchanged = this.status.state === "up" && applied === this.applied;
     this.applied = applied;
     if (!unchanged) {

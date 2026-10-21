@@ -4,13 +4,12 @@ import {
   BankProviderId,
   BankSettings,
   BankStatus,
-  ProxyUrl,
   Card,
   SpendingAllowance,
 } from "./bank.ts";
 import { CliStatuses, HostTools } from "./mcp.ts";
 import { HarnessId, HarnessModels } from "./models.ts";
-import { ConnectStatus, TailscaleStatus } from "./connect.ts";
+import { ConnectStatus, ProxyUrl, PublicAddress, TailscaleStatus } from "./connect.ts";
 import { OnePasswordGrants, OnePasswordStatus, VaultGrant } from "./onepassword.ts";
 import { procedure } from "./rpc.ts";
 import { Snapshot, SnapshotActivity, SnapshotTimeline } from "./snapshots.ts";
@@ -130,6 +129,15 @@ export const contract = {
     /** Forgets the account and stops the tunnel. */
     unlink: procedure(z.object({}), ConnectStatus),
   },
+  publicAddress: {
+    /** How this server is reached from the internet, if it is. */
+    status: procedure(z.object({}), PublicAddress),
+    /**
+     * Says this server is behind the person's own reverse proxy at `url`,
+     * or (null) that it isn't, so Nibblets Connect's tunnel is used.
+     */
+    setProxy: procedure(z.object({ url: ProxyUrl.nullable() }), PublicAddress),
+  },
   tailscale: {
     status: procedure(z.object({}), TailscaleStatus),
     /** Shares this server on the tailnet with `tailscale serve`, or stops. */
@@ -199,11 +207,6 @@ export const contract = {
     ),
     /** Forgets a bank's saved settings. Refused while it has cards that aren't closed. */
     remove: procedure(z.object({ id: BankProviderId }), BankStatus),
-    /**
-     * The address of the person's reverse proxy, if this server is behind
-     * one, for providers to reach it at; null to use Nibblets Connect's tunnel.
-     */
-    setProxy: procedure(z.object({ url: ProxyUrl.nullable() }), BankStatus),
   },
   snapshots: {
     /** A nibblet's snapshots, newest first, and where it stands among them. */

@@ -1,14 +1,12 @@
 import { useEffect, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronRight, Copy, CreditCard, KeyRound, Wallet } from "lucide-react";
 import {
-  ProxyUrl,
   type BankField,
   type BankInstrument,
   type BankKind,
   type BankSetup,
   type BankStatus,
-  type PublicAddress,
 } from "@nibblet/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import {
@@ -42,14 +40,12 @@ export function BankDialog({
   connection,
   kinds,
   banks,
-  publicAddress,
   chosen,
   onClose,
 }: {
   connection: ServerConnection;
   kinds: readonly BankKind[];
   banks: readonly BankSetup[];
-  publicAddress: PublicAddress;
   /** A bank's id to open its form, null to choose a plugin to add one on, undefined when closed. */
   chosen: string | null | undefined;
   onClose: () => void;
@@ -77,7 +73,6 @@ export function BankDialog({
           kind={kind}
           bank={bank}
           banks={banks}
-          publicAddress={publicAddress}
           onBack={chosen === null ? () => setPicked(null) : null}
           onDone={onClose}
         />
@@ -134,7 +129,6 @@ function BankForm({
   kind,
   bank,
   banks,
-  publicAddress,
   onBack,
   onDone,
 }: {
@@ -143,7 +137,6 @@ function BankForm({
   /** Null for a new one. */
   bank: BankSetup | null;
   banks: readonly BankSetup[];
-  publicAddress: PublicAddress;
   onBack: (() => void) | null;
   onDone: () => void;
 }) {
@@ -241,12 +234,7 @@ function BankForm({
           </FieldRow>
         ))}
         {kind.purchaseHook ? (
-          <PurchaseHook
-            connection={connection}
-            kindName={kind.name}
-            hook={kind.purchaseHook}
-            address={publicAddress}
-          />
+          <PurchaseHook connection={connection} kindName={kind.name} hook={kind.purchaseHook} />
         ) : null}
       </div>
       <div className="sticky bottom-0 flex flex-wrap items-center gap-1.5 border-t border-line bg-panel px-4 py-2.5">
@@ -352,46 +340,24 @@ function FieldInput({
 }
 
 /**
- * Where a provider that asks about each purchase reaches this server: the
- * address to give it, and the reverse proxy's address if the server is
- * behind one rather than reached through Nibblets Connect's tunnel.
+ * The address a provider that asks about each purchase reaches this server
+ * at, and where to give it. The address itself is set up under Remote
+ * access: a reverse proxy's, or Nibblets Connect's tunnel.
  */
 function PurchaseHook({
   connection,
   kindName,
   hook,
-  address,
 }: {
   connection: ServerConnection;
   kindName: string;
   hook: NonNullable<BankKind["purchaseHook"]>;
-  address: PublicAddress;
 }) {
-  const qc = useQueryClient();
   const [copied, setCopied] = useState(false);
-  const [proxy, setProxy] = useState(address.proxy ?? "");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const save = async (url: string | null) => {
-    if (url !== null) {
-      const parsed = ProxyUrl.safeParse(url.trim());
-      if (!parsed.success) {
-        setError("That should be an https address, like https://nibblets.example.com");
-        return;
-      }
-      url = parsed.data;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      qc.setQueryData(keys.bank(connection.id), await connection.client.bank.setProxy({ url }));
-      setProxy(url ?? "");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const address = useQuery({
+    queryKey: keys.publicAddress(connection.id),
+    queryFn: () => connection.client.publicAddress.status({}),
+  });
   return (
     <div className="flex flex-col gap-2 rounded-md border border-line bg-surface p-3">
       <span className="text-sm font-medium">Approving each purchase</span>
@@ -414,50 +380,21 @@ function PurchaseHook({
               {copied ? "Copied" : "Copy"}
             </Button>
           </span>
-          {address.via === "quick_tunnel" ? (
+          {address.data?.via === "quick_tunnel" ? (
             <p className="text-xs text-warning">
               This is a quick tunnel's address, which changes whenever the tunnel starts again.
               Until the new one is in {kindName}, nothing gets an answer, so every purchase is
-              declined. A reverse proxy's address stays put.
+              declined. A reverse proxy's address, under Remote access, stays put.
             </p>
           ) : null}
         </>
       ) : (
         <p className="text-xs text-warning">
           {kindName} has to reach this server to ask it about each purchase, and it can't from the
-          internet yet. Link this server to Nibblets Connect under Remote access, or if it's behind
-          your own reverse proxy, give its address here.
+          internet yet. Link this server to Nibblets Connect, or give your reverse proxy's address,
+          under Remote access.
         </p>
       )}
-      <FieldRow
-        label="Reverse proxy"
-        top
-        hint={
-          error ??
-          (address.via === "proxy"
-            ? "Providers reach this server here, rather than through Nibblets Connect."
-            : "Only if this server is behind your own: the https address it's reached at.")
-        }
-      >
-        <span className="flex gap-1.5">
-          <Input
-            value={proxy}
-            disabled={busy}
-            placeholder="https://nibblets.example.com"
-            spellCheck={false}
-            onChange={(e) => setProxy(e.target.value)}
-          />
-          {address.proxy && proxy === address.proxy ? (
-            <Button disabled={busy} onClick={() => void save(null)}>
-              Stop using it
-            </Button>
-          ) : (
-            <Button disabled={busy || !proxy.trim()} onClick={() => void save(proxy)}>
-              Use it
-            </Button>
-          )}
-        </span>
-      </FieldRow>
     </div>
   );
 }

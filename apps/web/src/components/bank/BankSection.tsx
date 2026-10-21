@@ -66,7 +66,6 @@ export function BankSection({ connection }: { connection: ServerConnection }) {
         connection={connection}
         kinds={kinds}
         banks={banks}
-        publicAddress={status.data?.publicAddress ?? { url: null, via: null, proxy: null }}
         chosen={dialog}
         onClose={() => setDialog(undefined)}
       />

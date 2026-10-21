@@ -235,30 +235,6 @@ export const BankSetup = z.object({
 });
 export type BankSetup = z.infer<typeof BankSetup>;
 
-/**
- * How a provider reaches this server from the internet: the person's own
- * reverse proxy, when they've given its address, or the tunnel that linking
- * to Nibblets Connect runs. A quick tunnel's address changes each time it
- * starts.
- */
-export const PublicAddress = z.object({
-  url: z.string().nullable(),
-  via: z.enum(["proxy", "tunnel", "quick_tunnel"]).nullable(),
-  /** The reverse proxy's address, as the person gave it. */
-  proxy: z.string().nullable(),
-});
-export type PublicAddress = z.infer<typeof PublicAddress>;
-
-/** A reverse proxy's address: https, with no query or login in it. */
-export const ProxyUrl = z
-  .url({ protocol: /^https$/ })
-  .max(300)
-  .refine((u) => {
-    const url = new URL(u);
-    return !url.username && !url.password && !url.search && !url.hash;
-  }, "Just the https address, with no query or login in it")
-  .transform((u) => u.replace(/\/+$/, ""));
-
 export const BankStatus = z.object({
   providers: z.array(BankProvider),
   /** Plugins whose settings are there but wrong, with why, so they aren't silently missing. */
@@ -267,7 +243,6 @@ export const BankStatus = z.object({
   kinds: z.array(BankKind),
   /** Every bank set up, working or not; `providers` has how each is doing. */
   banks: z.array(BankSetup),
-  publicAddress: PublicAddress.default({ url: null, via: null, proxy: null }),
 });
 export type BankStatus = z.infer<typeof BankStatus>;
 

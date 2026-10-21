@@ -25,6 +25,7 @@ import { Notifier } from "./notifier.ts";
 import { tailscaleStatus } from "./hostmcp.ts";
 import { Bank } from "./bank.ts";
 import { Banks } from "./banks.ts";
+import { PublicAddresses } from "./public-address.ts";
 
 // The repository's version, which releases are tagged with.
 const VERSION = z
@@ -65,7 +66,8 @@ async function main(): Promise<void> {
     log: (message) => console.warn(`bank: ${message}`),
   });
   const tunnel = new Tunnel(docker, store, config);
-  const banks = new Banks({ store, bank, tunnel, env: process.env });
+  const publicAddress = new PublicAddresses({ store, tunnel });
+  const banks = new Banks({ store, bank, address: publicAddress, env: process.env });
   await banks.load();
   conductor.bank = bank;
   const scheduler = new Scheduler(store, conductor);
@@ -116,6 +118,7 @@ async function main(): Promise<void> {
       appUpdates,
       bank,
       banks,
+      publicAddress,
     },
     bus,
   );

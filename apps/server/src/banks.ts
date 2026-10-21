@@ -23,15 +23,13 @@ import {
   BankName,
   BankProviderId,
   BankSettings,
-  ProxyUrl,
   RpcError,
   type BankStatus,
-  type PublicAddress,
 } from "@nibblet/protocol";
 import { z } from "zod";
 import type { Bank } from "./bank.ts";
+import type { PublicAddresses } from "./public-address.ts";
 import type { CardRow, Store } from "./store.ts";
-import type { Tunnel } from "./tunnel.ts";
 
 /**
  * Every bank plugin the server knows. Banks are set up with them in
@@ -43,19 +41,17 @@ import type { Tunnel } from "./tunnel.ts";
 export const BANK_PLUGINS: readonly BankPluginFactory[] = [slash, stripe, bitcoin, ethereum];
 
 const SETTING = "banks";
-/** The person's reverse proxy's address, if the server is behind one. */
-const PROXY_SETTING = "publicProxy";
 const Saved = z.array(
   z.object({ id: BankProviderId, kind: BankProviderId, name: BankName, settings: BankSettings }),
 );
 
 export interface BanksDeps {
-  store: Pick<Store, "getSetting" | "setSetting" | "deleteSetting"> & {
+  store: Pick<Store, "getSetting" | "setSetting"> & {
     liveCards(): Promise<readonly Pick<CardRow, "provider">[]>;
   };
   bank: Pick<Bank, "status" | "use" | "purchase">;
-  /** Linking to Nibblets Connect runs it, which reaches this server from the internet. */
-  tunnel: Pick<Tunnel, "current">;
+  /** Where providers that ask about purchases reach this server. */
+  address: Pick<PublicAddresses, "current">;
   env: BankSettingValues;
   factories?: readonly BankPluginFactory[];
   plugin?: BankDeps;
@@ -108,11 +104,10 @@ export class Banks {
       this.deps.bank.status(),
       this.banks(),
       this.deps.store.liveCards(),
-      this.publicAddress(),
+      this.deps.address.current(),
     ]);
     return {
       ...health,
-      publicAddress: address,
       kinds: this.factories.map((f) => ({
         id: f.id,
         name: f.name,
@@ -233,36 +228,6 @@ export class Banks {
   purchase(kind: string, request: HookRequest): Promise<HookResponse | null> {
     const ids = this.loaded.filter((b) => b.kind === kind).map((b) => b.id);
     return this.deps.bank.purchase(ids, request);
-  }
-
-  /**
-   * How providers reach this server from the internet: the person's own
-   * reverse proxy if they've said it's behind one, else Nibblets Connect's
-   * tunnel while it's up.
-   */
-  async publicAddress(): Promise<PublicAddress> {
-    const proxy = await this.deps.store.getSetting(
-      PROXY_SETTING,
-      (v) => ProxyUrl.nullable().parse(v),
-      null,
-    );
-    if (proxy) return { url: proxy, via: "proxy", proxy };
-    const tunnel = this.deps.tunnel.current();
-    if (tunnel.state === "up" && tunnel.url) {
-      return {
-        url: tunnel.url.replace(/\/+$/, ""),
-        via: tunnel.mode === "quick" ? "quick_tunnel" : "tunnel",
-        proxy: null,
-      };
-    }
-    return { url: null, via: null, proxy: null };
-  }
-
-  /** Says this server is behind a reverse proxy at `url`, or (null) that it isn't. */
-  async setProxy(url: string | null): Promise<BankStatus> {
-    if (url) await this.deps.store.setSetting(PROXY_SETTING, url);
-    else await this.deps.store.deleteSetting(PROXY_SETTING);
-    return this.status();
   }
 
   private build(factory: BankPluginFactory, settings: BankSettings): BankPlugin {

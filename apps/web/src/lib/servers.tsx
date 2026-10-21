@@ -38,6 +38,7 @@ export const keys = {
   clis: (server: string) => ["clis", server] as const,
   connect: (server: string) => ["connect", server] as const,
   tailscale: (server: string) => ["tailscale", server] as const,
+  publicAddress: (server: string) => ["publicAddress", server] as const,
   tailnetKeys: (server: string) => ["tailnetKeys", server] as const,
   harnessUpdates: (server: string) => ["harnessUpdates", server] as const,
   appUpdate: (server: string) => ["appUpdate", server] as const,

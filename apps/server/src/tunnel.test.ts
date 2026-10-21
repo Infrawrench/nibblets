@@ -46,7 +46,6 @@ function setup(running = true) {
   };
   const tunnel = new Tunnel({ docker }, store, {
     NIBBLET_INTERNAL_URL: "http://server:8420",
-    NIBBLET_PUBLIC_URL: "http://local",
     NIBBLET_NETWORK: "network",
   });
   return { tunnel, container, docker, store, info };
@@ -103,7 +102,6 @@ describe("Tunnel recovery", () => {
     expect(up.state).toBe("up");
     const again = tunnel.configure(config);
     expect(tunnel.current()).toBe(up);
-    expect(tunnel.publicUrl()).toBe(up.url);
     await again;
     expect(tunnel.current().state).toBe("up");
     const other = tunnel.configure({ ...config, hostname: "other.example.com" });

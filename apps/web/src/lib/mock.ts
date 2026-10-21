@@ -507,7 +507,6 @@ export function createMockServer(): ServerConnection {
   const bankStatus = () => ({
     providers: mockBanks.map(bankProvider),
     problems: [],
-    publicAddress: publicAddress(),
     kinds: bankKinds.map((k) =>
       k.purchaseHook
         ? {
@@ -1413,11 +1412,6 @@ export function createMockServer(): ServerConnection {
         push({ type: "bank_changed" });
         return bankStatus();
       },
-      setProxy: async ({ url }) => {
-        await pause(300);
-        mockProxy = url;
-        return bankStatus();
-      },
     },
     snapshots: {
       list: async ({ nibbletId }) => {
@@ -1518,6 +1512,14 @@ export function createMockServer(): ServerConnection {
       unlink: async () => {
         connect = { state: "unlinked", centralUrl: CENTRAL };
         return connect;
+      },
+    },
+    publicAddress: {
+      status: async () => publicAddress(),
+      setProxy: async ({ url }) => {
+        await pause(300);
+        mockProxy = url;
+        return publicAddress();
       },
     },
     tailscale: {

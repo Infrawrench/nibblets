@@ -1,5 +1,10 @@
 import { BankError, defineBankFactory, defineBankPlugin, defineField } from "@nibblet/bank";
-import { MASKED, type BankProviderId, type CardSecret, type TunnelStatus } from "@nibblet/protocol";
+import {
+  MASKED,
+  type BankProviderId,
+  type CardSecret,
+  type PublicAddress,
+} from "@nibblet/protocol";
 import { describe, expect, it } from "vitest";
 import { Banks } from "./banks.ts";
 
@@ -54,8 +59,8 @@ function setUp(env: Record<string, string> = {}) {
   const logs: string[] = [];
   /** Which banks each purchase request was offered to. */
   const asked: string[][] = [];
-  const tunnel: { status: TunnelStatus } = {
-    status: { mode: "off", state: "off", url: null, detail: null },
+  const reached: { address: PublicAddress } = {
+    address: { url: null, via: null, proxy: null },
   };
   let plugins = new Map<BankProviderId, { label: string }>();
   const banks = new Banks({
@@ -65,9 +70,6 @@ function setUp(env: Record<string, string> = {}) {
       },
       async setSetting(key: string, value: unknown) {
         settings.set(key, structuredClone(value));
-      },
-      async deleteSetting(key: string) {
-        settings.delete(key);
       },
       liveCards: async () => live,
     },
@@ -95,13 +97,13 @@ function setUp(env: Record<string, string> = {}) {
         return null;
       },
     },
-    tunnel: { current: () => tunnel.status },
+    address: { current: async () => reached.address },
     env,
     factories: [fake],
     plugin: { fetch: globalThis.fetch, log: () => {} },
     log: (m) => logs.push(m),
   });
-  return { banks, settings, live, loaded, logs, asked, tunnel };
+  return { banks, settings, live, loaded, logs, asked, reached };
 }
 
 /** A change to the fake bank: a new one, unless `id` says which. */
@@ -242,44 +244,19 @@ describe("setting banks up", () => {
   });
 });
 
-describe("being reached from the internet", () => {
-  const hook = async (banks: Banks) => (await banks.status()).kinds[0]?.purchaseHook;
-
-  it("gives providers the tunnel's address, or the reverse proxy's when there is one", async () => {
-    const { banks, settings, tunnel } = setUp();
-    expect(await hook(banks)).toEqual({ url: null, where: "In Fake's settings." });
-    expect((await banks.status()).publicAddress).toEqual({ url: null, via: null, proxy: null });
-
-    tunnel.status = { mode: "token", state: "up", url: "https://pip.nibblets.dev", detail: null };
-    expect(await hook(banks)).toMatchObject({
+describe("providers that ask about purchases", () => {
+  it("are given the address this server is reached at, once it has one", async () => {
+    const { banks, reached } = setUp();
+    const hook = async () => (await banks.status()).kinds[0]?.purchaseHook;
+    expect(await hook()).toEqual({ url: null, where: "In Fake's settings." });
+    reached.address = { url: "https://pip.nibblets.dev", via: "tunnel", proxy: null };
+    expect(await hook()).toEqual({
       url: "https://pip.nibblets.dev/bank/fake/purchases",
+      where: "In Fake's settings.",
     });
-    expect((await banks.status()).publicAddress.via).toBe("tunnel");
-
-    tunnel.status = {
-      mode: "quick",
-      state: "up",
-      url: "https://a-b.trycloudflare.com",
-      detail: null,
-    };
-    expect((await banks.status()).publicAddress.via).toBe("quick_tunnel");
-
-    const status = await banks.setProxy("https://nibblets.example.com");
-    expect(status.publicAddress).toEqual({
-      url: "https://nibblets.example.com",
-      via: "proxy",
-      proxy: "https://nibblets.example.com",
-    });
-    expect(status.kinds[0]?.purchaseHook?.url).toBe(
-      "https://nibblets.example.com/bank/fake/purchases",
-    );
-
-    await banks.setProxy(null);
-    expect(settings.has("publicProxy")).toBe(false);
-    expect((await banks.status()).publicAddress.via).toBe("quick_tunnel");
   });
 
-  it("offers a purchase request to the banks on its plugin", async () => {
+  it("have a request offered to the banks on its plugin", async () => {
     const { banks, asked } = setUp();
     await banks.configure(change({ FAKE_KEY: "k1" }));
     await banks.configure(change({ FAKE_KEY: "k2" }, { name: "Travel" }));

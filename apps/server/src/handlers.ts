@@ -16,6 +16,7 @@ import { readTailnetOAuth, setTailnetKeys, tailnetKeys } from "./tailnet-keys.ts
 import { forgetGrants, onePasswordStatus, readGrants, setGrants } from "./onepassword.ts";
 import type { Bank } from "./bank.ts";
 import type { Banks } from "./banks.ts";
+import type { PublicAddresses } from "./public-address.ts";
 import type { Conductor } from "./conductor.ts";
 import type { HarnessModelLists } from "./opencode.ts";
 import {
@@ -52,6 +53,7 @@ export interface Services {
   appUpdates: AppUpdater;
   bank: Bank;
   banks: Banks;
+  publicAddress: PublicAddresses;
 }
 
 const ok = { ok: true } as const;
@@ -278,7 +280,6 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       kill: ({ id }) => s.bank.kill(id, "user"),
       configure: (change) => s.banks.configure(change),
       remove: ({ id }) => s.banks.remove(id),
-      setProxy: ({ url }) => s.banks.setProxy(url),
     },
     snapshots: {
       list: ({ nibbletId }) => s.snapshots.list(nibbletId),
@@ -305,6 +306,11 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       },
       cancel: async () => s.connect.cancel(),
       unlink: () => s.connect.unlink(),
+    },
+
+    publicAddress: {
+      status: () => s.publicAddress.current(),
+      setProxy: ({ url }) => s.publicAddress.setProxy(url),
     },
 
     tailscale: {
@@ -354,7 +360,8 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
     auth: {
       createPairingLink: async () => {
         const { code, expiresAt } = await store.createPairingCode(15 * 60_000);
-        return { url: `${tunnel.publicUrl()}/#pair=${code}`, expiresAt: expiresAt.toISOString() };
+        const reached = (await s.publicAddress.current()).url ?? s.config.NIBBLET_PUBLIC_URL;
+        return { url: `${reached}/#pair=${code}`, expiresAt: expiresAt.toISOString() };
       },
     },
   };

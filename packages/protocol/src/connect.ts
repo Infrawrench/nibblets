@@ -207,3 +207,28 @@ export const TailscaleStatus = z.object({
   action: z.object({ label: z.string(), url: WebUrl }).nullable(),
 });
 export type TailscaleStatus = z.infer<typeof TailscaleStatus>;
+
+/**
+ * How this server is reached from the internet, by anything that has to
+ * reach it there (a card provider asking about a purchase, a pairing link):
+ * the person's own reverse proxy, when they've given its address, or else
+ * the tunnel that linking to Nibblets Connect runs, while it's up. A quick
+ * tunnel's address changes each time it starts.
+ */
+export const PublicAddress = z.object({
+  url: z.string().nullable(),
+  via: z.enum(["proxy", "tunnel", "quick_tunnel"]).nullable(),
+  /** The reverse proxy's address, as the person gave it. */
+  proxy: z.string().nullable(),
+});
+export type PublicAddress = z.infer<typeof PublicAddress>;
+
+/** A reverse proxy's address: https, with no query or login in it. */
+export const ProxyUrl = z
+  .url({ protocol: /^https$/ })
+  .max(300)
+  .refine((u) => {
+    const url = new URL(u);
+    return !url.username && !url.password && !url.search && !url.hash;
+  }, "Just the https address, with no query or login in it")
+  .transform((u) => u.replace(/\/+$/, ""));
