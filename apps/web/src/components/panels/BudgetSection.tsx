@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { MonthlyBudget, type Nibblet } from "@nibblet/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
+import { budgetApplies } from "../../lib/budget.ts";
 import { keys } from "../../lib/servers.tsx";
 import { cn } from "../../lib/cn.ts";
 import { Button } from "../ui/Button.tsx";
@@ -14,7 +15,7 @@ const monthName = (month: string) =>
 
 /**
  * The most a nibblet may spend on API keys in a month, and what it has spent
- * so far. A sub-agent spends its parent's, so it has nothing to set.
+ * so far. Only shown where it can matter (see `budgetApplies`).
  */
 export function BudgetSection({
   connection,
@@ -30,14 +31,19 @@ export function BudgetSection({
   const [error, setError] = useState<string | null>(null);
   useEffect(() => setDraft(saved === null ? "" : String(saved)), [saved]);
 
+  const info = useQuery({
+    queryKey: keys.info(connection.id),
+    queryFn: () => connection.client.system.info({}),
+  });
+  const shown = budgetApplies(nibblet, info.data?.credentials);
   const spend = useQuery({
     queryKey: keys.spend(connection.id, nibblet.id),
     queryFn: () => connection.client.nibblets.spend({ id: nibblet.id }),
     refetchInterval: 15_000,
-    enabled: !nibblet.parentId,
+    enabled: shown,
   });
 
-  if (nibblet.parentId) return null;
+  if (!shown) return null;
 
   const trimmed = draft.trim().replace(/^\$/, "");
   const parsed = trimmed === "" ? null : MonthlyBudget.safeParse(Number(trimmed));
