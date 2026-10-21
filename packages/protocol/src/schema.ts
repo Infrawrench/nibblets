@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SpendingLimits } from "./bank.ts";
 import { McpServerDef, McpServerList, ToolRules } from "./mcp.ts";
 import { Effort, HarnessId } from "./models.ts";
 import { SnapshotPolicy } from "./snapshots.ts";
@@ -245,6 +246,8 @@ export const Nibblet = z.object({
   tailscale: NibbletTailscale.nullable(),
   /** How that machine is doing, while its container is up. */
   tailnetNode: TailnetNode.nullable(),
+  /** How much it may put on cards, per asset. None means it can't have a card. */
+  spendingLimits: SpendingLimits,
   /** A short line the nibblet keeps current about what it's doing, like a chat status. */
   statusText: z.string().nullable(),
   statusEmoji: z.string().nullable(),
@@ -309,6 +312,8 @@ export const UpdateNibblet = z.object({
   /** Null for no limit. */
   monthlyBudgetUsd: MonthlyBudget.nullable().optional(),
   snapshotPolicy: SnapshotPolicy.optional(),
+  /** Only the person sets these; the nibblet can't raise its own. */
+  spendingLimits: SpendingLimits.optional(),
 });
 
 /** What started a turn. Anything but `user` is the nibblet acting on its own. */

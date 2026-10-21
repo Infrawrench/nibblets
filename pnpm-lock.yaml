@@ -429,6 +429,12 @@ importers:
         specifier: ^8.3.4
         version: 8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)
 
+  packages/bank:
+    dependencies:
+      '@nibblet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+
   packages/db:
     dependencies:
       '@nibblet/protocol':

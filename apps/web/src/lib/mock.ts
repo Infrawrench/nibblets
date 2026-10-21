@@ -170,6 +170,7 @@ export function createMockServer(): ServerConnection {
     toolApprovals: [],
     tailscale: null,
     tailnetNode: null,
+    spendingLimits: [],
     statusText: null,
     statusEmoji: null,
     statusUpdatedAt: null,
@@ -837,6 +838,7 @@ export function createMockServer(): ServerConnection {
               ? patch.monthlyBudgetUsd
               : current.monthlyBudgetUsd,
           snapshotPolicy: patch.snapshotPolicy ?? current.snapshotPolicy,
+          spendingLimits: patch.spendingLimits ?? current.spendingLimits,
           updatedAt: now(),
         });
       },

@@ -1,4 +1,7 @@
 import type {
+  CardClosedBy,
+  CardKind,
+  CardState,
   Effort,
   HamsterLook,
   HarnessId,
@@ -10,6 +13,7 @@ import type {
   ToolRule,
   NibbletStatus,
   NibbletTailscale,
+  SpendingLimit,
   TailnetNode,
   ThreadItem,
 } from "@nibblet/protocol";
@@ -20,6 +24,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgSequence,
   pgTable,
   primaryKey,
@@ -73,6 +78,7 @@ export const nibblets = pgTable("nibblets", {
   /** Unmasked, like `mcpServers`: the API masks the auth key on the way out. */
   tailscale: jsonb("tailscale").$type<NibbletTailscale>(),
   tailnetNode: jsonb("tailnet_node").$type<TailnetNode>(),
+  spendingLimits: jsonb("spending_limits").$type<SpendingLimit[]>().notNull().default([]),
   statusText: text("status_text"),
   statusEmoji: text("status_emoji"),
   statusUpdatedAt: timestamp("status_updated_at", { withTimezone: true }),
@@ -222,4 +228,39 @@ export const spend = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.nibbletId, t.month] })],
+);
+
+/**
+ * Cards (and crypto wallets) a nibblet has been given. What they can be spent
+ * with is never stored: the provider gives it again (or, for a wallet, its key
+ * is derived again) whenever the nibblet's container needs the file.
+ */
+export const cards = pgTable(
+  "cards",
+  {
+    id: text("id").primaryKey(),
+    nibbletId: text("nibblet_id")
+      .notNull()
+      .references(() => nibblets.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    /** The provider's own id for it (a card's id, a wallet's address); empty while pending. */
+    ref: text("ref").notNull(),
+    asset: text("asset").notNull(),
+    decimals: integer("decimals").notNull(),
+    kind: text("kind").$type<CardKind>().notNull(),
+    /** In the asset's smallest unit. */
+    limitMinor: numeric("limit_minor", { precision: 78, scale: 0 }).notNull(),
+    spentMinor: numeric("spent_minor", { precision: 78, scale: 0 }).notNull().default("0"),
+    purpose: text("purpose").notNull(),
+    display: text("display").notNull(),
+    state: text("state").$type<CardState>().notNull().default("pending"),
+    closedBy: text("closed_by").$type<CardClosedBy>(),
+    createdAt: createdAt(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("cards_nibblet_idx").on(t.nibbletId, t.createdAt),
+    index("cards_state_idx").on(t.state),
+  ],
 );
