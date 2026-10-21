@@ -16,7 +16,7 @@ import {
   RISKY_TOOL_PATTERNS,
   type McpServerDef,
   type ToolRule,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { importMcpJson, upsertServers } from "../../lib/mcpImport.ts";
 import { keys } from "../../lib/servers.tsx";

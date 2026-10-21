@@ -1,7 +1,7 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { Moon, Pencil, Power, Trash2 } from "lucide-react";
-import { DEFAULT_MACHINE, type Heartbeat, type Nibblet } from "@nibblet/protocol";
+import { DEFAULT_MACHINE, type Heartbeat, type Nibblet } from "@nibblets/protocol";
 import { HeartPulse } from "lucide-react";
 import { modelLabel, useModels } from "../../lib/models.ts";
 import type { ServerConnection } from "../../lib/connection.ts";

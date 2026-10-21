@@ -1,4 +1,4 @@
-import type { HarnessId, HostLogin } from "@nibblet/protocol";
+import type { HarnessId, HostLogin } from "@nibblets/protocol";
 import type { Bridge } from "./bridge.ts";
 import { kimiLogin } from "./kimi.ts";
 import { opencodeLogin } from "./opencode.ts";

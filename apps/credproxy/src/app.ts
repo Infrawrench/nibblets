@@ -1,5 +1,5 @@
-import { placeholderCodexAuth, placeholderCodexRefresh, placeholderJwt } from "@nibblet/protocol";
-import { proxyKeyOwner } from "@nibblet/protocol/proxy-key";
+import { placeholderCodexAuth, placeholderCodexRefresh, placeholderJwt } from "@nibblets/protocol";
+import { proxyKeyOwner } from "@nibblets/protocol/proxy-key";
 import { timingSafeEqual } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { budgetSpentMessage, type BudgetGate } from "./budgets.ts";
@@ -12,7 +12,7 @@ import { NoCredentialError, TokenManager } from "./tokens.ts";
 export interface AppOptions {
   /**
    * The proxy's shared secret. Runners present a key made from it for their
-   * nibblet (`@nibblet/protocol/proxy-key`); the bare secret works too, on a
+   * nibblet (`@nibblets/protocol/proxy-key`); the bare secret works too, on a
    * subscription, but not on an API key, whose spending has to go to someone.
    */
   key: string;

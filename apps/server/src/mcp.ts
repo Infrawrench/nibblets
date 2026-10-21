@@ -10,7 +10,7 @@ import {
   RpcError,
   type Card,
   type Nibblet,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { Cron } from "croner";
 import type { Context } from "hono";
 import { z } from "zod";

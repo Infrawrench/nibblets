@@ -1,4 +1,4 @@
-import { connect, EMBEDDING_DIMENSIONS, migrateDb, type Db } from "@nibblet/db";
+import { connect, EMBEDDING_DIMENSIONS, migrateDb, type Db } from "@nibblets/db";
 import { sql } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { Bus } from "./bus.ts";

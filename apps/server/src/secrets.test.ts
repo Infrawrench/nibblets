@@ -1,4 +1,4 @@
-import { defaultHamsterLook, MASKED } from "@nibblet/protocol";
+import { defaultHamsterLook, MASKED } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { cliLogins } from "./clilogins.ts";
 import { toNibblet } from "./store.ts";

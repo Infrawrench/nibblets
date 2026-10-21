@@ -1,5 +1,5 @@
 {
-  "name": "@nibblet/machine",
+  "name": "@nibblets/machine",
   "version": "0.3.1",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@nibblet/protocol": "workspace:*",
+    "@nibblets/protocol": "workspace:*",
     "zod": "^4.6.7",
     "ws": "^8.22.0"
   },

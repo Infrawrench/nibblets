@@ -1,4 +1,4 @@
-import { defaultHamsterLook, type ActiveHours, type Nibblet } from "@nibblet/protocol";
+import { defaultHamsterLook, type ActiveHours, type Nibblet } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import {
   heartbeatInput,

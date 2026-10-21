@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { RefreshCw } from "lucide-react";
-import type { Nibblet, VaultGrant } from "@nibblet/protocol";
+import type { Nibblet, VaultGrant } from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { useNibblets } from "../../lib/servers.tsx";
 import { Hamster } from "../hamster/Hamster.tsx";

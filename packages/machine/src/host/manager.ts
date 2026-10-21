@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promise
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import { join } from "node:path";
-import { GUEST_NAMES, GuestOs } from "@nibblet/protocol";
+import { GUEST_NAMES, GuestOs } from "@nibblets/protocol";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
 import {

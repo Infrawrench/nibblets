@@ -1,4 +1,4 @@
-import type { ActiveHours, Heartbeat, Schedule } from "@nibblet/protocol";
+import type { ActiveHours, Heartbeat, Schedule } from "@nibblets/protocol";
 import { Cron } from "croner";
 import type { Conductor } from "./conductor.ts";
 import { scheduleInput } from "./context.ts";

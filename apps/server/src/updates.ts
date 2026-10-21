@@ -7,7 +7,7 @@ import {
   type AppRelease,
   type AppUpdate,
   type HarnessUpdates,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { z } from "zod";
 import type { Config } from "./config.ts";
 import type { Orchestrator } from "./docker.ts";

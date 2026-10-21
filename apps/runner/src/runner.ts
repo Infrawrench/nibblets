@@ -4,13 +4,13 @@ import {
   type HarnessPlugin,
   type HarnessSession,
   type McpServerSpec,
-} from "@nibblet/harness";
+} from "@nibblets/harness";
 import {
   type HarnessId,
   type RunnerConfig,
   type RunnerToServer,
   type ServerToRunner,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { CliLogins } from "./cli.ts";
 import type { RunnerFiles } from "./files.ts";
 

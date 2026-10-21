@@ -1,5 +1,5 @@
 {
-  "name": "@nibblet/credproxy",
+  "name": "@nibblets/credproxy",
   "version": "0.3.2",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
-    "@nibblet/protocol": "workspace:*",
+    "@nibblets/protocol": "workspace:*",
     "hono": "^4.13.13",
     "kill-emudhra": "^0.1.0",
     "zod": "^4.6.7"

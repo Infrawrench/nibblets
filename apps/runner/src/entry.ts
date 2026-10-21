@@ -27,7 +27,7 @@ import "kill-emudhra";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
-import { GUARD_ONLY_ENV, WindowsProductKey } from "@nibblet/protocol";
+import { GUARD_ONLY_ENV, WindowsProductKey } from "@nibblets/protocol";
 import { startDesktop } from "./desktop.ts";
 import { platformHere } from "./entry/index.ts";
 import { pick } from "./entry/shared.ts";

@@ -1,4 +1,4 @@
-import { KimiLogin } from "@nibblet/protocol";
+import { KimiLogin } from "@nibblets/protocol";
 import { z } from "zod";
 import { bridgeGet, type Bridge } from "./bridge.ts";
 

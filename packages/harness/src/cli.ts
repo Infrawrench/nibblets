@@ -1,6 +1,6 @@
 import { accessSync, constants, realpathSync } from "node:fs";
 import path from "node:path";
-import { HARNESS_CLI_DIR, harnesses, type HarnessId } from "@nibblet/protocol";
+import { HARNESS_CLI_DIR, harnesses, type HarnessId } from "@nibblets/protocol";
 
 /**
  * The newer CLI the server installed for this harness, resolved to the real

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HEARTBEAT_EVERY_MS, type TunnelStatus } from "@nibblet/protocol";
+import { HEARTBEAT_EVERY_MS, type TunnelStatus } from "@nibblets/protocol";
 import { z } from "zod";
 import { Connect, type ConnectDeps } from "./connect.ts";
 

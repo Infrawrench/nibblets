@@ -3,7 +3,7 @@ import {
   BudgetStatus,
   type BilledProvider,
   type MeteredRequest,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import type { Metered } from "./meter.ts";
 
 /**

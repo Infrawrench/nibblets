@@ -1,4 +1,4 @@
-import type { BackgroundTask, DesktopApp, RunnerToServer, ServerToRunner } from "@nibblet/protocol";
+import type { BackgroundTask, DesktopApp, RunnerToServer, ServerToRunner } from "@nibblets/protocol";
 import { randomBytes } from "node:crypto";
 
 /** Where a terminal's output goes: the browser that opened it. */

@@ -1,4 +1,4 @@
-import { harnesses, type CredentialStatus, type HarnessModels } from "@nibblet/protocol";
+import { harnesses, type CredentialStatus, type HarnessModels } from "@nibblets/protocol";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";

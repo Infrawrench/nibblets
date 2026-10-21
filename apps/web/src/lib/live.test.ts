@@ -1,5 +1,5 @@
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
-import type { StoredItem } from "@nibblet/protocol";
+import type { StoredItem } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { applyLive, keys } from "./servers.tsx";
 

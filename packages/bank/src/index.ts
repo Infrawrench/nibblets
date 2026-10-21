@@ -7,7 +7,7 @@ import {
   type BankSettings,
   type CardKind,
   type CardSecret,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 
 export * from "./budget.ts";
 export * from "./keys.ts";

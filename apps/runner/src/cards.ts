@@ -1,4 +1,4 @@
-import type { CardFile } from "@nibblet/protocol";
+import type { CardFile } from "@nibblets/protocol";
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 

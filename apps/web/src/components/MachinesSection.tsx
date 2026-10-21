@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
-import { GUEST_NAMES, type MachineBackend, type MachineGuest } from "@nibblet/protocol";
+import { GUEST_NAMES, type MachineBackend, type MachineGuest } from "@nibblets/protocol";
 import type { ServerConnection } from "../lib/connection.ts";
 import { imageNote, useMachines } from "../lib/machines.ts";
 import { Button } from "./ui/Button.tsx";

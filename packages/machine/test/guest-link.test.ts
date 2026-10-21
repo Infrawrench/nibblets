@@ -1,6 +1,6 @@
 import { Readable, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { decodeFrame, encodeFrame, ServerToGuest } from "@nibblet/protocol";
+import { decodeFrame, encodeFrame, ServerToGuest } from "@nibblets/protocol";
 import { GuestLink, type GuestSocket } from "../src/guest-link.ts";
 
 /** A socket to a pretend guest: what the link sends is kept; `say` is the guest talking. */

@@ -12,7 +12,7 @@ import {
   type MachineSpec,
   type MachineState,
   type SubagentExit,
-} from "@nibblet/machine";
+} from "@nibblets/machine";
 import {
   CONTAINER_SSH_AUTH_SOCK,
   CONTAINER_TAILSCALE_STATE,
@@ -24,7 +24,7 @@ import {
   type MachineBackend,
   type MachineCapabilities,
   type Resources,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 
 const MANAGED = "nibblet.managed";
 const ROLE = "nibblet.role";

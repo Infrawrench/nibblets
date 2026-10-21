@@ -1,5 +1,5 @@
-import { files } from "@nibblet/db";
-import { FileRef, HttpError, RpcError, type ThreadItem } from "@nibblet/protocol";
+import { files } from "@nibblets/db";
+import { FileRef, HttpError, RpcError, type ThreadItem } from "@nibblets/protocol";
 import { and, eq, inArray } from "drizzle-orm";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";

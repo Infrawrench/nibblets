@@ -1,5 +1,5 @@
 {
-  "name": "@nibblet/harness-deepseek",
+  "name": "@nibblets/harness-deepseek",
   "version": "0.3.2",
   "private": true,
   "type": "module",
@@ -10,9 +10,9 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@nibblet/harness": "workspace:*",
-    "@nibblet/harness-claude": "workspace:*",
-    "@nibblet/protocol": "workspace:*"
+    "@nibblets/harness": "workspace:*",
+    "@nibblets/harness-claude": "workspace:*",
+    "@nibblets/protocol": "workspace:*"
   },
   "devDependencies": {}
 }

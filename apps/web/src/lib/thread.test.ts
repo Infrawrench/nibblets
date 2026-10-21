@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { StoredItem, ThreadItem } from "@nibblet/protocol";
+import type { StoredItem, ThreadItem } from "@nibblets/protocol";
 import { buildTimeline, maxSeq, runningTurn, upsertItems, isStatusCall } from "./thread.ts";
 
 const at = (s: number) => new Date(Date.UTC(2026, 9, 13, 12, 0, s)).toISOString();

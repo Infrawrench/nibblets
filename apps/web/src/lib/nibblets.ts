@@ -1,4 +1,4 @@
-import type { Nibblet } from "@nibblet/protocol";
+import type { Nibblet } from "@nibblets/protocol";
 
 /** Parents first (most recently active on top), each followed by its sub-agents. */
 export function orderNibblets(nibblets: readonly Nibblet[]): { nibblet: Nibblet; depth: number }[] {

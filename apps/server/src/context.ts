@@ -14,7 +14,7 @@ import {
   type TailnetNode,
   type ThreadItem,
   type TurnSource,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 
 export const QUIET_REPLY = "NO_REPLY";
 

@@ -1,10 +1,10 @@
-import { claudeHarness } from "@nibblet/harness-claude";
-import { codexHarness } from "@nibblet/harness-codex";
-import { deepseekHarness } from "@nibblet/harness-deepseek";
-import { kimiHarness } from "@nibblet/harness-kimi";
-import { opencodeHarness } from "@nibblet/harness-opencode";
-import type { HarnessPlugin } from "@nibblet/harness";
-import type { HarnessId } from "@nibblet/protocol";
+import { claudeHarness } from "@nibblets/harness-claude";
+import { codexHarness } from "@nibblets/harness-codex";
+import { deepseekHarness } from "@nibblets/harness-deepseek";
+import { kimiHarness } from "@nibblets/harness-kimi";
+import { opencodeHarness } from "@nibblets/harness-opencode";
+import type { HarnessPlugin } from "@nibblets/harness";
+import type { HarnessId } from "@nibblets/protocol";
 
 /** Every harness a runner can be. */
 export const plugins: Record<HarnessId, HarnessPlugin> = {

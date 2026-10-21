@@ -1,4 +1,4 @@
-import { connectTo } from "@nibblet/machine/host";
+import { connectTo } from "@nibblets/machine/host";
 import { z } from "zod";
 
 /** QMP, QEMU's control socket: a JSON object a line, a greeting, then a handshake. */

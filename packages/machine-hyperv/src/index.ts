@@ -7,7 +7,7 @@ import {
   hypervServiceId,
   type GuestImage,
   type GuestOs,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import {
   linuxDiskFile,
   type HostContext,
@@ -15,7 +15,7 @@ import {
   type ImageJob,
   type VmRef,
   type VmSpec,
-} from "@nibblet/machine/host";
+} from "@nibblets/machine/host";
 import { z } from "zod";
 import { ConsoleRecorder, consoleTail } from "./console.ts";
 import { connectHvSock, hvsockHelper } from "./hvsock.ts";

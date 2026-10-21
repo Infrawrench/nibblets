@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import type { McpServerSpec } from "@nibblet/harness";
+import type { McpServerSpec } from "@nibblets/harness";
 import { createServer } from "node:http";
 
 /** A tool's answer: what `work` returns, or what it threw, as an error the model can read. */

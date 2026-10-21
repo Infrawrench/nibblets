@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Camera, Check, Loader2, Pencil, RotateCcw, Trash2, X } from "lucide-react";
-import type { Nibblet, Snapshot, SnapshotTimeline } from "@nibblet/protocol";
+import type { Nibblet, Snapshot, SnapshotTimeline } from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { keys } from "../../lib/servers.tsx";
 import { cn } from "../../lib/cn.ts";

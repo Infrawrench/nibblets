@@ -8,7 +8,7 @@ import {
   ServerInfo,
   type Contract,
   type Handlers,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { cliStatuses } from "./clilogins.ts";
@@ -18,7 +18,7 @@ import { forgetGrants, onePasswordStatus, readGrants, setGrants } from "./onepas
 import type { Bank } from "./bank.ts";
 import type { Banks } from "./banks.ts";
 import type { PublicAddresses } from "./public-address.ts";
-import type { MachineRegistry } from "@nibblet/machine";
+import type { MachineRegistry } from "@nibblets/machine";
 import type { Conductor } from "./conductor.ts";
 import type { Borrow } from "./borrow.ts";
 import type { HarnessModelLists } from "./opencode.ts";

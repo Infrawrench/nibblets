@@ -1,4 +1,4 @@
-import type { CredentialStatus } from "@nibblet/protocol";
+import type { CredentialStatus } from "@nibblets/protocol";
 import type { OAuthTokens, ProviderPlugin } from "./providers/provider.ts";
 import type { CredentialSource } from "./sources/source.ts";
 

@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages/protocol ./packages/protocol
 COPY apps/credproxy ./apps/credproxy
-RUN pnpm install --prod --frozen-lockfile --filter @nibblet/credproxy...
+RUN pnpm install --prod --frozen-lockfile --filter @nibblets/credproxy...
 ENV NODE_ENV=production
 EXPOSE 8787
 # Root, so it can write back to credential files bind-mounted from the host

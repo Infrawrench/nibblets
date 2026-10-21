@@ -7,7 +7,7 @@ import {
   type PushSubscriptionInput,
   type RouteKind,
   type ServerRoutes,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 
 /*
  * Central mode: the UI served by Nibblets Connect. It lists the signed-in

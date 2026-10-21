@@ -4,8 +4,8 @@ import { app, BrowserWindow, dialog } from "electron";
 import { autoUpdater } from "electron-updater";
 import { openOutside } from "./links.ts";
 import { formatNotes } from "./notes.ts";
-import type { AppUpdaterHost } from "@nibblet/host-mcp";
-import { compareVersions, latestRelease, type AppRelease } from "@nibblet/protocol";
+import type { AppUpdaterHost } from "@nibblets/host-mcp";
+import { compareVersions, latestRelease, type AppRelease } from "@nibblets/protocol";
 
 const REPO = "Infrawrench/nibblets";
 const CHECK_EVERY_MS = 12 * 60 * 60_000;

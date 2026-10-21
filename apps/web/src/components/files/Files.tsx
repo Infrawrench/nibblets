@@ -14,7 +14,7 @@ import {
   Music,
   X,
 } from "lucide-react";
-import type { FileRef, ThreadItemOf } from "@nibblet/protocol";
+import type { FileRef, ThreadItemOf } from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { formatBytes, isImage, opensInBrowser, useFileUrl } from "../../lib/files.ts";
 import { useServer } from "../../lib/servers.tsx";

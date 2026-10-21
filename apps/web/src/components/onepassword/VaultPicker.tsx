@@ -1,4 +1,4 @@
-import type { OnePasswordStatus, VaultGrant } from "@nibblet/protocol";
+import type { OnePasswordStatus, VaultGrant } from "@nibblets/protocol";
 import { cn } from "../../lib/cn.ts";
 import { withVault } from "./useOnePassword.ts";
 

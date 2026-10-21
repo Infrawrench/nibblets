@@ -11,7 +11,7 @@ import {
   type MachineChoice,
   type Nibblet,
   type StoredItem,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { REPLY } from "./fake-anthropic.ts";
 import { TestStack } from "./stack.ts";
 

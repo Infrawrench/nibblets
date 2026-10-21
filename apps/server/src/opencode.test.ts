@@ -1,4 +1,4 @@
-import { harnesses, Nibblet } from "@nibblet/protocol";
+import { harnesses, Nibblet } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "./config.ts";
 import type { Orchestrator } from "./docker.ts";

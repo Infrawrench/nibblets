@@ -4,7 +4,7 @@ import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { once } from "node:events";
 import { promisify } from "node:util";
-import type { HostContext, ImageJob } from "@nibblet/machine/host";
+import type { HostContext, ImageJob } from "@nibblets/machine/host";
 import { provisionMacos } from "./provision.ts";
 import { z } from "zod";
 

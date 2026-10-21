@@ -1,4 +1,4 @@
-import type { CredentialStatus, Nibblet } from "@nibblet/protocol";
+import type { CredentialStatus, Nibblet } from "@nibblets/protocol";
 
 /**
  * Whether a nibblet's budget can matter: the server has an API key (Claude

@@ -4,7 +4,7 @@ import {
   defaultHamsterLook,
   randomHamsterLook,
   type Nibblet,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { hostOf, orderNibblets } from "./nibblets.ts";
 import { optionLabel, withField } from "../components/hamster/HamsterEditor.tsx";
 import { bellyFill, markingFill } from "../components/hamster/palette.ts";

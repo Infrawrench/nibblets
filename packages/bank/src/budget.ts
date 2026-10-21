@@ -1,4 +1,4 @@
-import type { SpendingLimit, SpendingPeriod } from "@nibblet/protocol";
+import type { SpendingLimit, SpendingPeriod } from "@nibblets/protocol";
 
 /** A card as far as a budget cares. */
 export interface BudgetCard {

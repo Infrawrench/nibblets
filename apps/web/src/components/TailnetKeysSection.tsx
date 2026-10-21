@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { MASKED, TailnetTag, type TailnetOAuth } from "@nibblet/protocol";
+import { MASKED, TailnetTag, type TailnetOAuth } from "@nibblets/protocol";
 import type { ServerConnection } from "../lib/connection.ts";
 import { keys } from "../lib/servers.tsx";
 import { Button } from "./ui/Button.tsx";

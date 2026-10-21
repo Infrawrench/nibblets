@@ -125,7 +125,7 @@ COPY apps/runner ./apps/runner
 # build is turned off here (the desktop app still builds it).
 RUN sed -i 's/^  node-pty: true$/  node-pty: false/' pnpm-workspace.yaml \
  && grep -q '^  node-pty: false$' pnpm-workspace.yaml \
- && pnpm install --prod --frozen-lockfile --filter @nibblet/runner...
+ && pnpm install --prod --frozen-lockfile --filter @nibblets/runner...
 
 # Three users (see apps/runner/src/entry.ts): the agent, which runs the
 # harness and whatever it does; the guard, which holds the secrets and the

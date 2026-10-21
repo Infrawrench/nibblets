@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import type { CliLogin } from "@nibblet/protocol";
+import type { CliLogin } from "@nibblets/protocol";
 
 export type Exec = (command: string, args: string[]) => Promise<void>;
 

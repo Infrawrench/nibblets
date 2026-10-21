@@ -1,4 +1,4 @@
-import type { GuestOs } from "@nibblet/protocol";
+import type { GuestOs } from "@nibblets/protocol";
 import WebSocket from "ws";
 import { z } from "zod";
 import {

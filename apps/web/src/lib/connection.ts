@@ -8,7 +8,7 @@ import {
   type Client,
   type Contract,
   type Transport,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { mockFileUrl, registerMockFile } from "./files.ts";
 
 /**

@@ -1,4 +1,4 @@
-import { isTimeZone, type LocationFix, type Nibblet } from "@nibblet/protocol";
+import { isTimeZone, type LocationFix, type Nibblet } from "@nibblets/protocol";
 import type { ServerConnection } from "./connection.ts";
 import { storage } from "./storage.ts";
 

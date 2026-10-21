@@ -1,6 +1,6 @@
 import { chmod, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { JsonValue, type OpencodeLogin } from "@nibblet/protocol";
+import { JsonValue, type OpencodeLogin } from "@nibblets/protocol";
 
 /**
  * Turning the host's OpenCode setup into one that works inside a nibblet's

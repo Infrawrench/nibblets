@@ -11,7 +11,7 @@ import {
   type IssuedCard,
   type Purchase,
   type PurchaseHook,
-} from "@nibblet/bank";
+} from "@nibblets/bank";
 import {
   formatAmount,
   parseAmount,
@@ -27,7 +27,7 @@ import {
   type CardKind,
   type LiveMessage,
   type SpendingAllowance,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import type { CardFiles } from "./card-files.ts";
 import { newId, toCard, type CardRow, type Store } from "./store.ts";
 

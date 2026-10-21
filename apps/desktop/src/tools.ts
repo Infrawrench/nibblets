@@ -1,6 +1,6 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { kimiPaths, opencodePaths } from "@nibblet/host-mcp";
+import { kimiPaths, opencodePaths } from "@nibblets/host-mcp";
 import { codexFile, detectCredentials } from "./credentials.ts";
 import { checkDocker } from "./docker.ts";
 import { installDirs, loginShell, mergePaths, shellPath } from "./shell-path.ts";

@@ -1,5 +1,5 @@
-import { defineHarness, type HarnessPlugin } from "@nibblet/harness";
-import type { RunnerConfig, RunnerToServer, ServerToRunner } from "@nibblet/protocol";
+import { defineHarness, type HarnessPlugin } from "@nibblets/harness";
+import type { RunnerConfig, RunnerToServer, ServerToRunner } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { CliLogins } from "./cli.ts";
 import { mcpServersFor, Runner } from "./runner.ts";

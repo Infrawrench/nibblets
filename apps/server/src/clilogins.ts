@@ -1,4 +1,4 @@
-import { CliLogin, CliStatuses } from "@nibblet/protocol";
+import { CliLogin, CliStatuses } from "@nibblets/protocol";
 import { z } from "zod";
 import type { Config } from "./config.ts";
 

@@ -1,4 +1,4 @@
-import type { LiveMessage } from "@nibblet/protocol";
+import type { LiveMessage } from "@nibblets/protocol";
 
 type Listener = (message: LiveMessage) => void;
 

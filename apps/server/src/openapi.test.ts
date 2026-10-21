@@ -1,4 +1,4 @@
-import { contract, flatten } from "@nibblet/protocol";
+import { contract, flatten } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { createApp } from "./app.ts";
 import { Bus } from "./bus.ts";

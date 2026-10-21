@@ -7,8 +7,8 @@ FROM base AS web
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages ./packages
 COPY apps/web ./apps/web
-RUN pnpm install --frozen-lockfile --filter @nibblet/web...
-RUN pnpm --filter @nibblet/web build
+RUN pnpm install --frozen-lockfile --filter @nibblets/web...
+RUN pnpm --filter @nibblets/web build
 
 # The server runs its TypeScript directly (Node strips the types), so the
 # image carries sources and production dependencies, and no build output.
@@ -18,7 +18,7 @@ LABEL nibblet.image=server
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages ./packages
 COPY apps/server ./apps/server
-RUN pnpm install --prod --frozen-lockfile --filter @nibblet/server...
+RUN pnpm install --prod --frozen-lockfile --filter @nibblets/server...
 COPY --from=web /app/apps/web/dist ./apps/web/dist
 ENV NODE_ENV=production \
     PORT=8420 \

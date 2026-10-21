@@ -13,7 +13,7 @@ import {
   ServerToGuest,
   type GuestToServer,
   type RunExitInfo,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import type { GuestPlugin } from "./guest.ts";
 
 /** How much of each run's output is kept, for `tail`. */

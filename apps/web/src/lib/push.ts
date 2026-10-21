@@ -1,4 +1,4 @@
-import { PushSubscriptionInput } from "@nibblet/protocol";
+import { PushSubscriptionInput } from "@nibblets/protocol";
 
 /** Where push can work: a browser with the APIs, and on iOS only once it's on the Home Screen. */
 export type PushSupport = "supported" | "unsupported" | "needs-install";

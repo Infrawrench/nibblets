@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { MASKED } from "@nibblet/protocol";
+import { MASKED } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import type { Store } from "./store.ts";
 import { keyDescription, keyId, mintAuthKey, setTailnetKeys, tailnetKeys } from "./tailnet-keys.ts";

@@ -7,7 +7,7 @@ import {
   type OnePasswordVault,
   type SharedVault,
   type VaultGrant,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { z } from "zod";
 import type { Run } from "./clis/cli.ts";
 

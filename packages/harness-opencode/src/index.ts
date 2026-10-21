@@ -19,8 +19,8 @@ import {
   type HarnessContext,
   type McpServerSpec,
   installedCliDir,
-} from "@nibblet/harness";
-import type { Usage } from "@nibblet/protocol";
+} from "@nibblets/harness";
+import type { Usage } from "@nibblets/protocol";
 import { installLogin, type OpencodeDirs } from "./login.ts";
 import { OpencodeMapper } from "./mapper.ts";
 

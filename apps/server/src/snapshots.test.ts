@@ -1,5 +1,5 @@
-import { connect, EMBEDDING_DIMENSIONS, migrateDb, type Db } from "@nibblet/db";
-import type { LiveMessage, ThreadItem } from "@nibblet/protocol";
+import { connect, EMBEDDING_DIMENSIONS, migrateDb, type Db } from "@nibblets/db";
+import type { LiveMessage, ThreadItem } from "@nibblets/protocol";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

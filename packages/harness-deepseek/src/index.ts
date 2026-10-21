@@ -1,5 +1,5 @@
-import { claudeCodeHarness } from "@nibblet/harness-claude";
-import { harnesses, type Effort, type RunnerConfig } from "@nibblet/protocol";
+import { claudeCodeHarness } from "@nibblets/harness-claude";
+import { harnesses, type Effort, type RunnerConfig } from "@nibblets/protocol";
 
 /** Where the credential proxy sends DeepSeek traffic, adding the API key. */
 export const DEEPSEEK_ROUTE = "/deepseek";

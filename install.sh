@@ -801,7 +801,7 @@ setup_repo() {
 
 prepare_bridge() {
   setup_node
-  spin "Installing the host bridge's packages" bash -c "cd '$DIR' && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile --filter '@nibblet/host-mcp...'"
+  spin "Installing the host bridge's packages" bash -c "cd '$DIR' && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile --filter '@nibblets/host-mcp...'"
   local token
   token=$(env_get HOST_MCP_TOKEN)
   [ -n "$token" ] || token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')

@@ -12,7 +12,7 @@ import {
   SquareTerminal,
   X,
 } from "lucide-react";
-import { harnesses } from "@nibblet/protocol";
+import { harnesses } from "@nibblets/protocol";
 import { modelLabel, useModels } from "../lib/models.ts";
 import { useNibblets, useServer, useServers, useThread } from "../lib/servers.tsx";
 import { runningTurn } from "../lib/thread.ts";

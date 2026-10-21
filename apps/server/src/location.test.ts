@@ -1,9 +1,9 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { connect, EMBEDDING_DIMENSIONS, migrateDb, type Db } from "@nibblet/db";
+import { connect, EMBEDDING_DIMENSIONS, migrateDb, type Db } from "@nibblets/db";
 import { sql } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LocationFix } from "@nibblet/protocol";
+import type { LocationFix } from "@nibblets/protocol";
 import { Bus } from "./bus.ts";
 import { Geocoder } from "./geocode.ts";
 import { LocationRequests } from "./location-requests.ts";

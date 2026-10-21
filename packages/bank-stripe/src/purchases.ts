@@ -1,4 +1,4 @@
-import type { HookRequest, Purchase, PurchaseHook } from "@nibblet/bank";
+import type { HookRequest, Purchase, PurchaseHook } from "@nibblets/bank";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 

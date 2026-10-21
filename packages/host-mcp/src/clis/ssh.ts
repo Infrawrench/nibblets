@@ -1,4 +1,4 @@
-import { CONTAINER_SSH_AUTH_SOCK } from "@nibblet/protocol";
+import { CONTAINER_SSH_AUTH_SOCK } from "@nibblets/protocol";
 import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";

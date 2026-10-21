@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { Duplex, type Writable } from "node:stream";
-import type { EntryCommand, GuestOs } from "@nibblet/protocol";
+import type { EntryCommand, GuestOs } from "@nibblets/protocol";
 
 /**
  * What the guest agent needs from the OS it's running on, one plugin per

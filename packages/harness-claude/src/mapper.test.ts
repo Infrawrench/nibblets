@@ -1,6 +1,6 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { TurnWriter } from "@nibblet/harness";
-import type { ThreadItem } from "@nibblet/protocol";
+import { TurnWriter } from "@nibblets/harness";
+import type { ThreadItem } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { ClaudeMapper } from "./mapper.ts";
 

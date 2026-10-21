@@ -1,7 +1,7 @@
-import { TurnWriter } from "@nibblet/harness";
-import type { ThreadItem } from "@nibblet/protocol";
+import { TurnWriter } from "@nibblets/harness";
+import type { ThreadItem } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
-import { KimiLine } from "@nibblet/protocol";
+import { KimiLine } from "@nibblets/protocol";
 import { failureFrom } from "./index.ts";
 import { KimiMapper, parseArguments } from "./mapper.ts";
 

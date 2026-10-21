@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { VaultGrant } from "@nibblet/protocol";
+import type { VaultGrant } from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 
 const keys = {

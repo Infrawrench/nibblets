@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { HostContext, ImageJob } from "@nibblet/machine/host";
+import type { HostContext, ImageJob } from "@nibblets/machine/host";
 import { z } from "zod";
 
 const run = promisify(execFile);
@@ -69,7 +69,7 @@ if [ "$(cat "$root/app/.nibblets" 2>/dev/null || true)" != "$want" ]; then
   rm -f "$root/app.tgz"
   cd "$root/app"
   PATH="$root/node/bin:$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \\
-    "$root/node/bin/corepack" pnpm install --prod --frozen-lockfile --filter '@nibblet/runner...'
+    "$root/node/bin/corepack" pnpm install --prod --frozen-lockfile --filter '@nibblets/runner...'
   # Installs drop the execute bit from node-pty's helper; the terminals need it.
   chmod 755 node_modules/.pnpm/node-pty@*/node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true
   echo "$want" > "$root/app/.nibblets"

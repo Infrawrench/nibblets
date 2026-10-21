@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { TailnetNode } from "@nibblet/protocol";
+import type { TailnetNode } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { mountGuard, type GuardDeps } from "./guard.ts";
 import { guardToken } from "./store.ts";

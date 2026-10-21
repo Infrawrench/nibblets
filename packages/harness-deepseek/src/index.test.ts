@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { RunnerConfig } from "@nibblet/protocol";
+import type { RunnerConfig } from "@nibblets/protocol";
 import { deepseekEffort, deepseekHarness } from "./index.ts";
 
 const config = (model: string, effort: RunnerConfig["effort"]) =>

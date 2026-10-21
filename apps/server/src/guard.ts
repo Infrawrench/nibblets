@@ -4,7 +4,7 @@ import {
   type GuardConfig,
   type JsonValue,
   type TailscaleLogin,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { Context, Hono } from "hono";
 import type { Decision } from "./approvals.ts";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GUEST_PORT_NAME } from "@nibblet/protocol";
+import { GUEST_PORT_NAME } from "@nibblets/protocol";
 import { deviceArgs } from "../src/index.ts";
 
 const disks = { system: "/vm/system.qcow2", home: "/vm/home.qcow2" };

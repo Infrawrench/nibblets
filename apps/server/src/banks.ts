@@ -14,18 +14,18 @@ import {
   type HookResponse,
   type ResolvedBank,
   type SavedBank,
-} from "@nibblet/bank";
-import { bitcoin } from "@nibblet/bank-bitcoin";
-import { ethereum } from "@nibblet/bank-ethereum";
-import { slash } from "@nibblet/bank-slash";
-import { stripe } from "@nibblet/bank-stripe";
+} from "@nibblets/bank";
+import { bitcoin } from "@nibblets/bank-bitcoin";
+import { ethereum } from "@nibblets/bank-ethereum";
+import { slash } from "@nibblets/bank-slash";
+import { stripe } from "@nibblets/bank-stripe";
 import {
   BankName,
   BankProviderId,
   BankSettings,
   RpcError,
   type BankStatus,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { z } from "zod";
 import type { Bank } from "./bank.ts";
 import type { PublicAddresses } from "./public-address.ts";

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { LocateFixed, MapPin } from "lucide-react";
-import { formatCoordinates, placeLabel, type Nibblet } from "@nibblet/protocol";
+import { formatCoordinates, placeLabel, type Nibblet } from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import {
   answersByItself,

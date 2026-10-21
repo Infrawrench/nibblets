@@ -5,12 +5,12 @@ import type {
   MachineCapabilities,
   MachineChoice,
   Resources,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 
 /**
  * The contract every machine plugin fulfils: how the server's conductor
  * starts, stops, reaches into and tidies up the machine a nibblet runs in,
- * whatever that machine is. `@nibblet/machine-docker` makes containers;
+ * whatever that machine is. `@nibblets/machine-docker` makes containers;
  * the virtual machine plugins (`createVmPlugin`, one per hypervisor) make
  * VMs on the host through its bridge.
  *

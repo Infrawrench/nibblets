@@ -22,9 +22,9 @@ import {
   type MachineCapabilities,
   type MachineChoice,
   type McpServerDef,
-} from "@nibblet/protocol";
-import { nibbletProxyKey } from "@nibblet/protocol/proxy-key";
-import type { MachinePlugin, MachineRegistry } from "@nibblet/machine";
+} from "@nibblets/protocol";
+import { nibbletProxyKey } from "@nibblets/protocol/proxy-key";
+import type { MachinePlugin, MachineRegistry } from "@nibblets/machine";
 import type { Readable, Writable } from "node:stream";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";

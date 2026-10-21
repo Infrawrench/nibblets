@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { HostMachines, target, type HypervisorPlugin } from "@nibblet/machine/host";
-import { AppleVirtualization } from "@nibblet/machine-apple";
-import { HyperV } from "@nibblet/machine-hyperv";
-import { Kvm } from "@nibblet/machine-kvm";
+import { HostMachines, target, type HypervisorPlugin } from "@nibblets/machine/host";
+import { AppleVirtualization } from "@nibblets/machine-apple";
+import { HyperV } from "@nibblets/machine-hyperv";
+import { Kvm } from "@nibblets/machine-kvm";
 
 const run = promisify(execFile);
 

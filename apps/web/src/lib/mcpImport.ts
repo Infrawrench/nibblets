@@ -1,4 +1,4 @@
-import { McpServerDef, McpServerName } from "@nibblet/protocol";
+import { McpServerDef, McpServerName } from "@nibblets/protocol";
 import { z } from "zod";
 
 const Entry = z.union([

@@ -1,5 +1,5 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { HarnessId, harnesses, type CredentialStatus, type ModelOption } from "@nibblet/protocol";
+import { HarnessId, harnesses, type CredentialStatus, type ModelOption } from "@nibblets/protocol";
 import type { ServerConnection } from "./connection.ts";
 import { keys } from "./servers.tsx";
 

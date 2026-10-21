@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Readable } from "node:stream";
-import type { LiveMessage } from "@nibblet/protocol";
+import type { LiveMessage } from "@nibblets/protocol";
 import { Borrow, type BorrowDeps } from "./borrow.ts";
-import type { MachinePlugin } from "@nibblet/machine";
+import type { MachinePlugin } from "@nibblets/machine";
 import type { Orchestrator } from "./docker.ts";
 import type { Store } from "./store.ts";
 import type { Config } from "./config.ts";

@@ -17,7 +17,7 @@ import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { HOME_ARCHIVE_EXCLUDES } from "@nibblet/protocol";
+import { HOME_ARCHIVE_EXCLUDES } from "@nibblets/protocol";
 import { TAILSCALE_USER, WINDOWS_TAILSCALE } from "../tailscale.ts";
 import { ownSubnet, tailnetPorts } from "./linux.ts";
 import { inherit, pick, sleep } from "./shared.ts";

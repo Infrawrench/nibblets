@@ -1,4 +1,4 @@
-import { BankError, deriveWalletKey } from "@nibblet/bank";
+import { BankError, deriveWalletKey } from "@nibblets/bank";
 import { hex } from "@scure/base";
 import { Address, OutScript, p2wpkh, TEST_NETWORK, Transaction, WIF } from "@scure/btc-signer";
 import { pubECDSA } from "@scure/btc-signer/utils.js";

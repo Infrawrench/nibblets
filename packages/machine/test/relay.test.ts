@@ -1,5 +1,5 @@
 import { Duplex, PassThrough } from "node:stream";
-import { encodeSerial, SerialReader } from "@nibblet/protocol";
+import { encodeSerial, SerialReader } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import type { GuestSocket } from "../src/guest-link.ts";
 import { GuestRelay } from "../src/host/index.ts";

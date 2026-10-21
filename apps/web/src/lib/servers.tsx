@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQueries, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import type { LiveMessage, Nibblet, StoredItem } from "@nibblet/protocol";
+import type { LiveMessage, Nibblet, StoredItem } from "@nibblets/protocol";
 import {
   chooseRoute,
   localServerId,

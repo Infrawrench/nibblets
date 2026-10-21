@@ -1,5 +1,5 @@
 import type { Duplex } from "node:stream";
-import type { GuestImage, GuestOs } from "@nibblet/protocol";
+import type { GuestImage, GuestOs } from "@nibblets/protocol";
 import type { Capacity } from "../bridge-api.ts";
 
 /**

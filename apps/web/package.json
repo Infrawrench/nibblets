@@ -1,5 +1,5 @@
 {
-  "name": "@nibblet/web",
+  "name": "@nibblets/web",
   "version": "0.3.2",
   "private": true,
   "type": "module",
@@ -14,7 +14,7 @@
   "dependencies": {
     "@base-ui/react": "^1.9.0",
     "@clerk/react": "^6.17.8",
-    "@nibblet/protocol": "workspace:*",
+    "@nibblets/protocol": "workspace:*",
     "@tanstack/react-query": "^5.104.2",
     "@tanstack/react-router": "^1.170.44",
     "@xterm/addon-fit": "0.11.0",

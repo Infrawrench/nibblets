@@ -18,7 +18,7 @@ import type {
   SpendingLimit,
   TailnetNode,
   ThreadItem,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import {
   bigint,
   boolean,

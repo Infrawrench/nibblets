@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import type { HostTool, McpServerDef } from "@nibblet/protocol";
+import type { HostTool, McpServerDef } from "@nibblets/protocol";
 import { dropOverlaps, hostToolAllowed } from "./hostmcp.ts";
 
 describe("hostToolAllowed", () => {

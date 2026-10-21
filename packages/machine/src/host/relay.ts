@@ -10,7 +10,7 @@ import {
   SerialReader,
   type GuestTarget,
   ServerToGuest,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import type { GuestSocket } from "../guest-link.ts";
 
 /** Where on the host the guest's connections go. */

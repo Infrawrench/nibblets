@@ -1,6 +1,6 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { TurnWriter } from "@nibblet/harness";
-import { JsonValue, type Usage } from "@nibblet/protocol";
+import type { TurnWriter } from "@nibblets/harness";
+import { JsonValue, type Usage } from "@nibblets/protocol";
 
 /** What the mapper has learnt by the end of a turn. */
 export interface ClaudeTurnState {

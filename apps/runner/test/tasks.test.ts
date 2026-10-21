@@ -1,4 +1,4 @@
-import type { BackgroundTask, RunnerToServer } from "@nibblet/protocol";
+import type { BackgroundTask, RunnerToServer } from "@nibblets/protocol";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

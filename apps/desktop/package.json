@@ -1,5 +1,5 @@
 {
-  "name": "@nibblet/desktop",
+  "name": "@nibblets/desktop",
   "version": "0.3.2",
   "private": true,
   "type": "module",
@@ -14,8 +14,8 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "@nibblet/host-mcp": "workspace:*",
-    "@nibblet/protocol": "workspace:*",
+    "@nibblets/host-mcp": "workspace:*",
+    "@nibblets/protocol": "workspace:*",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
     "electron": "^44.9.2",

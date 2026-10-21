@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { GuestImage, GuestOs } from "@nibblet/protocol";
+import { GuestImage, GuestOs } from "@nibblets/protocol";
 
 /**
  * The host bridge's `/machines` API: how the server, in a container, has

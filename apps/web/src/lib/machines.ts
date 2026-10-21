@@ -6,7 +6,7 @@ import {
   type MachineCapabilities,
   type MachineChoice,
   type MachineGuest,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import type { ServerConnection } from "./connection.ts";
 import { keys } from "./servers.tsx";
 

@@ -44,14 +44,14 @@ import {
   type MachineBackend,
   type MachineCapabilities,
   DEFAULT_MACHINE,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import {
   createMockConnection,
   type LiveFeed,
   type LiveState,
   type ServerConnection,
 } from "./connection.ts";
-import type { FileRef } from "@nibblet/protocol";
+import type { FileRef } from "@nibblets/protocol";
 import { mockFileRef, registerMockFile } from "./files.ts";
 
 /** Where Pip's person shared from, and where every mock lookup lands. */

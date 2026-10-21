@@ -1,5 +1,5 @@
 {
-  "name": "@nibblet/bank-bitcoin",
+  "name": "@nibblets/bank-bitcoin",
   "version": "0.3.1",
   "private": true,
   "type": "module",
@@ -10,8 +10,8 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@nibblet/bank": "workspace:*",
-    "@nibblet/protocol": "workspace:*",
+    "@nibblets/bank": "workspace:*",
+    "@nibblets/protocol": "workspace:*",
     "@scure/base": "^2.4.0",
     "@scure/btc-signer": "^2.4.1",
     "zod": "^4.6.7"

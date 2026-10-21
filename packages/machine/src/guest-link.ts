@@ -8,7 +8,7 @@ import {
   type GuestOs,
   type GuestSignal,
   type ServerToGuest,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 
 /** The server's end of a guest's link, as a WebSocket (to the host bridge) or anything like one. */
 export interface GuestSocket {

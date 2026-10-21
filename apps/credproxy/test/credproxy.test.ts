@@ -1,8 +1,8 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BudgetStatus, MeteredRequest } from "@nibblet/protocol";
-import { nibbletProxyKey } from "@nibblet/protocol/proxy-key";
+import type { BudgetStatus, MeteredRequest } from "@nibblets/protocol";
+import { nibbletProxyKey } from "@nibblets/protocol/proxy-key";
 import { describe, expect, it, vi } from "vitest";
 import {
   createApp,

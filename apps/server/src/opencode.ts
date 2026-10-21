@@ -4,7 +4,7 @@ import {
   OpencodeLogin,
   type HarnessId,
   type HarnessModels,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { bridgeGet, type Bridge } from "./bridge.ts";

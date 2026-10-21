@@ -9,8 +9,8 @@ import {
   RunnerToServer,
   TerminalEvent,
   TerminalInput,
-} from "@nibblet/protocol";
-import { openApiDocument } from "@nibblet/protocol/openapi";
+} from "@nibblets/protocol";
+import { openApiDocument } from "@nibblets/protocol/openapi";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -505,7 +505,7 @@ export function createApp(services: Services, bus: Bus) {
       return c.html(await readFile(`${webDist}/index.html`, "utf8"));
     });
   } else {
-    app.get("/", (c) => c.text("The web UI isn't built. Run `pnpm --filter @nibblet/web build`."));
+    app.get("/", (c) => c.text("The web UI isn't built. Run `pnpm --filter @nibblets/web build`."));
   }
 
   return app;

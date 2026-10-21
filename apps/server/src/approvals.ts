@@ -1,4 +1,4 @@
-import { declinedMessage, RpcError, type JsonValue, type ThreadItemOf } from "@nibblet/protocol";
+import { declinedMessage, RpcError, type JsonValue, type ThreadItemOf } from "@nibblets/protocol";
 import { newId } from "./store.ts";
 
 /** The store calls approvals need, so tests can stand in for the database. */

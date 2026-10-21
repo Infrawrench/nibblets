@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { Loader2, Plus, ScrollText, Square, SquareTerminal } from "lucide-react";
-import type { Nibblet } from "@nibblet/protocol";
+import type { Nibblet } from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { keys } from "../../lib/servers.tsx";
 import { describeTask, TerminalSocket, type TerminalState } from "../../lib/terminal.ts";

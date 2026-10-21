@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { makeIso, windowsSetupFiles, type ImageJob } from "@nibblet/machine/host";
+import { makeIso, windowsSetupFiles, type ImageJob } from "@nibblets/machine/host";
 import { z } from "zod";
 import { psJson, type PowerShell } from "./powershell.ts";
 

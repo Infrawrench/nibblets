@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Plus, Repeat, Trash2 } from "lucide-react";
-import type { Nibblet } from "@nibblet/protocol";
+import type { Nibblet } from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import { keys } from "../../lib/servers.tsx";
 import { relativeTime } from "../../lib/time.ts";

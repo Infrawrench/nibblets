@@ -1,4 +1,4 @@
-import type { CredentialStatus } from "@nibblet/protocol";
+import type { CredentialStatus } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
 import { budgetApplies } from "./budget.ts";
 

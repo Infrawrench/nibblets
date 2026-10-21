@@ -16,7 +16,7 @@ import {
   GUARD_GID,
   GUARD_UID,
   HOME_ARCHIVE_EXCLUDES,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { ownSubnet } from "./linux.ts";
 import { inherit, sleep } from "./shared.ts";
 import type { EntryPlatform } from "./platform.ts";

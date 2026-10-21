@@ -19,10 +19,10 @@ import {
   Tray,
   type MenuItemConstructorOptions,
 } from "electron";
-import { ConnectStatus } from "@nibblet/protocol";
+import { ConnectStatus } from "@nibblets/protocol";
 import { z } from "zod";
 import { ipcMain } from "electron/main";
-import { hostMachines, startHostMcpBridge, type HostMcpBridge } from "@nibblet/host-mcp";
+import { hostMachines, startHostMcpBridge, type HostMcpBridge } from "@nibblets/host-mcp";
 import { startKeychainBridge } from "./bridge.ts";
 import { detectCredentials } from "./credentials.ts";
 import { checkDocker } from "./docker.ts";
@@ -41,7 +41,7 @@ import {
 } from "./links.ts";
 import { BrowserSignIn, type FinishFailure } from "./browser-sign-in.ts";
 import { adoptShellPath } from "./shell-path.ts";
-import { opencodePaths } from "@nibblet/host-mcp";
+import { opencodePaths } from "@nibblets/host-mcp";
 
 const SERVER_URL = "http://127.0.0.1:8420/";
 const DEFAULT_CENTRAL_URL = "https://app.nibblets.dev/";

@@ -4,7 +4,7 @@ import {
   type LocationFix,
   type NibbletLocation,
   type ThreadItemOf,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import type { Geocoder } from "./geocode.ts";
 import { newId } from "./store.ts";
 

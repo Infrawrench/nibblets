@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Popover } from "@base-ui/react/popover";
 import { Check, ChevronDown, Loader2, Search } from "lucide-react";
-import { HarnessId, harnesses, type ModelOption } from "@nibblet/protocol";
+import { HarnessId, harnesses, type ModelOption } from "@nibblets/protocol";
 import { HarnessIcon } from "./HarnessIcon.tsx";
 import { cn } from "../lib/cn.ts";
 import { modelLabel, type ModelCatalogue } from "../lib/models.ts";

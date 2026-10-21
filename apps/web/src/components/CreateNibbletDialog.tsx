@@ -12,7 +12,7 @@ import {
   type HamsterLook,
   type Nibblet,
   type VaultGrant,
-} from "@nibblet/protocol";
+} from "@nibblets/protocol";
 import { HamsterEditor } from "./hamster/HamsterEditor.tsx";
 import { Hamster } from "./hamster/Hamster.tsx";
 import { ModelPicker, type ModelChoice } from "./ModelPicker.tsx";

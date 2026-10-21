@@ -1,4 +1,4 @@
-import { placeholderCodexAuth } from "@nibblet/protocol";
+import { placeholderCodexAuth } from "@nibblets/protocol";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Codex, type ModelReasoningEffort, type ThreadOptions } from "@openai/codex-sdk";
@@ -11,13 +11,13 @@ import {
   type McpServerSpec,
   installedCli,
   packageField,
-} from "@nibblet/harness";
-import type { Effort } from "@nibblet/protocol";
+} from "@nibblets/harness";
+import type { Effort } from "@nibblets/protocol";
 import { CodexMapper } from "./mapper.ts";
 
 export { CodexMapper } from "./mapper.ts";
 
-export { placeholderJwt } from "@nibblet/protocol";
+export { placeholderJwt } from "@nibblets/protocol";
 export const placeholderAuth = placeholderCodexAuth;
 
 type TomlValue = string | number | boolean | TomlValue[] | { [key: string]: TomlValue };
