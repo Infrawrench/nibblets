@@ -2,6 +2,7 @@ import type { AssetInfo, BankProviderId, CardKind, CardSecret } from "@nibblet/p
 
 export * from "./budget.ts";
 export * from "./keys.ts";
+export * from "./wallet.ts";
 
 /**
  * The contract every bank plugin fulfils. A plugin is somewhere money comes
