@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronRight, Copy, CreditCard, KeyRound, Wallet } from "lucide-react";
-import type { BankField, BankInstrument, BankKind, BankSetup, BankStatus } from "@nibblet/protocol";
+import {
+  type BankField,
+  type BankInstrument,
+  type BankKind,
+  type BankSetup,
+  type BankStatus,
+} from "@nibblet/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import {
   bankDraftChanged,
@@ -227,6 +233,7 @@ function BankForm({
             />
           </FieldRow>
         ))}
+        {kind.purchaseHook ? <PurchaseHook kindName={kind.name} hook={kind.purchaseHook} /> : null}
       </div>
       <div className="sticky bottom-0 flex flex-wrap items-center gap-1.5 border-t border-line bg-panel px-4 py-2.5">
         {onBack ? (
@@ -327,5 +334,59 @@ function FieldInput({
         </Button>
       )}
     </span>
+  );
+}
+
+/**
+ * The address a provider that asks about each purchase reaches this server
+ * at, and where to give it. The address itself is set up under Remote
+ * access: a reverse proxy's, or Nibblets Connect's tunnel.
+ */
+function PurchaseHook({
+  kindName,
+  hook,
+}: {
+  kindName: string;
+  hook: NonNullable<BankKind["purchaseHook"]>;
+}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-line bg-surface p-3">
+      <span className="text-sm font-medium">Approving each purchase</span>
+      {hook.url ? (
+        <>
+          <p className="text-xs text-dim">{hook.where}</p>
+          <span className="flex gap-1.5">
+            <Input readOnly value={hook.url} className="font-mono text-xs" />
+            <Button
+              title="Copy"
+              onClick={(e) => {
+                e.preventDefault();
+                void navigator.clipboard.writeText(hook.url ?? "").then(() => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                });
+              }}
+            >
+              <Copy />
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </span>
+          {hook.changes ? (
+            <p className="text-xs text-warning">
+              This is a quick tunnel's address, which changes whenever the tunnel starts again.
+              Until the new one is in {kindName}, nothing gets an answer, so every purchase is
+              declined. A reverse proxy's address, under Remote access, stays put.
+            </p>
+          ) : null}
+        </>
+      ) : (
+        <p className="text-xs text-warning">
+          {kindName} has to reach this server to ask it about each purchase, and it can't from the
+          internet yet. Link this server to Nibblets Connect, or give your reverse proxy's address,
+          under Remote access.
+        </p>
+      )}
+    </div>
   );
 }

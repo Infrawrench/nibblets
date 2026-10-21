@@ -25,6 +25,7 @@ import { Notifier } from "./notifier.ts";
 import { tailscaleStatus } from "./hostmcp.ts";
 import { Bank } from "./bank.ts";
 import { Banks } from "./banks.ts";
+import { PublicAddresses } from "./public-address.ts";
 
 // The repository's version, which releases are tagged with.
 const VERSION = z
@@ -64,7 +65,9 @@ async function main(): Promise<void> {
     publish: (message) => bus.publish(message),
     log: (message) => console.warn(`bank: ${message}`),
   });
-  const banks = new Banks({ store, bank, env: process.env });
+  const tunnel = new Tunnel(docker, store, config);
+  const publicAddress = new PublicAddresses({ store, tunnel });
+  const banks = new Banks({ store, bank, address: publicAddress, env: process.env });
   await banks.load();
   conductor.bank = bank;
   const scheduler = new Scheduler(store, conductor);
@@ -76,7 +79,6 @@ async function main(): Promise<void> {
     scheduler,
     dataDir: config.NIBBLET_DATA_DIR,
   });
-  const tunnel = new Tunnel(docker, store, config);
   const harnessUpdates = new HarnessUpdater({ store, docker, log: (m) => console.log(m) });
   const appUpdates = new AppUpdater({
     config,
@@ -116,6 +118,7 @@ async function main(): Promise<void> {
       appUpdates,
       bank,
       banks,
+      publicAddress,
     },
     bus,
   );

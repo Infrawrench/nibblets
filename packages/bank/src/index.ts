@@ -64,6 +64,64 @@ export interface BankPlugin {
    * again later.
    */
   close(card: CardRef): Promise<CloseResult>;
+  /**
+   * Set when the provider asks the server before each purchase on a card
+   * (see `PurchaseHook`); absent when it doesn't, or isn't set up to.
+   */
+  readonly purchases?: PurchaseHook;
+}
+
+/**
+ * The provider asking whether a purchase may go through, as it happens.
+ * On a nibblets card, the server answers no unless the card is open and
+ * the purchase fits what's left on it, and no to anything it can't make
+ * out. A provider may ask about every card on the account, so purchases on
+ * cards that aren't nibblets' are let through, to the provider's own rules.
+ */
+export interface PurchaseHook {
+  /**
+   * The purchase a request asks about, if this bank's provider signed it;
+   * null if it didn't (it may be another bank's). Throws when it's signed
+   * but can't be read.
+   */
+  read(request: HookRequest): Purchase | null;
+  /** What to send back to the provider. */
+  answer(approved: boolean): HookResponse;
+}
+
+export interface HookRequest {
+  headers: Headers;
+  /** The body exactly as it came, which signatures are made over. */
+  body: string;
+}
+
+export interface HookResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+export interface Purchase {
+  /** The provider's id for the card (`IssuedCard.ref`). */
+  ref: string;
+  /**
+   * The provider's id for the authorisation. A merchant can ask for more on
+   * one it already has (a tip, a hotel stay running on), as another request
+   * with the same id.
+   */
+  authorization: string;
+  /** What this request adds, in `asset`'s smallest unit. */
+  amount: bigint;
+  /** Its asset's code, e.g. `USD`. */
+  asset: string;
+  /** Who it's at, for the log. */
+  merchant: string;
+  /**
+   * Whether the provider's card says it was made for a nibblet (Stripe's
+   * metadata, say), so one this server doesn't know is declined rather
+   * than taken for someone else's.
+   */
+  nibbletCard: boolean;
 }
 
 /**
@@ -152,6 +210,12 @@ export interface BankPluginFactory {
   readonly instrument: BankInstrument;
   /** What it needs, in the order the form asks for them. */
   readonly fields: readonly BankField[];
+  /**
+   * For a provider that can ask the server about each purchase: where the
+   * person gives it the server's address, for Settings. Its banks do it
+   * once their settings say how to check the provider's requests.
+   */
+  readonly purchaseHook?: { readonly where: string };
   fromSettings(settings: BankSettingValues, deps: BankDeps): BankPlugin | null;
 }
 
@@ -241,6 +305,7 @@ function asBank(plugin: BankPlugin, id: BankProviderId, name: string): BankPlugi
     reveal: (card) => plugin.reveal(card),
     inspect: (card) => plugin.inspect(card),
     close: (card) => plugin.close(card),
+    ...(plugin.purchases ? { purchases: plugin.purchases } : {}),
   };
 }
 

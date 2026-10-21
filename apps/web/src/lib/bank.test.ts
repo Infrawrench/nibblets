@@ -77,6 +77,7 @@ const kind: BankKind = {
   name: "Fake",
   about: "",
   instrument: "wallet",
+  purchaseHook: null,
   fields: [field("KEY", { secret: true, required: true }), field("NETWORK", { required: true })],
 };
 
