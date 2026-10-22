@@ -42,6 +42,10 @@ import {
 import { BrowserSignIn, type FinishFailure } from "./browser-sign-in.ts";
 import { adoptShellPath } from "./shell-path.ts";
 import { opencodePaths } from "@nibblets/host-mcp";
+import { dataDir } from "./data-dir.ts";
+
+// Before anything reads it, the single-instance lock included.
+app.setPath("userData", dataDir(app.getPath("appData")));
 
 const SERVER_URL = "http://127.0.0.1:8420/";
 const DEFAULT_CENTRAL_URL = "https://app.nibblets.dev/";
@@ -272,6 +276,8 @@ function page(p: SetupPage) {
 
 function openSetupWindow(): BrowserWindow {
   if (setupWindow && !setupWindow.isDestroyed()) return setupWindow;
+  // One window at a time: the UI comes back when setting up is done.
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
   setupWindow = new BrowserWindow({
     width: 620,
     height: 760,
@@ -284,6 +290,20 @@ function openSetupWindow(): BrowserWindow {
   setupWindow.on("closed", () => terminal.stop());
   void setupWindow.loadFile(join(__dirname, "setup.html"));
   return setupWindow;
+}
+
+/** Whether starting up has got as far as opening a window of its own. */
+let started = false;
+
+/** The Dock, the tray, or opening the app again: setting up while that's on, otherwise the UI. */
+function showApp(): void {
+  if (!started) return;
+  if (setupWindow && !setupWindow.isDestroyed()) {
+    setupWindow.show();
+    setupWindow.focus();
+    return;
+  }
+  openMainWindow();
 }
 
 function openMainWindow(url = uiUrl()) {
@@ -350,7 +370,10 @@ function openMainWindow(url = uiUrl()) {
   // If the server was mid-restart, try again rather than sit on an error page.
   mainWindow.webContents.on("did-fail-load", (_e, code, _desc, failed, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 is an aborted load, e.g. a redirect.
-    setTimeout(() => void mainWindow?.loadURL(failed), 1500);
+    setTimeout(() => {
+      // Closed meanwhile, say for setting up again.
+      if (mainWindow && !mainWindow.isDestroyed()) void mainWindow.loadURL(failed);
+    }, 1500);
   });
   void mainWindow.webContents.session.clearCache().finally(() => void mainWindow?.loadURL(url));
 }
@@ -694,7 +717,7 @@ function buildTray() {
       },
     ];
     return Menu.buildFromTemplate([
-      { label: "Open Nibblets", click: () => openMainWindow() },
+      { label: "Open Nibblets", click: () => showApp() },
       { label: "Check for updates…", click: () => void updates.check(true) },
       {
         label: `Run a server on ${machine}`,
@@ -756,7 +779,7 @@ app.on("second-instance", (_e, argv) => {
   const link = appLinkIn(argv);
   if (link) void openAppLink(link);
   else if (argv.includes(SET_UP) && settings.runServer) void bringUp({ getReady: true });
-  else openMainWindow();
+  else showApp();
 });
 
 app.whenReady().then(async () => {
@@ -783,6 +806,8 @@ app.whenReady().then(async () => {
   buildTray();
   // With a server, the web UI's update bar offers updates; without one, the app asks itself.
   if (!settings.runServer) updates.start();
+  // bringUp opens the setup window before it first waits, so the Dock finds it.
+  started = true;
   if (settings.runServer) await bringUp({ getReady: process.argv.includes(SET_UP) });
   else openMainWindow();
 });
@@ -791,7 +816,7 @@ app.whenReady().then(async () => {
 app.on("window-all-closed", () => {});
 
 app.on("activate", () => {
-  if (!steppingAside) openMainWindow();
+  if (!steppingAside) showApp();
 });
 
 let quitting = false;
