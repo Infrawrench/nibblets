@@ -84,11 +84,12 @@ describe("macOS's users", () => {
   it("are hidden, with no password to begin with, and the uids the entry starts them as", () => {
     const [agent] = USERS;
     if (!agent) throw new Error("no agent user");
-    const commands = userCommands(agent, "A-UUID");
+    const commands = userCommands(agent);
     expect(commands).toContainEqual(["-create", "/Users/nibblet", "UniqueID", "1001"]);
     expect(commands).toContainEqual(["-create", "/Users/nibblet", "IsHidden", "1"]);
     expect(commands).toContainEqual(["-create", "/Users/nibblet", "Password", "*"]);
-    expect(commands).toContainEqual(["-create", "/Users/nibblet", "GeneratedUID", "A-UUID"]);
+    // macOS gives one itself, and turns down setting it.
+    expect(commands.some((c) => c.includes("GeneratedUID"))).toBe(false);
   });
 
   it("include Tailscale's own, with its uid", () => {

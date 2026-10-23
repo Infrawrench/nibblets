@@ -104,7 +104,7 @@ export const USERS = [
  * login window. None has a password to begin with; the agent's is given
  * one to sign in to the desktop with (`signIn`).
  */
-export function userCommands(user: (typeof USERS)[number], uuid: string): string[][] {
+export function userCommands(user: (typeof USERS)[number]): string[][] {
   const g = `/Groups/${user.group}`;
   const u = `/Users/${user.name}`;
   return [
@@ -113,8 +113,6 @@ export function userCommands(user: (typeof USERS)[number], uuid: string): string
     ["-create", u],
     ["-create", u, "UniqueID", String(user.uid)],
     ["-create", u, "PrimaryGroupID", String(user.gid)],
-    // The desktop's session and keychain want one, as every user made otherwise has.
-    ["-create", u, "GeneratedUID", uuid],
     ["-create", u, "NFSHomeDirectory", user.home],
     ["-create", u, "UserShell", user.shell],
     ["-create", u, "RealName", user.realName],
@@ -123,15 +121,19 @@ export function userCommands(user: (typeof USERS)[number], uuid: string): string
   ];
 }
 
+/**
+ * Makes each user that isn't there yet, or wasn't finished (the commands
+ * only set what they name, so running them again is safe). macOS gives
+ * each its GeneratedUID itself, and won't have it set.
+ */
 async function users(): Promise<void> {
   for (const user of USERS) {
-    const there = await run("dscl", [".", "-read", `/Users/${user.name}`]).then(
-      () => true,
-      () => false,
+    const uid = await run("dscl", [".", "-read", `/Users/${user.name}`, "UniqueID"]).then(
+      (r) => r.stdout.trim(),
+      () => "",
     );
-    if (there) continue;
-    const uuid = (await run("uuidgen")).stdout.trim();
-    for (const args of userCommands(user, uuid)) await run("dscl", [".", ...args]);
+    if (uid === `UniqueID: ${user.uid}`) continue;
+    for (const args of userCommands(user)) await run("dscl", [".", ...args]);
     log(`made the ${user.name} user`);
   }
 }
