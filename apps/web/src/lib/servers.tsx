@@ -31,6 +31,14 @@ export const keys = {
   apps: (server: string, id: string) => ["apps", server, id] as const,
   spend: (server: string, id: string) => ["spend", server, id] as const,
   bank: (server: string) => ["bank", server] as const,
+  appLinkPlugins: (server: string) => ["appLinkPlugins", server] as const,
+  appLinks: (server: string) => ["appLinks", server] as const,
+  /** How an attempt to link an app ended, once it has: an `app_link_settled` message. */
+  appLinkSettled: (server: string, attemptId: string) =>
+    ["appLinkSettled", server, attemptId] as const,
+  appLinkDescription: (server: string, linkId: string) =>
+    ["appLinkDescription", server, linkId] as const,
+  appGrants: (server: string, id: string) => ["appGrants", server, id] as const,
   cards: (server: string, id: string) => ["cards", server, id] as const,
   allowances: (server: string, id: string) => ["allowances", server, id] as const,
   borrow: (server: string, id: string) => ["borrow", server, id] as const,
@@ -335,6 +343,17 @@ export function applyLive(qc: QueryClient, server: string, m: LiveMessage): void
       return;
     case "bank_changed":
       void qc.invalidateQueries({ queryKey: keys.bank(server) });
+      return;
+    case "app_links_changed":
+      void qc.invalidateQueries({ queryKey: keys.appLinks(server) });
+      return;
+    case "app_link_settled":
+      qc.setQueryData(keys.appLinkSettled(server, m.attemptId), m);
+      void qc.invalidateQueries({ queryKey: keys.appLinks(server) });
+      return;
+    case "app_grants_changed":
+      // A sub-agent shows its host's, so every nibblet's are fetched again.
+      void qc.invalidateQueries({ queryKey: ["appGrants", server] });
       return;
     case "browser_borrow":
       qc.setQueryData(keys.borrow(server, m.borrow.nibbletId), m.borrow);
