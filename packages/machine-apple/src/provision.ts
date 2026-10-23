@@ -169,9 +169,10 @@ set -eu
 volume="/dev/$1"
 files="$2"
 mnt=$(mktemp -d /private/tmp/nibblet-macos.XXXXXX)
-diskutil mount -mountPoint "$mnt" "$volume" >/dev/null
-diskutil enableOwnership "$volume" >/dev/null
-trap 'diskutil unmount "$mnt" >/dev/null 2>&1 || true; rmdir "$mnt" 2>/dev/null || true' EXIT
+# Mounted straight, with its owners: Disk Arbitration turns down a mount of a
+# disk it's still looking at, and of one whose folder root made.
+mount_apfs "$volume" "$mnt"
+trap 'umount "$mnt" 2>/dev/null || true; rmdir "$mnt" 2>/dev/null || true' EXIT
 install -d -o root -g wheel -m 755 "$mnt/Library/Nibblets" "$mnt/Library/Nibblets/bin" "$mnt/Library/LaunchDaemons"
 install -o root -g wheel -m 755 "$files/bootstrap.sh" "$mnt/Library/Nibblets/bootstrap.sh"
 install -o root -g wheel -m 644 "$files/install.json" "$mnt/Library/Nibblets/install.json"
