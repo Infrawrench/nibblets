@@ -41,7 +41,7 @@ const log = (message: string) => console.log(`entry: ${message}`);
 
 /** PowerShell, with its parameters as JSON in the environment (`$p`), never in the script. */
 async function ps(script: string, params: object = {}): Promise<string> {
-  const full = `$ErrorActionPreference = 'Stop'\n$p = $env:NIBBLET_PS | ConvertFrom-Json\n${script}`;
+  const full = `$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n$p = $env:NIBBLET_PS | ConvertFrom-Json\n${script}`;
   const { stdout } = await run(
     "powershell.exe",
     [
@@ -293,6 +293,17 @@ $copy = Get-CimInstance Win32_ShadowCopy | Where-Object ID -eq $made.ShadowID
 "$($copy.ID)|$($copy.DeviceObject)"
 `;
 
+/** Ends every process of a user (`$p.user`, as `\name`), and waits for them to be gone. */
+const ENDED = `
+$deadline = (Get-Date).AddSeconds(30)
+do {
+  $left = @(Get-Process -IncludeUserName | Where-Object { $_.UserName -and $_.UserName.EndsWith($p.user) })
+  $left | Stop-Process -Force -ErrorAction SilentlyContinue
+  if ($left.Count) { Start-Sleep -Milliseconds 250 }
+} while ($left.Count -and (Get-Date) -lt $deadline)
+if ($left.Count) { throw "Its user's processes wouldn't end: $(($left.Name | Sort-Object -Unique) -join ', ')" }
+`;
+
 /** Shadows the home disk and links to it at SHADOW_LINK; says the shadow copy's id. */
 async function shadowHome(): Promise<string> {
   await run("cmd.exe", ["/d", "/c", "rmdir", SHADOW_LINK]).catch(() => undefined);
@@ -426,6 +437,10 @@ export const windows: EntryPlatform = {
   },
 
   async restoreHome() {
+    // Only ever of a nibblet that's stopped, in a VM booted for it; but the
+    // VM signed the agent's user in at boot, where Windows may have started
+    // Edge again, holding its profile's files. Everything it runs goes first.
+    await ps(ENDED, { user: "\\nibblet" });
     await ps(
       `Get-ChildItem -LiteralPath $p.home -Force | Where-Object Name -notin $p.keep | Remove-Item -Recurse -Force`,
       { home: HOME, keep: VOLUME_FOLDERS },
