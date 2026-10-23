@@ -1,6 +1,6 @@
 import type { AppGrant } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
-import { grantDraftChanged, grantDraftOf, ticked } from "./appLinks.ts";
+import { approvalPage, grantDraftChanged, grantDraftOf, ticked } from "./appLinks.ts";
 
 const grant: AppGrant = {
   nibbletId: "nib_1",
@@ -37,5 +37,34 @@ describe("a nibblet's grant form", () => {
     expect(ticked(["a"], "b", true)).toEqual(["a", "b"]);
     expect(ticked(["a", "b"], "a", false)).toEqual(["b"]);
     expect(ticked(["a"], "a", true)).toEqual(["a"]);
+  });
+});
+
+describe("the page to approve a link on", () => {
+  const attempt = {
+    id: "lna_1",
+    plugin: "infrawrench",
+    userCode: "ABCD-EFGH",
+    verificationUrl: "https://app.infrawrench.com/link-agents",
+    verificationUrlComplete: "https://app.infrawrench.com/link-agents?code=ABCD-EFGH",
+    expiresAt: "2026-10-23T10:15:00.000Z",
+  };
+
+  it("is the one with the code filled in, else the plain one", () => {
+    expect(approvalPage(attempt)).toBe(attempt.verificationUrlComplete);
+    expect(approvalPage({ ...attempt, verificationUrlComplete: null })).toBe(
+      attempt.verificationUrl,
+    );
+  });
+
+  it("is never anything but a web page", () => {
+    expect(approvalPage({ ...attempt, verificationUrlComplete: "javascript:alert(1)" })).toBeNull();
+    expect(
+      approvalPage({
+        ...attempt,
+        verificationUrl: "data:text/html,x",
+        verificationUrlComplete: null,
+      }),
+    ).toBeNull();
   });
 });

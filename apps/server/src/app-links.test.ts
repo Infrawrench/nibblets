@@ -25,6 +25,8 @@ function fakeApp() {
     agents: new Map<string, { externalId: string; scopes: string[]; revoked: boolean }>(),
     unlinked: 0,
     made: 0,
+    /** Where it sends the person to approve a link. */
+    page: "https://fake.example/link?code=ABCD-EFGH",
   };
   const reachable = (what = "link") => {
     if (app.down) throw new Error("connect ECONNREFUSED with secret iwl_x");
@@ -39,7 +41,7 @@ function fakeApp() {
         secret: "device-code",
         userCode: "ABCD-EFGH",
         verificationUrl: "https://fake.example/link",
-        verificationUrlComplete: "https://fake.example/link?code=ABCD-EFGH",
+        verificationUrlComplete: app.page,
         expiresAt: new Date(Date.now() + 900_000),
         interval: 5,
       };
@@ -98,7 +100,7 @@ function fakeApp() {
       reachable();
       return {
         account: "Acme Inc",
-        revoked: [...app.agents].filter(([, a]) => a.revoked).map(([ref]) => ref),
+        live: [...app.agents].filter(([, a]) => !a.revoked).map(([ref]) => ref),
       };
     },
     adopt: async (secret) => {
@@ -527,5 +529,81 @@ describe("adopting a link the app made itself", () => {
     expect(adopt).not.toHaveBeenCalled();
     await handlers.appLinks.adopt(input, { owner: true });
     expect(adopt).toHaveBeenCalledWith("fake", {}, "iwl_x");
+  });
+});
+
+describe("what review turned up", () => {
+  it("never offers a page to approve on that isn't a web address", async () => {
+    const t = setUp();
+    t.app.page = "javascript:alert(document.cookie)";
+    await expect(t.links.begin("fake", {})).rejects.toMatchObject({ code: "bad_request" });
+    expect((await t.links.list()).attempts).toEqual([]);
+  });
+
+  it("undoes an approved link it couldn't keep, rather than leave it in the app", async () => {
+    vi.useFakeTimers();
+    const t = setUp();
+    t.store.createAppLink = async () => {
+      throw new Error("database unavailable");
+    };
+    await t.links.begin("fake", {});
+    t.app.answer = "approved";
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(t.app.unlinked).toBe(1);
+    expect(t.messages).toContainEqual(expect.objectContaining({ outcome: "failed" }));
+    expect((await t.links.list()).attempts).toEqual([]);
+  });
+
+  it("doesn't keep a link whose attempt was cancelled while it waited its turn", async () => {
+    vi.useFakeTimers();
+    const t = setUp();
+    const attempt = await t.links.begin("fake", {});
+    // Something else holds the queue while the approval comes in.
+    let release = () => {};
+    const holding = t.links.adopt("fake", {}, "iwl_x");
+    const original = t.store.appLinks;
+    t.store.appLinks = () =>
+      new Promise((resolve) => {
+        release = () => {
+          t.store.appLinks = original;
+          resolve(original());
+        };
+      });
+    t.app.answer = "approved";
+    await vi.advanceTimersByTimeAsync(5_000);
+    t.links.cancel(attempt.id);
+    release();
+    await holding;
+    await vi.advanceTimersByTimeAsync(0);
+    const settled = t.messages.filter((m) => m.type === "app_link_settled");
+    expect(settled).toMatchObject([{ outcome: "cancelled" }]);
+    // The adopted link is the only one, and the cancelled one was undone in the app.
+    expect(t.store.links).toHaveLength(1);
+    expect(t.app.unlinked).toBe(1);
+  });
+
+  it("won't adopt a link that's being removed, nor restart its day of retries", async () => {
+    vi.useFakeTimers();
+    const t = setUp();
+    const linkId = await link(t);
+    t.app.down = true;
+    await t.links.remove(linkId);
+    const since = t.store.links[0]?.updatedAt.getTime();
+    vi.advanceTimersByTime(60_000);
+    await t.links.remove(linkId);
+    expect(t.store.links[0]?.updatedAt.getTime()).toBe(since);
+    t.app.down = false;
+    await expect(t.links.adopt("fake", {}, "iwl_x")).rejects.toMatchObject({ code: "conflict" });
+    expect(t.store.links[0]?.state).toBe("removing");
+  });
+
+  it("takes a grant the app no longer has to be revoked there", async () => {
+    vi.useFakeTimers();
+    const t = setUp();
+    const linkId = await link(t);
+    await t.links.setGrant("nib_1", linkId, ["read"], []);
+    t.app.agents.clear();
+    await t.links.sync();
+    expect(t.store.grants).toMatchObject([{ state: "revoked" }]);
   });
 });

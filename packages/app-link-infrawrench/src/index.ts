@@ -204,6 +204,19 @@ export function infrawrenchPlugin(
           },
         }),
       );
+      // The person is sent there, so it's Infrawrench's own page or nothing:
+      // never a `javascript:` URL, nor somewhere else.
+      const ours = (url: string) => {
+        try {
+          return new URL(url).origin === new URL(base).origin;
+        } catch {
+          return false;
+        }
+      };
+      const complete = started.verificationUrlComplete ?? null;
+      if (!ours(started.verificationUrl) || (complete !== null && !ours(complete))) {
+        throw new AppLinkError("Infrawrench sent a page to approve the link that isn't its own");
+      }
       return {
         secret: started.deviceCode,
         userCode: started.userCode,
@@ -215,23 +228,35 @@ export function infrawrenchPlugin(
     },
 
     async poll(start) {
-      let answer: z.infer<typeof Token>;
+      let raw: unknown;
       try {
-        answer = Token.parse(
-          await call("POST", "/api/agent-links/requests/token", {
-            body: { deviceCode: start.secret },
-          }),
-        );
+        raw = await call("POST", "/api/agent-links/requests/token", {
+          body: { deviceCode: start.secret },
+        });
       } catch (err) {
         if (err instanceof Refused && err.status === 429) return { status: "slow_down" };
         throw err;
       }
-      if (answer.status !== "approved") return { status: answer.status };
-      return {
-        status: "linked",
-        link: { ref: answer.link.id, secret: answer.credential },
-        account: account(answer.link),
-      };
+      const answer = Token.safeParse(raw);
+      if (answer.success && answer.data.status !== "approved")
+        return { status: answer.data.status };
+      if (answer.success && answer.data.status === "approved") {
+        return {
+          status: "linked",
+          link: { ref: answer.data.link.id, secret: answer.data.credential },
+          account: account(answer.data.link),
+        };
+      }
+      // Approved is answered once, so a credential in an answer that can't
+      // otherwise be read is undone now: asking again would only say it expired.
+      const credential = z.object({ credential: z.string().min(1) }).safeParse(raw);
+      if (credential.success) {
+        await call("DELETE", "/api/agent-link", { secret: credential.data.credential }).catch(
+          () => undefined,
+        );
+        throw new AppLinkError("Infrawrench's answer couldn't be read, so the link was undone");
+      }
+      throw answer.error;
     },
 
     async describe(link): Promise<AppLinkDescription> {
@@ -318,7 +343,7 @@ export function infrawrenchPlugin(
       const agents = z.array(Agent).parse(await asLink(link, "GET", "/api/agent-link/agents"));
       return {
         account: account(info),
-        revoked: agents.filter((a) => a.revokedAt).map((a) => a.id),
+        live: agents.filter((a) => !a.revokedAt).map((a) => a.id),
       };
     },
 

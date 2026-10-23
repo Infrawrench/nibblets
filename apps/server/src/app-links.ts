@@ -11,6 +11,7 @@ import { infrawrench } from "@nibblets/app-link-infrawrench";
 import type { appLinks, nibbletAppGrants } from "@nibblets/db";
 import {
   isReservedMcpName,
+  isWebUrl,
   RpcError,
   type AppGrant,
   type AppLink,
@@ -200,6 +201,14 @@ export class AppLinks {
     const start = await plugin.begin({ label }).catch((err: unknown) => {
       throw this.failure(factory.id, err);
     });
+    // The UI opens it, so whatever a plugin was told, it's a web page.
+    const complete = start.verificationUrlComplete;
+    if (!isWebUrl(start.verificationUrl) || (complete !== null && !isWebUrl(complete))) {
+      throw new RpcError(
+        "bad_request",
+        `${factory.name} sent a page to approve the link that isn't a web address`,
+      );
+    }
     const attempt: Attempt = {
       id: newId("lna"),
       factory,
@@ -255,10 +264,32 @@ export class AppLinks {
           this.settle(attempt, answer.status, null, null);
           return;
         case "linked": {
-          const id = await this.serially(() =>
-            this.keep(attempt.factory, attempt.settings, answer.link, answer.account),
-          );
-          this.settle(attempt, "linked", id, null);
+          const unwanted = () => void attempt.plugin.unlink(answer.link).catch(() => undefined);
+          let id: string | null;
+          try {
+            id = await this.serially(async () =>
+              // Cancelled while it waited its turn: not wanted after all.
+              this.attempts.get(attempt.id) === attempt
+                ? this.keep(attempt.factory, attempt.settings, answer.link, answer.account)
+                : null,
+            );
+          } catch (err) {
+            // Approved, but not kept: undone in the app, rather than left
+            // there with nothing here to revoke it.
+            this.log(`keeping ${attempt.factory.id}'s link: ${message(err)}`);
+            unwanted();
+            this.settle(
+              attempt,
+              "failed",
+              null,
+              err instanceof RpcError || err instanceof AppLinkError
+                ? err.message
+                : "Couldn't keep the link, so it was undone; the server's log has why",
+            );
+            return;
+          }
+          if (id === null) unwanted();
+          else this.settle(attempt, "linked", id, null);
           return;
         }
       }
@@ -310,6 +341,12 @@ export class AppLinks {
   ): Promise<string> {
     const links = await this.deps.store.appLinks();
     const known = links.find((l) => l.plugin === factory.id && l.ref === link.ref);
+    if (known?.state === "removing") {
+      throw new RpcError(
+        "conflict",
+        `That ${factory.name} link is being removed; try again once it's gone`,
+      );
+    }
     if (known) {
       await this.deps.store.updateAppLink(known.id, {
         secret: link.secret,
@@ -334,12 +371,14 @@ export class AppLinks {
     return row.id;
   }
 
+  /** Ends an attempt and says how. Once: an attempt that's already over is left alone. */
   private settle(
     attempt: Attempt,
     outcome: AppLinkOutcome,
     linkId: string | null,
     detail: string | null,
   ): void {
+    if (this.attempts.get(attempt.id) !== attempt) return;
     if (attempt.timer) clearTimeout(attempt.timer);
     this.attempts.delete(attempt.id);
     this.deps.publish({ type: "app_link_settled", attemptId: attempt.id, outcome, linkId, detail });
@@ -355,7 +394,8 @@ export class AppLinks {
     return this.serially(async () => {
       const link = await this.link(id);
       const grants = await this.deps.store.appGrants({ linkId: id });
-      if (!(await this.unlink(link))) {
+      // One already being removed keeps the time it started, which it's given up on a day after.
+      if (!(await this.unlink(link)) && link.state !== "removing") {
         await this.deps.store.updateAppLink(id, {
           state: "removing",
           detail: `Couldn't reach ${this.title(link)} to unlink it; trying again`,
@@ -613,9 +653,10 @@ export class AppLinks {
       await this.deps.store.updateAppLink(link.id, { account: seen.account });
       this.deps.publish({ type: "app_links_changed" });
     }
-    const revoked = new Set(seen.revoked);
+    // A grant the app no longer has live was revoked there, or never made.
+    const live = new Set(seen.live);
     for (const grant of await this.deps.store.appGrants({ linkId: link.id })) {
-      if (grant.state !== "active" || !revoked.has(grant.ref)) continue;
+      if (grant.state !== "active" || live.has(grant.ref)) continue;
       await this.deps.store.updateAppGrant(grant.nibbletId, grant.linkId, {
         state: "revoked",
         detail: `Revoked in ${this.title(link)}`,

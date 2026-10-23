@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Link2, Unlink } from "lucide-react";
 import type { AppLink, AppLinkAttempt, AppLinkKind, LiveMessage } from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
-import { outcomeText } from "../../lib/appLinks.ts";
+import { approvalPage, outcomeText } from "../../lib/appLinks.ts";
 import { keys } from "../../lib/servers.tsx";
 import { relativeTime } from "../../lib/time.ts";
 import { Button } from "../ui/Button.tsx";
@@ -96,9 +96,12 @@ function PluginRow({
     try {
       const attempt = await connection.client.appLinks.begin({ plugin: kind.id, settings });
       setLastAttempt(attempt.id);
-      if (tab) {
+      const page = approvalPage(attempt);
+      if (tab && page) {
         tab.opener = null;
-        tab.location.href = attempt.verificationUrlComplete ?? attempt.verificationUrl;
+        tab.location.href = page;
+      } else {
+        tab?.close();
       }
       void qc.invalidateQueries({ queryKey: keys.appLinks(connection.id) });
     } catch (err) {
@@ -164,7 +167,7 @@ function AttemptRow({
   kind: AppLinkKind;
   attempt: AppLinkAttempt;
 }) {
-  const url = attempt.verificationUrlComplete ?? attempt.verificationUrl;
+  const url = approvalPage(attempt);
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-line bg-deep px-2.5 py-2">
       <span className="text-xs text-dim">
@@ -172,15 +175,17 @@ function AttemptRow({
       </span>
       <span className="font-mono text-lg font-semibold tracking-widest">{attempt.userCode}</span>
       <div className="flex flex-wrap items-center gap-1.5">
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 text-xs text-accent hover:underline [&_svg]:size-3"
-        >
-          <ExternalLink />
-          Open {kind.name}
-        </a>
+        {url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-accent hover:underline [&_svg]:size-3"
+          >
+            <ExternalLink />
+            Open {kind.name}
+          </a>
+        ) : null}
         <span className="text-2xs text-faint">
           · waiting · the code runs out {relativeTime(attempt.expiresAt)}
         </span>
