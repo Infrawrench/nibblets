@@ -162,14 +162,17 @@ if [ ! -d "/Applications/Google Chrome.app" ]; then
   mv "$root/chrome.app" "/Applications/Google Chrome.app"
 fi
 # Its profile on the home disk, and nothing in the way when OpenComputerUse starts it.
-policies="/Library/Managed Preferences/com.google.Chrome"
+# Written as a file: cfprefsd won't write managed preferences itself.
+policies="/Library/Managed Preferences/com.google.Chrome.plist"
 mkdir -p "/Library/Managed Preferences"
-defaults write "$policies" UserDataDir -string /Users/nibblet/.browser
-defaults write "$policies" DefaultBrowserSettingEnabled -bool false
-defaults write "$policies" BackgroundModeEnabled -bool false
-defaults write "$policies" MetricsReportingEnabled -bool false
-defaults write "$policies" PromotionalTabsEnabled -bool false
-chmod 644 "$policies.plist"
+rm -f "$policies.new"
+plutil -create xml1 "$policies.new"
+plutil -insert UserDataDir -string /Users/nibblet/.browser "$policies.new"
+for policy in DefaultBrowserSettingEnabled BackgroundModeEnabled MetricsReportingEnabled PromotionalTabsEnabled; do
+  plutil -insert "$policy" -bool NO "$policies.new"
+done
+chmod 644 "$policies.new"
+mv -f "$policies.new" "$policies"
 
 if [ ! -x "$root/tailscale/tailscaled" ]; then
   say "Building Tailscale"
