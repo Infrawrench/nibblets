@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { kcpassword, pfRules, SUDOERS_RULES, userCommands, USERS } from "./macos.ts";
+import {
+  emptyHome,
+  kcpassword,
+  pfRules,
+  SUDOERS_RULES,
+  userCommands,
+  USERS,
+  VOLUME_FOLDERS,
+} from "./macos.ts";
 import { aclArgs, rangesExcept } from "./windows.ts";
 
 describe("Windows Firewall's ranges", () => {
@@ -109,5 +117,13 @@ describe("macOS's desktop", () => {
     );
     expect(SUDOERS_RULES).toContain('env_keep += "OCU_SERVE_TOKEN OCU_VIEW_TOKEN"');
     expect(SUDOERS_RULES).not.toContain("SETENV");
+  });
+});
+
+describe("macOS's home volume", () => {
+  it("is emptied for a restore around the volume's own folders, which root can't always touch", () => {
+    const command = emptyHome();
+    for (const folder of VOLUME_FOLDERS) expect(command).toContain(`! -name '${folder}'`);
+    expect(command).toContain("-maxdepth 1");
   });
 });

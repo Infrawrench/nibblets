@@ -431,6 +431,26 @@ async function leaveTailnet(): Promise<void> {
   if (child) await new Promise((resolve) => child.once("exit", resolve));
 }
 
+/**
+ * The home is a volume of its own, mounted over the home folder, so macOS's
+ * folders for the volume (Spotlight's, its events', its trash) are in it.
+ * They're the system's, which root can't always even read: never archived,
+ * and left where they are.
+ */
+export const VOLUME_FOLDERS = [
+  ".Spotlight-V100",
+  ".fseventsd",
+  ".Trashes",
+  ".TemporaryItems",
+  ".DocumentRevisions-V100",
+];
+
+/** The shell command that empties the home folder, but for the volume's own folders. */
+export function emptyHome(): string {
+  const keep = VOLUME_FOLDERS.map((f) => `! -name '${f}'`).join(" ");
+  return `find ${HOME} -mindepth 1 -maxdepth 1 ${keep} -exec rm -rf {} +`;
+}
+
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -539,13 +559,12 @@ export const macos: EntryPlatform = {
       path.dirname(HOME),
       "-czf",
       "-",
-      ...HOME_ARCHIVE_EXCLUDES.map((e) => `--exclude=${e}`),
+      ...[...HOME_ARCHIVE_EXCLUDES, ...VOLUME_FOLDERS.map((f) => `nibblet/${f}`)].map(
+        (e) => `--exclude=${e}`,
+      ),
       path.basename(HOME),
     ]),
 
   restoreHome: () =>
-    inherit("sh", [
-      "-c",
-      `find ${HOME} -mindepth 1 -delete && tar -C ${path.dirname(HOME)} -xzpf -`,
-    ]),
+    inherit("sh", ["-c", `${emptyHome()} && tar -C ${path.dirname(HOME)} -xzpf -`]),
 };
