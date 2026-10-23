@@ -1,18 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { BOOTSTRAP_SH, OCU_REQUIREMENT, OCU_SERVICES, tccSql } from "../src/provision.ts";
+import { BOOTSTRAP_SH, OCU_REQUIREMENT, tccSql } from "../src/provision.ts";
 
 describe("macOS guests' images", () => {
-  it("let OpenComputerUse see and drive windows, when its developer signed it", () => {
-    const sql = tccSql("fade0c00");
-    for (const service of OCU_SERVICES) {
-      expect(sql).toContain(`VALUES ('${service}', 'com.infrawrench.opencomputeruse', 0, 2,`);
-    }
-    expect(sql).toContain("X'fade0c00'");
+  it("give each app its permission for the code its developer signed alone", () => {
+    const sql = tccSql([
+      {
+        service: "kTCCServiceAccessibility",
+        client: "com.example.app",
+        clientType: 0,
+        csreq: "fade0c00",
+      },
+      {
+        service: "kTCCServiceSystemPolicyAllFiles",
+        client: "/opt/bin/node",
+        clientType: 1,
+        csreq: "fade0c01",
+      },
+    ]);
+    expect(sql).toContain(
+      "VALUES ('kTCCServiceAccessibility', 'com.example.app', 0, 2, 4, 1, X'fade0c00', 0);",
+    );
+    expect(sql).toContain("VALUES ('kTCCServiceSystemPolicyAllFiles', '/opt/bin/node', 1, 2,");
     expect(OCU_REQUIREMENT).toContain('certificate leaf[subject.OU] = "CS54L4CF2Z"');
   });
 
-  it("never put anything but a compiled requirement in their SQL", () => {
-    expect(() => tccSql("00'); DROP TABLE access; --")).toThrow();
+  it("never put anything but a compiled requirement, or a plain name, in their SQL", () => {
+    const row = { service: "kTCCServiceAccessibility", client: "a", clientType: 0 as const };
+    expect(() => tccSql([{ ...row, csreq: "00'); DROP TABLE access; --" }])).toThrow();
+    expect(() => tccSql([{ ...row, client: "a'); --", csreq: "00" }])).toThrow();
   });
 
   it("check the apps they download against their developers' signatures", () => {

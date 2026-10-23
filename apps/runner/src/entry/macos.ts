@@ -294,14 +294,57 @@ export function kcpassword(password: string): Buffer {
   return out;
 }
 
+/**
+ * The desktop's commands, which each get a minute: one that waits on
+ * something (dscl, for a password it can't ask for) mustn't hold up the
+ * nibblet for good.
+ */
+const quick = (cmd: string, args: string[]) => run(cmd, args, { timeout: 60_000 });
+
+/** Whether the agent's user has a password yet: dscl makes it with none. */
+async function hasPassword(): Promise<boolean> {
+  const authority = await quick("dscl", [
+    ".",
+    "-read",
+    "/Users/nibblet",
+    "AuthenticationAuthority",
+  ]).then(
+    (r) => r.stdout,
+    () => "",
+  );
+  return authority.includes(";ShadowHash;");
+}
+
 /** Who's signed in to the desktop, if anyone: the console's owner. */
 async function consoleUser(): Promise<string | null> {
-  const owner = await run("stat", ["-f", "%Su", "/dev/console"]).then(
+  const owner = await quick("stat", ["-f", "%Su", "/dev/console"]).then(
     (r) => r.stdout.trim(),
     () => "",
   );
   return owner && owner !== "root" ? owner : null;
 }
+
+/** Setup Assistant's first-login screens, as its preferences name them. */
+const SETUP_SCREENS = [
+  "DidSeeAccessibility",
+  "DidSeeActivationLock",
+  "DidSeeAppearanceSetup",
+  "DidSeeApplePaySetup",
+  "DidSeeAvatarSetup",
+  "DidSeeCloudSetup",
+  "DidSeeIntelligence",
+  "DidSeeLockdownMode",
+  "DidSeePrivacy",
+  "DidSeeScreenTime",
+  "DidSeeSiriSetup",
+  "DidSeeSyncSetup",
+  "DidSeeSyncSetup2",
+  "DidSeeTermsOfAddress",
+  "DidSeeTouchIDSetup",
+  "DidSeeTrueTonePrivacy",
+  "DidSeeWalletSetup",
+  "DidSeeiCloudLoginForStorageServices",
+];
 
 /**
  * The first-login screens that would stand in front of the desktop (an
@@ -310,34 +353,32 @@ async function consoleUser(): Promise<string | null> {
  */
 async function skipSetupScreens(version: string, build: string): Promise<void> {
   const prefs = path.join(HOME, "Library", "Preferences");
-  await mkdir(prefs, { recursive: true });
   const file = path.join(prefs, "com.apple.SetupAssistant.plist");
-  const seen = [
-    "DidSeeAccessibility",
-    "DidSeeActivationLock",
-    "DidSeeAppearanceSetup",
-    "DidSeeApplePaySetup",
-    "DidSeeAvatarSetup",
-    "DidSeeCloudSetup",
-    "DidSeeIntelligence",
-    "DidSeeLockdownMode",
-    "DidSeePrivacy",
-    "DidSeeScreenTime",
-    "DidSeeSiriSetup",
-    "DidSeeSyncSetup",
-    "DidSeeSyncSetup2",
-    "DidSeeTermsOfAddress",
-    "DidSeeTouchIDSetup",
-    "DidSeeTrueTonePrivacy",
-    "DidSeeWalletSetup",
-    "DidSeeiCloudLoginForStorageServices",
-  ];
-  for (const key of seen) await run("defaults", ["write", file, key, "-bool", "true"]);
+  const seenBuild = await quick("plutil", [
+    "-extract",
+    "LastSeenBuddyBuildVersion",
+    "raw",
+    "-o",
+    "-",
+    file,
+  ]).then(
+    (r) => r.stdout.trim(),
+    () => "",
+  );
+  if (seenBuild === build) return;
+  await mkdir(prefs, { recursive: true });
+  await chown(path.join(HOME, "Library"), AGENT_UID, AGENT_GID);
+  await chown(prefs, AGENT_UID, AGENT_GID);
+  // A file of plist, written as one: cfprefsd has nothing to do with it.
+  if (!(await exists(file))) await quick("plutil", ["-create", "xml1", file]);
+  const set = (key: string, type: "-bool" | "-string", value: string) =>
+    quick("plutil", ["-replace", key, type, value, file]);
+  for (const key of SETUP_SCREENS) await set(key, "-bool", "YES");
   for (const key of ["LastSeenCloudProductVersion", "LastSeenDiagnosticsProductVersion"])
-    await run("defaults", ["write", file, key, "-string", version]);
-  await run("defaults", ["write", file, "LastSeenBuddyBuildVersion", "-string", build]);
-  await run("defaults", ["write", file, "SkipFirstLoginOptimization", "-bool", "true"]);
-  await run("chown", ["-R", `${AGENT_UID}:${AGENT_GID}`, path.join(HOME, "Library")]);
+    await set(key, "-string", version);
+  await set("LastSeenBuddyBuildVersion", "-string", build);
+  await set("SkipFirstLoginOptimization", "-bool", "YES");
+  await chown(file, AGENT_UID, AGENT_GID);
 }
 
 /**
@@ -350,26 +391,27 @@ async function signIn(): Promise<void> {
   let password = (await readFile(LOGIN_SECRET, "utf8").catch(() => "")).trim();
   if (!password) {
     password = randomBytes(18).toString("base64url");
-    await run("dscl", [".", "-passwd", "/Users/nibblet", password]);
+    await quick("dscl", [".", "-passwd", "/Users/nibblet", password]);
     await writeFile(LOGIN_SECRET, password, { mode: 0o600 });
     await chown(LOGIN_SECRET, 0, 0);
     // A keychain from before is locked with a password that's gone.
     await rm(path.join(HOME, "Library", "Keychains"), { recursive: true, force: true });
-  } else {
-    // A new image's user hasn't one yet: the same as before, for its keychain.
-    await run("dscl", [".", "-passwd", "/Users/nibblet", password]);
+  } else if (!(await hasPassword())) {
+    // A new image's user: the same as before, for its keychain. Once it has
+    // one, it's left alone: signed in, macOS guards it with a secure token.
+    await quick("dscl", [".", "-passwd", "/Users/nibblet", password]);
   }
   const [version, build] = await Promise.all([
-    run("sw_vers", ["-productVersion"]).then((r) => r.stdout.trim()),
-    run("sw_vers", ["-buildVersion"]).then((r) => r.stdout.trim()),
+    quick("sw_vers", ["-productVersion"]).then((r) => r.stdout.trim()),
+    quick("sw_vers", ["-buildVersion"]).then((r) => r.stdout.trim()),
   ]);
   await skipSetupScreens(version, build);
   await writeFile("/private/etc/kcpassword", kcpassword(password), { mode: 0o600 });
   const loginwindow = "/Library/Preferences/com.apple.loginwindow";
-  await run("defaults", ["write", loginwindow, "autoLoginUser", "nibblet"]);
+  await quick("defaults", ["write", loginwindow, "autoLoginUser", "nibblet"]);
   try {
     // The login window starts again, and signs in as autoLoginUser.
-    await run("killall", ["loginwindow"]).catch(() => undefined);
+    await quick("killall", ["loginwindow"]).catch(() => undefined);
     const until = Date.now() + SIGN_IN_MS;
     while ((await consoleUser()) !== "nibblet") {
       if (Date.now() > until) throw new Error("its user didn't sign in to the desktop");
@@ -377,7 +419,7 @@ async function signIn(): Promise<void> {
     }
     log("signed in to the desktop");
   } finally {
-    await run("defaults", ["delete", loginwindow, "autoLoginUser"]).catch(() => undefined);
+    await quick("defaults", ["delete", loginwindow, "autoLoginUser"]).catch(() => undefined);
     await rm("/private/etc/kcpassword", { force: true });
   }
 }

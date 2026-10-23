@@ -8,11 +8,13 @@
 //   nibblet-vm macos-restore-url           the newest macOS this Mac can install
 //   nibblet-vm macos-install <bundle> <ipsw> <disk GB>
 //   nibblet-vm macos-identifier <path>     a new machine identifier, for a macOS VM of its own
-//   nibblet-vm guest-relay                 (in a macOS guest) its agent's port, on stdio
+//   nibblet-vm guest-relay [port]          (in a macOS guest) its agent's port, or another, on stdio
 //
 // `run` keeps its VM's agent port (a second virtio serial console, hvc1 in
 // a Linux guest, or for a macOS guest a vsock connection on port 1024) on
-// a unix socket, one client at a time, for the bridge to relay.
+// a unix socket, one client at a time, for the bridge to relay. A macOS
+// guest, which has no serial console, writes its agent's log to vsock port
+// 1025, which goes to the console's file as a Linux guest's console does.
 // SIGTERM asks the guest to shut down, and turns it off 30 seconds later
 // if it hasn't; SIGINT turns it off at once. It writes how things stand to
 // the spec's `state` file and exits when the VM stops.
@@ -46,6 +48,7 @@ struct VmSpec: Codable {
 }
 
 let agentVsockPort: UInt32 = 1024
+let consoleVsockPort: UInt32 = 1025
 
 let debugging = ProcessInfo.processInfo.environment["NIBBLET_VM_DEBUG"] != nil
 
@@ -195,6 +198,36 @@ final class VsockAgent: NSObject, VZVirtioSocketListenerDelegate {
   }
 }
 
+/** A macOS guest's console: what it writes to its console port, appended to the console's file. */
+final class VsockConsole: NSObject, VZVirtioSocketListenerDelegate {
+  let file: FileHandle?
+
+  init(path: String) {
+    file = FileHandle(forWritingAtPath: path)
+    file?.seekToEndOfFile()
+  }
+
+  func listener(
+    _ listener: VZVirtioSocketListener,
+    shouldAcceptNewConnection connection: VZVirtioSocketConnection,
+    from socketDevice: VZVirtioSocketDevice
+  ) -> Bool {
+    let fd = connection.fileDescriptor
+    let file = self.file
+    Thread.detachNewThread {
+      // Kept open until the guest closes it.
+      _ = connection
+      var buffer = [UInt8](repeating: 0, count: 65536)
+      while true {
+        let n = read(fd, &buffer, buffer.count)
+        if n <= 0 { break }
+        file?.write(Data(buffer[0..<n]))
+      }
+    }
+    return true
+  }
+}
+
 // The machine.
 
 func configuration(_ spec: VmSpec, agent: AgentSocket?) throws -> VZVirtualMachineConfiguration {
@@ -308,6 +341,7 @@ final class Runner: NSObject, VZVirtualMachineDelegate {
   let spec: VmSpec
   let machine: VZVirtualMachine
   let vsock: VsockAgent?
+  let console: VsockConsole
   var stopping = false
 
   init(spec: VmSpec, gui: Bool) throws {
@@ -316,12 +350,16 @@ final class Runner: NSObject, VZVirtualMachineDelegate {
     let config = try configuration(spec, agent: agent)
     machine = VZVirtualMachine(configuration: config)
     vsock = VsockAgent(agent: agent)
+    console = VsockConsole(path: spec.console)
     super.init()
     machine.delegate = self
     if let device = machine.socketDevices.first as? VZVirtioSocketDevice, let vsock {
       let listener = VZVirtioSocketListener()
       listener.delegate = vsock
       device.setSocketListener(listener, forPort: agentVsockPort)
+      let consoleListener = VZVirtioSocketListener()
+      consoleListener.delegate = console
+      device.setSocketListener(consoleListener, forPort: consoleVsockPort)
     }
     if gui { showWindow() }
   }
@@ -535,11 +573,11 @@ func pump(from: Int32, to: Int32) {
   }
 }
 
-func guestRelay() -> Never {
+func guestRelay(port: UInt32) -> Never {
   let fd = socket(40, SOCK_STREAM, 0)
   if fd < 0 { fail("no vsock in this guest: \(errno)") }
   // VMADDR_CID_HOST
-  var addr = SockaddrVm(port: agentVsockPort, cid: 2)
+  var addr = SockaddrVm(port: port, cid: 2)
   let size = socklen_t(MemoryLayout<SockaddrVm>.size)
   let connected = withUnsafePointer(to: &addr) {
     $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, size) }
@@ -565,7 +603,7 @@ case "run":
 case "macos-restore-url":
   restoreURL()
 case "guest-relay":
-  guestRelay()
+  guestRelay(port: args.count > 2 ? UInt32(args[2]) ?? agentVsockPort : agentVsockPort)
 case "macos-identifier":
   #if arch(arm64)
     guard args.count > 2 else { fail("usage: nibblet-vm macos-identifier <path>") }

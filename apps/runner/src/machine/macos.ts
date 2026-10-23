@@ -10,6 +10,8 @@ const HOME = "/Users/nibblet";
 const HOME_VOLUME = "Nibblet Home";
 /** The host's own VM helper, put in the guest when its image was made; its guest-relay is the port. */
 export const GUEST_RELAY = "/Library/Nibblets/bin/nibblet-vm";
+/** The vsock port the helper writes to the VM's console file: macOS guests have no serial console. */
+export const CONSOLE_PORT = 1025;
 const ENTRY = fileURLToPath(new URL("../entry.ts", import.meta.url));
 /** Where the agent's own lines go in the hosts file, so they're replaced, not added to. */
 const HOSTS_MARK = "# Nibblets";
@@ -110,6 +112,16 @@ export const macos: GuestPlugin = {
   async openPort(log) {
     log("talking to the host over vsock");
     return relayStream(GUEST_RELAY, ["guest-relay"]);
+  },
+
+  console() {
+    const child = spawn(GUEST_RELAY, ["guest-relay", String(CONSOLE_PORT)], {
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    // A console that's gone is a log that's lost, never a reason to stop.
+    child.on("error", () => {});
+    child.stdin.on("error", () => {});
+    return child.stdin;
   },
 
   entry(command, args) {

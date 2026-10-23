@@ -38,6 +38,10 @@ export const MACOS_OCU_VERSION = "0.11.1";
 /** Who signs what the bootstrap downloads: OpenComputerUse's developer, and Google. */
 export const OCU_REQUIREMENT =
   'identifier "com.infrawrench.opencomputeruse" and anchor apple generic and certificate leaf[subject.OU] = "CS54L4CF2Z"';
+/** The Node the bootstrap installs, nodejs.org's own build. */
+export const NODE = "/Library/Nibblets/node/bin/node";
+export const NODE_REQUIREMENT =
+  'identifier "node" and anchor apple generic and certificate leaf[subject.OU] = "HX7739G8FX"';
 const CHROME_REQUIREMENT =
   'identifier "com.google.Chrome" and anchor apple generic and certificate leaf[subject.OU] = "EQHXZ8M8AV"';
 
@@ -116,6 +120,8 @@ if [ ! -x "$root/node/bin/node" ]; then
   rm -rf "$root/node" && mkdir -p "$root/node"
   tar -xzf "$root/node.tgz" -C "$root/node" --strip-components 1
   rm -f "$root/node.tgz" "$root/node-sums.txt"
+  # Its Full Disk Access is for nodejs.org's own build alone.
+  codesign --verify -R='${NODE_REQUIREMENT}' "$root/node/bin/node"
 fi
 
 want="$repo@$ref"
@@ -245,19 +251,49 @@ async function compiledRequirement(requirement: string): Promise<string> {
   });
 }
 
-/**
- * OpenComputerUse's rows in the guest's privacy database: allowed, as
- * System Settings would have it, for the app its developer signed alone.
- */
-export function tccSql(csreqHex: string): string {
-  if (!/^[0-9a-f]+$/.test(csreqHex)) throw new Error("not a compiled requirement");
-  return `${OCU_SERVICES.map(
-    (service) =>
-      `INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, flags) VALUES ('${service}', 'com.infrawrench.opencomputeruse', 0, 2, 4, 1, X'${csreqHex}', 0);`,
-  ).join("\n")}\n`;
+/** One app's permission in the guest's privacy database: by bundle id (0), or by path (1). */
+interface TccRow {
+  service: string;
+  client: string;
+  clientType: 0 | 1;
+  /** Its code signing requirement, compiled, as hex: the permission is for the code it signs alone. */
+  csreq: string;
 }
 
-const tccRows = async () => tccSql(await compiledRequirement(OCU_REQUIREMENT));
+/** Rows for the guest's privacy database: allowed, as System Settings would have it. */
+export function tccSql(rows: readonly TccRow[]): string {
+  return rows
+    .map(({ service, client, clientType, csreq }) => {
+      if (!/^[0-9a-f]+$/.test(csreq)) throw new Error("not a compiled requirement");
+      if (!/^[\w./-]+$/.test(service) || !/^[\w./-]+$/.test(client))
+        throw new Error(`not a service or client: ${service} ${client}`);
+      return `INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, flags) VALUES ('${service}', '${client}', ${clientType}, 2, 4, 1, X'${csreq}', 0);\n`;
+    })
+    .join("");
+}
+
+/**
+ * OpenComputerUse may see and drive windows; the guest's Node, which runs
+ * its agent (and so the archives of its home), may read and write every
+ * file, as root can anywhere but macOS's privacy-fenced folders. The
+ * agent's user is still kept out of what isn't its own by the files'
+ * owners: those folders are in its own home.
+ */
+async function tccRows(): Promise<string> {
+  const [ocu, node] = await Promise.all([
+    compiledRequirement(OCU_REQUIREMENT),
+    compiledRequirement(NODE_REQUIREMENT),
+  ]);
+  return tccSql([
+    ...OCU_SERVICES.map((service) => ({
+      service,
+      client: "com.infrawrench.opencomputeruse",
+      clientType: 0 as const,
+      csreq: ocu,
+    })),
+    { service: "kTCCServiceSystemPolicyAllFiles", client: NODE, clientType: 1, csreq: node },
+  ]);
+}
 
 interface Boot {
   name: string;
