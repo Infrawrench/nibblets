@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { pfRules, userCommands, USERS } from "./macos.ts";
+import { userCommands, USERS } from "../machine/macos-desktop.ts";
+import { emptyHome, onlyFenced, pfRules, SUDOERS_RULES, VOLUME_FOLDERS } from "./macos.ts";
 import { aclArgs, rangesExcept } from "./windows.ts";
 
 describe("Windows Firewall's ranges", () => {
@@ -59,13 +60,81 @@ describe("macOS's firewall", () => {
   });
 });
 
+describe("macOS's tailnet fence", () => {
+  const rules = pfRules(null, null, { uid: 1200, ports: [3000] }).split("\n");
+
+  it("lets Tailscale's user reach only the shared ports on loopback", () => {
+    expect(rules).toContain(
+      "pass out quick on lo0 proto { tcp udp } to any port 3000 user 1200 keep state",
+    );
+    expect(rules.at(-2)).toBe("block return out quick on lo0 proto { tcp udp } all user 1200");
+  });
+
+  it("keeps state for everyone else's, so tailscaled's replies to the agent get through", () => {
+    expect(
+      rules.indexOf("pass out quick on lo0 proto { tcp udp } all user != 1200 keep state"),
+    ).toBe(1);
+  });
+
+  it("isn't there for a nibblet off the tailnet", () => {
+    expect(pfRules(null, null)).not.toContain("lo0");
+  });
+});
+
 describe("macOS's users", () => {
-  it("are hidden, with no password, and the uids the entry starts them as", () => {
+  it("are hidden, with no password to begin with, and the uids the entry starts them as", () => {
     const [agent] = USERS;
     if (!agent) throw new Error("no agent user");
     const commands = userCommands(agent);
     expect(commands).toContainEqual(["-create", "/Users/nibblet", "UniqueID", "1001"]);
     expect(commands).toContainEqual(["-create", "/Users/nibblet", "IsHidden", "1"]);
     expect(commands).toContainEqual(["-create", "/Users/nibblet", "Password", "*"]);
+    // macOS gives one itself, and turns down setting it.
+    expect(commands.some((c) => c.includes("GeneratedUID"))).toBe(false);
+  });
+
+  it("include Tailscale's own, with its uid", () => {
+    expect(USERS.map((u) => [u.name, u.uid])).toContainEqual(["_nibblettailscale", 1200]);
+  });
+});
+
+describe("macOS's desktop", () => {
+  it("lets the guard run only the session script as root, with only its tokens", () => {
+    expect(SUDOERS_RULES).toContain(
+      "_nibbletguard ALL = (root) NOPASSWD: /Library/Nibblets/bin/nibblet-session",
+    );
+    expect(SUDOERS_RULES).toContain('env_keep += "OCU_SERVE_TOKEN OCU_VIEW_TOKEN"');
+    expect(SUDOERS_RULES).not.toContain("SETENV");
+  });
+});
+
+describe("macOS's home volume", () => {
+  it("is emptied for a restore around the volume's own folders, which root can't always touch", () => {
+    const command = emptyHome();
+    for (const folder of VOLUME_FOLDERS) expect(command).toContain(`! -name '${folder}'`);
+    expect(command).toContain("-maxdepth 1");
+  });
+});
+
+describe("macOS's home archive", () => {
+  const fenced = "tar: Can't open `26A434-galvatron.bnnsir': Operation not permitted";
+
+  it("does without files macOS won't let root read or change", () => {
+    expect(
+      onlyFenced([
+        fenced,
+        "tar: nibblet/Library/ContainerManager: Couldn't visit directory: Operation not permitted",
+        "tar: nibblet/Library/Group Containers: Can't set permissions: Operation not permitted",
+        "tar: nibblet/Library/Containers/com.apple.printcenter.PrintCenterWidget/Data: Couldn't visit directory: Interrupted system call",
+        "tar: Error exit delayed from previous errors.",
+        "",
+      ]),
+    ).toBe(true);
+  });
+
+  it("fails for anything else tar says", () => {
+    expect(onlyFenced([fenced, "tar: Write error"])).toBe(false);
+    expect(onlyFenced(["tar: Error exit delayed from previous errors."])).toBe(false);
+    expect(onlyFenced(["tar: nibblet/x: Can't open: No such file or directory"])).toBe(false);
   });
 });

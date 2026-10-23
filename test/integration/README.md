@@ -36,15 +36,12 @@ Windows and macOS are installed first, through the API as Settings would:
 Windows from your ISO (an evaluation one from Microsoft does), and macOS
 from Apple's restore image, which is about 25 GB for macOS 26 and asks for an
 administrator's password in a window. Windows takes up to an hour; macOS
-needs about 55 GB free, and its download can take hours. macOS guests are
-off for now (a bridge offers them only with `NIBBLET_MACOS_GUESTS=1`): the
-test turns them on for its own bridge. They then
+needs about 55 GB free, and its download can take hours. They then
 install the runner from GitHub at this commit, so push it first, or set
 `NIBBLET_TEST_GUEST_REF` (and `NIBBLET_TEST_GUEST_REPO` for a fork).
 
 A Linux VM's first start makes its image from the runner image, which takes
-a few minutes and about 12 GB free. The browser test only runs where the
-guest has one (Linux, for now).
+a few minutes and about 12 GB free.
 
 For Podman, point `DOCKER_HOST` at its socket and set
 `NIBBLET_TEST_DOCKER_SOCKET` to it, with the images loaded into Podman.

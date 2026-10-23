@@ -23,6 +23,10 @@
  * then talk to. The pipe is where only an administrator can make one, so
  * nothing can pose as tailscaled for the key. The entry fences tailscaled
  * in with nibblet-fence (machine/windows/fence.cs) rather than a firewall.
+ *
+ * On macOS it's as on Linux, with tailscaled built from source by the
+ * image's bootstrap, its state on the system disk, and pf fencing in what
+ * its user may reach on loopback.
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -54,6 +58,13 @@ export const WINDOWS_TAILSCALE = {
   state: "C:\\ProgramData\\Nibblets\\tailscale",
   run: "C:\\ProgramData\\Nibblets\\tailscale-run",
 };
+/** macOS's Tailscale: built by the image's bootstrap, with its state on the system disk. */
+export const MACOS_TAILSCALE = {
+  dir: "/Library/Nibblets/tailscale",
+  tailscaled: "/Library/Nibblets/tailscale/tailscaled",
+  state: "/private/var/db/nibblets-tailscale",
+  run: TAILSCALE_RUN,
+};
 /** Windows' user for `tailscale`, which owns tailscaled. */
 export const TAILSCALE_USER = "nibblet-tailscale";
 
@@ -81,6 +92,17 @@ export function tailscaleHost(platform: NodeJS.Platform): TailscaleHost {
         args: [TAILSCALE_USER, path.win32.join(w.dir, "tailscale.exe")],
       },
       up: ["--unattended"],
+    };
+  }
+  if (platform === "darwin") {
+    const m = MACOS_TAILSCALE;
+    return {
+      state: m.state,
+      run: m.run,
+      socket: path.join(m.run, "tailscaled.sock"),
+      tailscaled: m.tailscaled,
+      cli: { command: path.join(m.dir, "tailscale"), args: [] },
+      up: [],
     };
   }
   return {

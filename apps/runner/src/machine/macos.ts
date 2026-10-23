@@ -1,16 +1,22 @@
 import { execFile, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { entryArgv, relayStream, type GuestPlugin } from "./guest.ts";
+import { prepareDesktop } from "./macos-desktop.ts";
 
 const run = promisify(execFile);
 const HOME = "/Users/nibblet";
 const HOME_VOLUME = "Nibblet Home";
 /** The host's own VM helper, put in the guest when its image was made; its guest-relay is the port. */
 export const GUEST_RELAY = "/Library/Nibblets/bin/nibblet-vm";
+/** The vsock port the helper writes to the VM's console file: macOS guests have no serial console. */
+export const CONSOLE_PORT = 1025;
 const ENTRY = fileURLToPath(new URL("../entry.ts", import.meta.url));
+/** OpenComputerUse, which the image's bootstrap installs: a guest without it has no desktop to sign in to. */
+const OCU_APP = "/Applications/OpenComputerUse.app";
 /** Where the agent's own lines go in the hosts file, so they're replaced, not added to. */
 const HOSTS_MARK = "# Nibblets";
 
@@ -105,11 +111,34 @@ export const macos: GuestPlugin = {
   async prepare(log) {
     await mountHome(log);
     await network();
+    if (!existsSync(OCU_APP)) {
+      log("there's no OpenComputerUse in this machine's image, so no desktop");
+      return;
+    }
+    try {
+      if ((await prepareDesktop(log)) === "restart") {
+        await sh("shutdown", ["-r", "now"]);
+        // Nothing more for this boot: the next one says hello.
+        await new Promise(() => {});
+      }
+    } catch (err) {
+      log(`couldn't set up the desktop: ${err instanceof Error ? err.message : String(err)}`);
+    }
   },
 
   async openPort(log) {
     log("talking to the host over vsock");
     return relayStream(GUEST_RELAY, ["guest-relay"]);
+  },
+
+  console() {
+    const child = spawn(GUEST_RELAY, ["guest-relay", String(CONSOLE_PORT)], {
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    // A console that's gone is a log that's lost, never a reason to stop.
+    child.on("error", () => {});
+    child.stdin.on("error", () => {});
+    return child.stdin;
   },
 
   entry(command, args) {

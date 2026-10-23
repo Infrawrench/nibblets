@@ -102,3 +102,14 @@ describe("Tailscale on Windows", () => {
     expect(linux.up).toEqual([]);
   });
 });
+
+describe("Tailscale on macOS", () => {
+  const host = tailscaleHost("darwin");
+
+  it("runs the image's own build, with its socket in its own folder and its state outside the home", () => {
+    expect(host.tailscaled).toBe("/Library/Nibblets/tailscale/tailscaled");
+    expect(host.cli.command).toBe("/Library/Nibblets/tailscale/tailscale");
+    expect(host.socket.startsWith(`${host.run}/`)).toBe(true);
+    expect(host.state.startsWith("/Users/")).toBe(false);
+  });
+});

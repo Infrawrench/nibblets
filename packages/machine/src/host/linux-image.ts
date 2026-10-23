@@ -109,7 +109,7 @@ cp "/usr/lib/systemd/boot/efi/systemd-boot$efi.efi" "/esp/EFI/BOOT/BOOT$efi_uppe
 cp "$R/boot/vmlinuz-$kver" /esp/vmlinuz
 cp "$R/boot/initrd.img-$kver" /esp/initrd.img
 printf 'default nibblet.conf\ntimeout 0\n' > /esp/loader/loader.conf
-printf 'title Nibblet\nlinux /vmlinuz\ninitrd /initrd.img\noptions root=PARTUUID=%s rw console=tty0 console=ttyS0,115200 console=hvc0 loglevel=4 systemd.gpt_auto=0%s\n' \
+printf 'title Nibblet\nlinux /vmlinuz\ninitrd /initrd.img\noptions root=PARTUUID=%s rw console=tty0 console=ttyS0,115200 console=hvc0 loglevel=4 systemd.gpt_auto=0 panic_on_oops=1 panic=10%s\n' \
   "${ROOT_UUID}" "$extra" > /esp/loader/entries/nibblet.conf
 esp_mb=$(( $(du -sm /esp | cut -f1) + 64 ))
 truncate -s "${"${esp_mb}"}M" /esp.img

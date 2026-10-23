@@ -31,16 +31,15 @@ export interface HypervisorMeta {
 
 /**
  * What a virtual machine can do, by guest. Linux guests run the runner
- * image itself, so they have its browser and Tailscale. Windows guests
- * have a browser (Edge) and a desktop, on the session they sign in to at
- * boot, and Tailscale; macOS guests have neither yet. None share the
- * host's SSH agent, and a VM's size is fixed while it runs.
+ * image itself, so they have its browser and Tailscale. Windows and macOS
+ * guests have a browser (Edge, and Chrome) and a desktop, on the session
+ * their agent's user signs in to, and Tailscale. None share the host's SSH
+ * agent, and a VM's size is fixed while it runs.
  */
-export function vmCapabilities(guest: GuestOs): MachineCapabilities {
-  const linux = guest === "linux";
+export function vmCapabilities(_guest: GuestOs): MachineCapabilities {
   return {
-    browser: linux || guest === "windows",
-    tailscale: linux || guest === "windows",
+    browser: true,
+    tailscale: true,
     sshAgent: false,
     liveResources: false,
     localSignIn: false,
