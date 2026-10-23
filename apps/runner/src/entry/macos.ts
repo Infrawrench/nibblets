@@ -270,42 +270,31 @@ export const VOLUME_FOLDERS = [
 ];
 
 /**
- * What tar says of a file macOS won't let even root read, Full Disk Access
- * and all (the system's own caches, in a signed-in user's Library), and of
- * its having carried on past one.
+ * What tar says of a file macOS won't let even root read or change, Full
+ * Disk Access and all (the system's own caches, in a signed-in user's
+ * Library), and of its having carried on past one. Root gets "Operation
+ * not permitted" from nothing else.
  */
-const FENCED =
-  /: (Can't open|Couldn't visit directory|Couldn't list extended attributes)\b.*: Operation not permitted$/;
+const FENCED = /: Operation not permitted$/;
 const CARRIED_ON = /^tar: Error exit delayed from previous errors\.$/;
 
-/** Whether tar's complaints were only of files macOS fences off, which an archive does without. */
+/** Whether tar's complaints were only of files macOS fences off, which a home does without. */
 export function onlyFenced(said: readonly string[]): boolean {
   const errors = said.filter((line) => line.trim() && !CARRIED_ON.test(line));
   return errors.length > 0 && errors.every((line) => FENCED.test(line));
 }
 
 /**
- * The home folder as a gzipped tar on stdout. A file macOS won't let root
- * read is said and left out, rather than failing the archive: they're the
- * system's (Apple's model caches, say), not the agent's.
+ * tar, with what it says passed on, carrying on past what macOS fences off:
+ * those are the system's files (Apple's model caches, say), not the agent's.
  */
-function archiveHome(): Promise<void> {
+function fencedTar(args: string[], stdio: "in" | "out"): Promise<void> {
   return new Promise((resolve, reject) => {
-    const excludes = [...HOME_ARCHIVE_EXCLUDES, ...VOLUME_FOLDERS.map((f) => `nibblet/${f}`)];
-    const tar = spawn(
-      "tar",
-      [
-        "-C",
-        path.dirname(HOME),
-        "-czf",
-        "-",
-        ...excludes.map((e) => `--exclude=${e}`),
-        path.basename(HOME),
-      ],
-      { stdio: ["ignore", "inherit", "pipe"] },
-    );
+    const tar = spawn("tar", args, {
+      stdio: stdio === "out" ? ["ignore", "inherit", "pipe"] : ["inherit", "ignore", "pipe"],
+    });
     let said = "";
-    tar.stderr.on("data", (chunk: Buffer) => {
+    tar.stderr?.on("data", (chunk: Buffer) => {
       said += chunk.toString("utf8");
       process.stderr.write(chunk);
     });
@@ -314,14 +303,50 @@ function archiveHome(): Promise<void> {
       if (code === 0) return resolve();
       const lines = said.split("\n");
       if (code === 1 && onlyFenced(lines)) {
-        console.error(
-          `entry: left out what macOS won't let root read (${lines.filter((l) => FENCED.test(l)).length})`,
-        );
+        const fenced = lines.filter((line) => FENCED.test(line)).length;
+        console.error(`entry: passed over what macOS won't let root touch (${fenced})`);
         return resolve();
       }
       reject(new Error(`tar exited ${code}`));
     });
   });
+}
+
+/** The home folder as a gzipped tar on stdout, without its caches or the volume's own folders. */
+function archiveHome(): Promise<void> {
+  const excludes = [...HOME_ARCHIVE_EXCLUDES, ...VOLUME_FOLDERS.map((f) => `nibblet/${f}`)];
+  return fencedTar(
+    [
+      "-C",
+      path.dirname(HOME),
+      "-czf",
+      "-",
+      ...excludes.map((e) => `--exclude=${e}`),
+      path.basename(HOME),
+    ],
+    "out",
+  );
+}
+
+/**
+ * Empties the home folder and unpacks one from stdin over it. Only ever of
+ * a nibblet that's stopped, in a VM booted for it; but the VM signed the
+ * agent's user in to the desktop at boot, whose session is ended first, so
+ * nothing writes to its Library meanwhile. What can't be emptied is what
+ * macOS won't let root touch, which no archive has either.
+ */
+async function restoreHome(): Promise<void> {
+  await run("pkill", ["-KILL", "-u", "nibblet"]).catch(() => undefined);
+  for (let i = 0; i < 40; i++) {
+    const left = await run("pgrep", ["-u", "nibblet"]).then(
+      () => true,
+      () => false,
+    );
+    if (!left) break;
+    await sleep(250);
+  }
+  await inherit("sh", ["-c", `${emptyHome()} || true`]);
+  await fencedTar(["-C", path.dirname(HOME), "-xzpf", "-"], "in");
 }
 
 /** The shell command that empties the home folder, but for the volume's own folders. */
@@ -436,7 +461,5 @@ export const macos: EntryPlatform = {
 
   archiveHome,
 
-  // What it can't empty is what macOS won't let root touch, which no archive has either.
-  restoreHome: () =>
-    inherit("sh", ["-c", `{ ${emptyHome()} || true; } && tar -C ${path.dirname(HOME)} -xzpf -`]),
+  restoreHome,
 };

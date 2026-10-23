@@ -119,11 +119,12 @@ describe("macOS's home volume", () => {
 describe("macOS's home archive", () => {
   const fenced = "tar: Can't open `26A434-galvatron.bnnsir': Operation not permitted";
 
-  it("does without files macOS won't let root read", () => {
+  it("does without files macOS won't let root read or change", () => {
     expect(
       onlyFenced([
         fenced,
         "tar: nibblet/Library/ContainerManager: Couldn't visit directory: Operation not permitted",
+        "tar: nibblet/Library/Group Containers: Can't set permissions: Operation not permitted",
         "tar: Error exit delayed from previous errors.",
         "",
       ]),

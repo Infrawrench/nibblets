@@ -281,10 +281,10 @@ export async function prepareDesktop(log: (message: string) => void): Promise<"r
   await users(log);
   // Before its first sign-in, which would show them otherwise.
   await skipSetupScreens();
-  const secret = await password();
+  // Signing in on: the login window has the password, which isn't needed again.
   if ((await consoleUser()) === USER || (await signsIn())) return "ready";
   log("turning on signing in to the desktop, then restarting");
-  await turnOnSigningIn(secret);
+  await turnOnSigningIn(await password());
   return "restart";
 }
 
