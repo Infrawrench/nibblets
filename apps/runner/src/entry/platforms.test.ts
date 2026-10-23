@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { userCommands, USERS } from "../machine/macos-desktop.ts";
-import { emptyHome, pfRules, SUDOERS_RULES, VOLUME_FOLDERS } from "./macos.ts";
+import { emptyHome, onlyFenced, pfRules, SUDOERS_RULES, VOLUME_FOLDERS } from "./macos.ts";
 import { aclArgs, rangesExcept } from "./windows.ts";
 
 describe("Windows Firewall's ranges", () => {
@@ -113,5 +113,26 @@ describe("macOS's home volume", () => {
     const command = emptyHome();
     for (const folder of VOLUME_FOLDERS) expect(command).toContain(`! -name '${folder}'`);
     expect(command).toContain("-maxdepth 1");
+  });
+});
+
+describe("macOS's home archive", () => {
+  const fenced = "tar: Can't open `26A434-galvatron.bnnsir': Operation not permitted";
+
+  it("does without files macOS won't let root read", () => {
+    expect(
+      onlyFenced([
+        fenced,
+        "tar: nibblet/Library/ContainerManager: Couldn't visit directory: Operation not permitted",
+        "tar: Error exit delayed from previous errors.",
+        "",
+      ]),
+    ).toBe(true);
+  });
+
+  it("fails for anything else tar says", () => {
+    expect(onlyFenced([fenced, "tar: Write error"])).toBe(false);
+    expect(onlyFenced(["tar: Error exit delayed from previous errors."])).toBe(false);
+    expect(onlyFenced(["tar: nibblet/x: Can't open: No such file or directory"])).toBe(false);
   });
 });

@@ -269,6 +269,61 @@ export const VOLUME_FOLDERS = [
   ".DocumentRevisions-V100",
 ];
 
+/**
+ * What tar says of a file macOS won't let even root read, Full Disk Access
+ * and all (the system's own caches, in a signed-in user's Library), and of
+ * its having carried on past one.
+ */
+const FENCED =
+  /: (Can't open|Couldn't visit directory|Couldn't list extended attributes)\b.*: Operation not permitted$/;
+const CARRIED_ON = /^tar: Error exit delayed from previous errors\.$/;
+
+/** Whether tar's complaints were only of files macOS fences off, which an archive does without. */
+export function onlyFenced(said: readonly string[]): boolean {
+  const errors = said.filter((line) => line.trim() && !CARRIED_ON.test(line));
+  return errors.length > 0 && errors.every((line) => FENCED.test(line));
+}
+
+/**
+ * The home folder as a gzipped tar on stdout. A file macOS won't let root
+ * read is said and left out, rather than failing the archive: they're the
+ * system's (Apple's model caches, say), not the agent's.
+ */
+function archiveHome(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const excludes = [...HOME_ARCHIVE_EXCLUDES, ...VOLUME_FOLDERS.map((f) => `nibblet/${f}`)];
+    const tar = spawn(
+      "tar",
+      [
+        "-C",
+        path.dirname(HOME),
+        "-czf",
+        "-",
+        ...excludes.map((e) => `--exclude=${e}`),
+        path.basename(HOME),
+      ],
+      { stdio: ["ignore", "inherit", "pipe"] },
+    );
+    let said = "";
+    tar.stderr.on("data", (chunk: Buffer) => {
+      said += chunk.toString("utf8");
+      process.stderr.write(chunk);
+    });
+    tar.once("error", reject);
+    tar.once("close", (code) => {
+      if (code === 0) return resolve();
+      const lines = said.split("\n");
+      if (code === 1 && onlyFenced(lines)) {
+        console.error(
+          `entry: left out what macOS won't let root read (${lines.filter((l) => FENCED.test(l)).length})`,
+        );
+        return resolve();
+      }
+      reject(new Error(`tar exited ${code}`));
+    });
+  });
+}
+
 /** The shell command that empties the home folder, but for the volume's own folders. */
 export function emptyHome(): string {
   const keep = VOLUME_FOLDERS.map((f) => `! -name '${f}'`).join(" ");
@@ -379,18 +434,9 @@ export const macos: EntryPlatform = {
     if (alive(pid)) process.kill(pid, "SIGKILL");
   },
 
-  archiveHome: () =>
-    inherit("tar", [
-      "-C",
-      path.dirname(HOME),
-      "-czf",
-      "-",
-      ...[...HOME_ARCHIVE_EXCLUDES, ...VOLUME_FOLDERS.map((f) => `nibblet/${f}`)].map(
-        (e) => `--exclude=${e}`,
-      ),
-      path.basename(HOME),
-    ]),
+  archiveHome,
 
+  // What it can't empty is what macOS won't let root touch, which no archive has either.
   restoreHome: () =>
-    inherit("sh", ["-c", `${emptyHome()} && tar -C ${path.dirname(HOME)} -xzpf -`]),
+    inherit("sh", ["-c", `{ ${emptyHome()} || true; } && tar -C ${path.dirname(HOME)} -xzpf -`]),
 };
