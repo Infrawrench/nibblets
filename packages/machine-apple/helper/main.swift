@@ -9,6 +9,7 @@
 //   nibblet-vm macos-install <bundle> <ipsw> <disk GB>
 //   nibblet-vm macos-identifier <path>     a new machine identifier, for a macOS VM of its own
 //   nibblet-vm guest-relay [port]          (in a macOS guest) its agent's port, or another, on stdio
+//   nibblet-vm disclaim <path> [args…]     (in a macOS guest) runs it answering for itself to privacy checks
 //
 // `run` keeps its VM's agent port (a second virtio serial console, hvc1 in
 // a Linux guest, or for a macOS guest a vsock connection on port 1024) on
@@ -118,14 +119,7 @@ final class AgentSocket: @unchecked Sendable {
     let fd = client
     lock.unlock()
     if fd < 0 { return }
-    data.withUnsafeBytes { raw in
-      var at = 0
-      while at < raw.count {
-        let n = write(fd, raw.baseAddress!.advanced(by: at), raw.count - at)
-        if n <= 0 { break }
-        at += n
-      }
-    }
+    writeAll(fd, data)
   }
 
   private func acceptLoop() {
@@ -160,6 +154,42 @@ final class AgentSocket: @unchecked Sendable {
   }
 }
 
+/**
+ * Writes all of it to a descriptor that may not be blocking (a vsock
+ * connection's): waits for room rather than dropping what doesn't fit,
+ * which a stream can't do without. False when the other end's gone.
+ */
+@discardableResult
+func writeAll(_ fd: Int32, _ data: Data) -> Bool {
+  data.withUnsafeBytes { raw -> Bool in
+    var at = 0
+    while at < raw.count {
+      let n = write(fd, raw.baseAddress!.advanced(by: at), raw.count - at)
+      if n > 0 {
+        at += n
+      } else if n < 0 && (errno == EAGAIN || errno == EINTR) {
+        var waiting = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        _ = poll(&waiting, 1, 1000)
+      } else {
+        debug("write: \(errno)")
+        return false
+      }
+    }
+    return true
+  }
+}
+
+/** Reads what's there from a descriptor that may not be blocking, waiting for some; 0 at its end. */
+func readSome(_ fd: Int32, _ buffer: inout [UInt8]) -> Int {
+  while true {
+    let n = read(fd, &buffer, buffer.count)
+    if n >= 0 { return n }
+    if errno != EAGAIN && errno != EINTR { return 0 }
+    var waiting = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+    _ = poll(&waiting, 1, 1000)
+  }
+}
+
 final class VsockAgent: NSObject, VZVirtioSocketListenerDelegate {
   let agent: AgentSocket
   var connection: VZVirtioSocketConnection?
@@ -176,20 +206,11 @@ final class VsockAgent: NSObject, VZVirtioSocketListenerDelegate {
     self.connection = connection
     let fd = connection.fileDescriptor
     let agent = self.agent
-    agent.setGuest { data in
-      data.withUnsafeBytes { raw in
-        var at = 0
-        while at < raw.count {
-          let n = write(fd, raw.baseAddress!.advanced(by: at), raw.count - at)
-          if n <= 0 { break }
-          at += n
-        }
-      }
-    }
+    agent.setGuest { data in writeAll(fd, data) }
     Thread.detachNewThread {
       var buffer = [UInt8](repeating: 0, count: 65536)
       while true {
-        let n = read(fd, &buffer, buffer.count)
+        let n = readSome(fd, &buffer)
         if n <= 0 { break }
         agent.fromGuest(Data(buffer[0..<n]))
       }
@@ -219,7 +240,7 @@ final class VsockConsole: NSObject, VZVirtioSocketListenerDelegate {
       _ = connection
       var buffer = [UInt8](repeating: 0, count: 65536)
       while true {
-        let n = read(fd, &buffer, buffer.count)
+        let n = readSome(fd, &buffer)
         if n <= 0 { break }
         file?.write(Data(buffer[0..<n]))
       }
@@ -562,14 +583,8 @@ struct SockaddrVm {
 func pump(from: Int32, to: Int32) {
   var buffer = [UInt8](repeating: 0, count: 65536)
   while true {
-    let n = read(from, &buffer, buffer.count)
-    if n <= 0 { exit(0) }
-    var at = 0
-    while at < n {
-      let w = buffer.withUnsafeBytes { write(to, $0.baseAddress!.advanced(by: at), n - at) }
-      if w <= 0 { exit(0) }
-      at += w
-    }
+    let n = readSome(from, &buffer)
+    if n <= 0 || !writeAll(to, Data(buffer[0..<n])) { exit(0) }
   }
 }
 
@@ -588,6 +603,40 @@ func guestRelay(port: UInt32) -> Never {
   exit(0)
 }
 
+// In a macOS guest: a program run so that macOS's privacy checks (TCC)
+// are of it, not of whatever started it. By default they're of the process
+// that's responsible for it, which for anything the guest agent starts is
+// the agent's Node; OpenComputerUse's permissions are its own.
+
+@_silgen_name("responsibility_spawnattrs_setdisclaim")
+func responsibility_spawnattrs_setdisclaim(
+  _ attrs: UnsafeMutablePointer<posix_spawnattr_t?>, _ disclaim: Int32
+) -> Int32
+
+/** The child, for the signal handlers, which can't capture anything. */
+var disclaimedChild: pid_t = 0
+
+func disclaim(_ argv: [String]) -> Never {
+  guard let path = argv.first else { fail("usage: nibblet-vm disclaim <path> [args…]") }
+  var attrs: posix_spawnattr_t?
+  posix_spawnattr_init(&attrs)
+  if responsibility_spawnattrs_setdisclaim(&attrs, 1) != 0 { fail("can't disclaim responsibility") }
+  var cargs = argv.map { strdup($0) }
+  cargs.append(nil)
+  var pid: pid_t = 0
+  let spawned = posix_spawn(&pid, path, nil, &attrs, cargs, environ)
+  if spawned != 0 { fail("couldn't start \(path): \(spawned)") }
+  disclaimedChild = pid
+  // Asked to stop, it stops: the signal goes on to it.
+  for sig in [SIGTERM, SIGINT, SIGHUP] {
+    signal(sig) { s in kill(disclaimedChild, s) }
+  }
+  var status: Int32 = 0
+  while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
+  let signalled = status & 0x7f
+  exit(signalled == 0 ? (status >> 8) & 0xff : 128 + signalled)
+}
+
 let args = CommandLine.arguments
 switch args.count > 1 ? args[1] : "" {
 case "check":
@@ -602,6 +651,8 @@ case "run":
   run(args[2], gui: args.contains("--gui"))
 case "macos-restore-url":
   restoreURL()
+case "disclaim":
+  disclaim(Array(args.dropFirst(2)))
 case "guest-relay":
   guestRelay(port: args.count > 2 ? UInt32(args[2]) ?? agentVsockPort : agentVsockPort)
 case "macos-identifier":

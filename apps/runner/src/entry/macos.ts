@@ -51,6 +51,8 @@ export const OCU_APP = "/Applications/OpenComputerUse.app";
 /** Starts OpenComputerUse in the agent's desktop session, as the agent's user. */
 export const SESSION_SCRIPT = path.join(NIBBLETS, "bin", "nibblet-session");
 const SUDOERS = "/private/etc/sudoers.d/nibblets";
+/** The host's VM helper, put in the image, which runs a program answering for itself to TCC. */
+const DISCLAIM = `${path.join(NIBBLETS, "bin", "nibblet-vm")} disclaim`;
 
 const log = (message: string) => console.log(`entry: ${message}`);
 
@@ -180,13 +182,15 @@ async function folders(): Promise<void> {
  * The session script, and what lets the guard run it: as root, through
  * sudo, which hands on only OpenComputerUse's two tokens. It starts
  * OpenComputerUse in the agent's desktop session (launchctl asuser), as
- * the agent's user, with nothing else of its caller's.
+ * the agent's user, with nothing else of its caller's, and answering for
+ * itself to macOS's privacy checks (the image's helper's disclaim): they'd
+ * be of the guest agent's Node otherwise, which hasn't its permissions.
  */
 export const SESSION_SH = `#!/bin/sh
 set -eu
 uid=$(/usr/bin/id -u nibblet)
 cd /Users/nibblet/work
-exec /bin/launchctl asuser "$uid" /usr/bin/sudo -n -H -u nibblet \\
+exec ${DISCLAIM} /bin/launchctl asuser "$uid" /usr/bin/sudo -n -H -u nibblet \\
   --preserve-env=OCU_SERVE_TOKEN,OCU_VIEW_TOKEN \\
   ${OCU_APP}/Contents/MacOS/opencomputeruse "$@"
 `;
@@ -312,11 +316,21 @@ function fencedTar(args: string[], stdio: "in" | "out"): Promise<void> {
   });
 }
 
-/** The home folder as a gzipped tar on stdout, without its caches or the volume's own folders. */
+/**
+ * The home folder as a gzipped tar on stdout, without its caches or the
+ * volume's own folders, and without macOS's own metadata (extended
+ * attributes, ACLs and flags), as GNU tar leaves them out on Linux: macOS's
+ * tar writes a big one (an app's cache's resource fork) as a header too big
+ * for it to read back.
+ */
 function archiveHome(): Promise<void> {
   const excludes = [...HOME_ARCHIVE_EXCLUDES, ...VOLUME_FOLDERS.map((f) => `nibblet/${f}`)];
   return fencedTar(
     [
+      "--no-mac-metadata",
+      "--no-xattrs",
+      "--no-acls",
+      "--no-fflags",
       "-C",
       path.dirname(HOME),
       "-czf",
@@ -336,6 +350,9 @@ function archiveHome(): Promise<void> {
  * macOS won't let root touch, which no archive has either.
  */
 async function restoreHome(): Promise<void> {
+  // Signed out (launchd would start its agents again), then whatever's left.
+  await run("launchctl", ["bootout", `gui/${AGENT_UID}`]).catch(() => undefined);
+  await run("launchctl", ["bootout", `user/${AGENT_UID}`]).catch(() => undefined);
   await run("pkill", ["-KILL", "-u", "nibblet"]).catch(() => undefined);
   for (let i = 0; i < 40; i++) {
     const left = await run("pgrep", ["-u", "nibblet"]).then(
