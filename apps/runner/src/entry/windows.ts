@@ -268,6 +268,60 @@ function alive(pid: number): boolean {
 }
 
 /**
+ * The home disk's own folders, at its root, as the home is mounted there:
+ * Windows', which a shadow copy keeps its own storage in. Never archived,
+ * and left where they are.
+ */
+export const VOLUME_FOLDERS = ["System Volume Information", "$RECYCLE.BIN"];
+
+/** Where an archive reads its home's shadow copy from: a link named as the home is, the guard's alone. */
+const SHADOW_LINK = win.join(NIBBLETS_DATA, "shadow", win.basename(HOME));
+
+/**
+ * A shadow copy of the home disk, which an archive reads rather than the
+ * home itself, as a frozen disk is on Linux: what's open (Edge holds its
+ * profile's files to itself) is read as it was, and nothing's caught
+ * half-written. Any left by an archive that was killed go first.
+ */
+const SHADOW = `
+$part = Get-Partition | Where-Object { $_.AccessPaths -contains ($p.home + '\\') }
+$vol = (Get-Volume -Partition $part).Path
+Get-CimInstance Win32_ShadowCopy | Where-Object VolumeName -eq $vol | Remove-CimInstance
+$made = Invoke-CimMethod -ClassName Win32_ShadowCopy -MethodName Create -Arguments @{ Volume = $vol; Context = 'ClientAccessible' }
+if ($made.ReturnValue -ne 0) { throw "Windows wouldn't shadow its home disk ($($made.ReturnValue))" }
+$copy = Get-CimInstance Win32_ShadowCopy | Where-Object ID -eq $made.ShadowID
+"$($copy.ID)|$($copy.DeviceObject)"
+`;
+
+/** Shadows the home disk and links to it at SHADOW_LINK; says the shadow copy's id. */
+async function shadowHome(): Promise<string> {
+  await run("cmd.exe", ["/d", "/c", "rmdir", SHADOW_LINK]).catch(() => undefined);
+  await ownedDir(win.dirname(SHADOW_LINK), "guard");
+  const said = (await ps(SHADOW, { home: HOME })).trim().split(/\r?\n/).pop() ?? "";
+  const [id = "", device = ""] = said.split("|");
+  try {
+    // Linked to with a trailing backslash, or it isn't a folder.
+    await run("cmd.exe", ["/d", "/c", "mklink", "/d", SHADOW_LINK, `${device}\\`]);
+  } catch (err) {
+    await dropShadow(id);
+    throw err;
+  }
+  return id;
+}
+
+async function dropShadow(id: string): Promise<void> {
+  // rmdir takes the link away, not what it's to.
+  await run("cmd.exe", ["/d", "/c", "rmdir", SHADOW_LINK]).catch(() => undefined);
+  await ps(`Get-CimInstance Win32_ShadowCopy | Where-Object ID -eq $p.id | Remove-CimInstance`, {
+    id,
+  }).catch((err: unknown) => {
+    // On stderr: stdout's the archive. The next archive drops it.
+    const why = err instanceof Error ? err.message : String(err);
+    console.error(`entry: couldn't drop its home's shadow copy: ${why}`);
+  });
+}
+
+/**
  * Windows' own licensing service, as slmgr uses it: the key goes to it in
  * the environment, never on a command line. Windows itself is the product
  * whose application id this is.
@@ -345,17 +399,26 @@ export const windows: EntryPlatform = {
     if (alive(pid)) await killTree(pid);
   },
 
-  // Each file it reads is said (`-v`, on stderr), so one it sticks on is named.
-  archiveHome: () =>
-    inherit("tar.exe", [
-      "-v",
-      "-C",
-      win.dirname(HOME),
-      "-czf",
-      "-",
-      ...HOME_ARCHIVE_EXCLUDES.map((e) => `--exclude=${e}`),
-      win.basename(HOME),
-    ]),
+  async archiveHome() {
+    const shadow = await shadowHome();
+    try {
+      // Each file it reads is said (`-v`, on stderr), so one it sticks on is
+      // named; the link it's given is followed (`-H`), and what's in it isn't.
+      const excludes = [...HOME_ARCHIVE_EXCLUDES, ...VOLUME_FOLDERS.map((f) => `nibblet/${f}`)];
+      await inherit("tar.exe", [
+        "-v",
+        "-H",
+        "-C",
+        win.dirname(SHADOW_LINK),
+        "-czf",
+        "-",
+        ...excludes.map((e) => `--exclude=${e}`),
+        win.basename(SHADOW_LINK),
+      ]);
+    } finally {
+      await dropShadow(shadow);
+    }
+  },
 
   async activateWindows(productKey) {
     const said = (await ps(ACTIVATE, { key: productKey })).trim();
@@ -363,9 +426,10 @@ export const windows: EntryPlatform = {
   },
 
   async restoreHome() {
-    await ps(`Get-ChildItem -LiteralPath $p.home -Force | Remove-Item -Recurse -Force`, {
-      home: HOME,
-    });
+    await ps(
+      `Get-ChildItem -LiteralPath $p.home -Force | Where-Object Name -notin $p.keep | Remove-Item -Recurse -Force`,
+      { home: HOME, keep: VOLUME_FOLDERS },
+    );
     await inherit("tar.exe", ["-C", win.dirname(HOME), "-xzf", "-"]);
   },
 };
