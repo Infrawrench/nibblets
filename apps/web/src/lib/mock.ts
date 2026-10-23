@@ -708,6 +708,10 @@ export function createMockServer(): ServerConnection {
       title: "Secrets",
       scopes: [{ value: "secrets:read", label: "Secrets (read)" }],
     },
+    {
+      title: "Organization",
+      scopes: [{ value: "audit:read", label: "Audit log (read)" }],
+    },
   ];
 
   // A thread with one of everything, for Pip.
@@ -1703,6 +1707,7 @@ export function createMockServer(): ServerConnection {
             { id: "hetzner", name: "Hetzner" },
           ],
           ceiling: appScopeGroups.flatMap((g) => g.scopes.map((sc) => sc.value)),
+          narrowable: ["resources:read", "resources:write", "secrets:read"],
         };
       },
     },

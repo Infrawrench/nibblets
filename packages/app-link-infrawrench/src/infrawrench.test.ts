@@ -20,7 +20,24 @@ interface FakeAgent {
   createdAt: string;
 }
 
-const CEILING = ["resources:read", "resources:write", "secrets:read"];
+const CEILING = ["resources:read", "resources:write", "secrets:read", "accounts:read"];
+/** What providers can limit; `accounts:read` would stay organisation-wide. */
+const NARROWABLE = ["resources:read", "resources:write", "secrets:read"];
+/** Live agents a link may hold; Infrawrench's is 200, a fake's fewer. */
+const MAX_AGENTS = 3;
+
+/** As Infrawrench checks a grant's scopes: within the ceiling, and narrowable when narrowed. */
+function refused(scopes: string[], providers: string[] | undefined): Response | null {
+  const outside = scopes.filter(
+    (s) => !CEILING.includes(s) || (providers?.length && !NARROWABLE.includes(s)),
+  );
+  return outside.length > 0
+    ? Response.json(
+        { error: "Scope not allowed", code: "scope_not_allowed", scopes: outside },
+        { status: 400 },
+      )
+    : null;
+}
 
 /**
  * An Infrawrench that keeps its agent links in memory and answers as the
@@ -57,6 +74,7 @@ function fakeInfrawrench() {
     label: "Nibblets on PogAir-4",
     scopes: CEILING,
     effectiveScopes: CEILING,
+    narrowableScopes: NARROWABLE,
     scopeGroups: [
       {
         title: "Infrastructure",
@@ -137,13 +155,10 @@ function fakeInfrawrench() {
       const scopes = (body?.scopes as string[] | undefined) ?? [];
       const live = agents.find((a) => a.externalId === body?.externalId && !a.revokedAt);
       if (live) return reply(409, { error: "Already exists", code: "exists", agentId: live.id });
-      const outside = scopes.filter((s) => !CEILING.includes(s));
-      if (outside.length > 0) {
-        return reply(400, {
-          error: "Scope not allowed",
-          code: "scope_not_allowed",
-          scopes: outside,
-        });
+      const no = refused(scopes, body?.providers as string[] | undefined);
+      if (no) return no;
+      if (agents.filter((a) => !a.revokedAt).length >= MAX_AGENTS) {
+        return reply(409, { error: "Too many agents", code: "too_many_agents" });
       }
       made++;
       const agent: FakeAgent = {
@@ -164,9 +179,11 @@ function fakeInfrawrench() {
     if (one && (!agent || agent.revokedAt)) return reply(404, { error: "Not found" });
     if (agent && method === "PATCH") {
       const scopes = body?.scopes as string[] | undefined;
-      if (scopes?.some((s) => !CEILING.includes(s))) {
-        return reply(400, { error: "Scope not allowed", code: "scope_not_allowed", scopes });
-      }
+      const no = refused(
+        scopes ?? agent.scopes,
+        (body?.providers as string[] | undefined) ?? agent.providers,
+      );
+      if (no) return no;
       if (scopes) agent.scopes = scopes;
       if (body?.providers) agent.providers = body.providers as string[];
       if (typeof body?.label === "string") agent.label = body.label;
@@ -322,6 +339,7 @@ describe("linking Infrawrench", () => {
         { id: "hetzner", name: "Hetzner" },
       ],
       ceiling: CEILING,
+      narrowable: NARROWABLE,
     });
     expect(app.calls.at(-1)).toMatchObject({
       method: "GET",
@@ -420,6 +438,49 @@ describe("a nibblet's agent", () => {
     });
     await expect(asked).rejects.toThrow(AppLinkError);
     await expect(asked).rejects.toThrow("This link can't grant team:invite");
+  });
+
+  it("says a scope providers can't limit is refused once there are providers", async () => {
+    const { plugin, link } = await linked();
+    const asked = plugin.grant(link, {
+      externalId: "nib_1",
+      label: "Pip",
+      scopes: ["resources:read", "accounts:read"],
+      providers: ["aws"],
+    });
+    await expect(asked).rejects.toThrow(AppLinkError);
+    await expect(asked).rejects.toThrow("it can't have accounts:read: they'd reach every provider");
+    // Without providers, the same scopes are fine.
+    const grant = await plugin.grant(link, {
+      externalId: "nib_1",
+      label: "Pip",
+      scopes: ["resources:read", "accounts:read"],
+      providers: [],
+    });
+    // And narrowing it later is refused the same way.
+    await expect(plugin.update(link, grant, { providers: ["aws"] })).rejects.toThrow(
+      "they'd reach every provider",
+    );
+  });
+
+  it("says when the link holds as many agents as it can", async () => {
+    const { plugin, link } = await linked();
+    for (let n = 1; n <= MAX_AGENTS; n++) {
+      await plugin.grant(link, {
+        externalId: `nib_${n}`,
+        label: `Pip ${n}`,
+        scopes: ["resources:read"],
+        providers: [],
+      });
+    }
+    const asked = plugin.grant(link, {
+      externalId: "nib_more",
+      label: "One too many",
+      scopes: ["resources:read"],
+      providers: [],
+    });
+    await expect(asked).rejects.toBeInstanceOf(AppLinkError);
+    await expect(asked).rejects.toThrow("as many agents as it can hold");
   });
 
   it("revokes an agent it lost track of to make a new one for the same nibblet", async () => {

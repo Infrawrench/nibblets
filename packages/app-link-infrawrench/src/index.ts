@@ -46,6 +46,8 @@ const LinkInfo = z.object({
   id: z.string(),
   organizationName: z.string(),
   effectiveScopes: z.array(z.string()),
+  /** The scopes `providers` can limit; with any provider chosen, a grant may only have these. */
+  narrowableScopes: z.array(z.string()).optional(),
   scopeGroups: z.array(
     z.object({
       title: z.string(),
@@ -178,15 +180,30 @@ export function infrawrenchPlugin(
 
   const agentPath = (id: string) => `/api/agent-link/agents/${encodeURIComponent(id)}`;
 
-  /** Infrawrench refused the scopes: says which, rather than its own message. */
-  function scopeRefusal(err: unknown): never {
+  /**
+   * Infrawrench refused what a grant asked for: says why in a person's
+   * words, rather than its own. `narrowed` when the grant named providers,
+   * which only some scopes can be limited to.
+   */
+  function refusal(err: unknown, narrowed: boolean): never {
     if (err instanceof Refused && err.code === "scope_not_allowed") {
       const scopes = z.object({ scopes: z.array(z.string()) }).safeParse(err.body);
+      const which = scopes.success && scopes.data.scopes.length > 0 ? scopes.data.scopes : null;
       throw new AppLinkError(
-        scopes.success && scopes.data.scopes.length > 0
-          ? `This link can't grant ${scopes.data.scopes.join(", ")}`
-          : "This link can't grant some of those scopes",
+        narrowed
+          ? `Only for some providers, it can't have ${which?.join(", ") ?? "some of those scopes"}: they'd reach every provider. Untick them, or choose no providers.`
+          : which
+            ? `This link can't grant ${which.join(", ")}`
+            : "This link can't grant some of those scopes",
       );
+    }
+    if (err instanceof Refused && err.code === "too_many_agents") {
+      throw new AppLinkError(
+        "This Infrawrench link has as many agents as it can hold. Turn Infrawrench off for a nibblet that doesn't need it, or revoke agents in Infrawrench's Settings → Agents.",
+      );
+    }
+    if (err instanceof Refused && err.code === "invalid_provider") {
+      throw new AppLinkError("Infrawrench doesn't know one of those providers any more");
     }
     throw err;
   }
@@ -266,6 +283,8 @@ export function infrawrenchPlugin(
         scopeGroups: info.scopeGroups,
         providers: info.providers.map((p) => ({ id: p.id, name: p.displayName })),
         ceiling: info.effectiveScopes,
+        // An older Infrawrench doesn't say; then every scope is taken to be one.
+        narrowable: info.narrowableScopes ?? null,
       };
     },
 
@@ -287,14 +306,14 @@ export function infrawrenchPlugin(
           err instanceof Refused && err.code === "exists"
             ? z.object({ agentId: z.string() }).safeParse(err.body)
             : null;
-        if (!existing?.success) scopeRefusal(err);
+        if (!existing?.success) refusal(err, request.providers.length > 0);
         await asLink(link, "DELETE", agentPath(existing.data.agentId)).catch((e: unknown) => {
           if (!(e instanceof Refused && e.status === 404)) throw e;
         });
         try {
           made = Made.parse(await asLink(link, "POST", "/api/agent-link/agents", body));
         } catch (again) {
-          scopeRefusal(again);
+          refusal(again, request.providers.length > 0);
         }
       }
       return {
@@ -312,7 +331,7 @@ export function infrawrenchPlugin(
           .object({ agent: Agent })
           .parse(await asAgent(link, "PATCH", agentPath(grant.ref), request)));
       } catch (err) {
-        scopeRefusal(err);
+        refusal(err, (request.providers ?? []).length > 0);
       }
       if (agent.revokedAt) {
         throw new AppLinkRevokedError("grant", "Infrawrench says this agent was revoked");

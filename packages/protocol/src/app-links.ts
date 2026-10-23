@@ -115,6 +115,12 @@ export const AppLinkDescription = z.object({
   providers: z.array(AppLinkProvider).nullable(),
   /** The most any grant on it may have. */
   ceiling: z.array(z.string()),
+  /**
+   * The scopes choosing providers limits to them. A grant narrowed to some
+   * providers may only have these, since any other would still reach every
+   * provider. Null when there's no such limit.
+   */
+  narrowable: z.array(z.string()).nullable().default(null),
 });
 export type AppLinkDescription = z.infer<typeof AppLinkDescription>;
 
