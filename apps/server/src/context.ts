@@ -15,6 +15,7 @@ import {
   type ThreadItem,
   type TurnSource,
 } from "@nibblets/protocol";
+import type { AppPrompt } from "./app-links.ts";
 
 export const QUIET_REPLY = "NO_REPLY";
 
@@ -138,6 +139,8 @@ export interface SystemPromptInput {
   onePasswordVaults?: readonly SharedVault[];
   /** The banks it could get cards from, if its limits allow. */
   banks?: readonly { id: string; label: string; asset: AssetInfo }[];
+  /** Apps it acts in under its own identity, through their tools (its host's, for a sub-agent). */
+  apps?: readonly AppPrompt[];
   /** Whether its container has a desktop for apps other than the browser. */
   desktop?: boolean;
   /** Its container's machine on the user's tailnet, once it has joined. */
@@ -235,6 +238,8 @@ export function systemPrompt(input: SystemPromptInput): string {
       `## 1Password\n\nYou can use these 1Password vaults, and only these:\n${vaults}\n\nUse the \`onepassword\` tools: \`item_search\`, \`item_get\`, \`read_secret\`, and \`fill_login\` to sign in, which opens the login's own site in the browser and types it there. Never write a password, token or other secret into the chat, your memory, files, or your status; use it where it's needed and nowhere else.`,
     );
   }
+
+  if (input.apps?.length) parts.push(appsSection(input.apps));
 
   const spending = spendingSection(nibblet, input.banks ?? []);
   if (spending) parts.push(spending);
@@ -358,4 +363,18 @@ function spendingSection(
   });
   if (lines.length === 0) return null;
   return `## Spending\n\nYour person lets you spend money, up to:\n${lines.join("\n")}\n\nFor a purchase, get a card with \`card_request\` for what it needs (single use where one payment will do), pay with the details from the file it names, then kill it with \`card_kill\` as soon as you're done; \`card_list\` shows your cards and what's left. If the checkout asks to verify the payment (a code sent by text or email, or the bank's own page), call \`card_verify\` and let your person do it in your browser: never try to get the code yourself. Only spend on what your person asked for or would clearly want, and tell them what you bought. Card numbers, codes and keys stay in their files: never put them in the chat, your memory, other files or your status, and never give them to a site you didn't choose to pay.`;
+}
+
+/** The apps it's linked to, with what it may do in each. */
+function appsSection(apps: readonly AppPrompt[]): string {
+  const lines = apps.map((app) => {
+    const only = app.providers.length > 0 ? ` (only for ${app.providers.join(", ")})` : "";
+    return `- ${app.title}, as ${app.account}, through the \`${app.name}\` tools. Your scopes: ${app.scopes.join(", ")}${only}.`;
+  });
+  const notes = [...new Set(apps.flatMap((app) => (app.prompt ? [app.prompt] : [])))];
+  return [
+    `## Linked apps\n\nYour person linked you to these apps, each with an identity of your own and only the scopes they gave you:\n${lines.join("\n")}`,
+    ...notes,
+    "Their credentials are held outside your reach: don't look for them, and never ask for them.",
+  ].join("\n\n");
 }

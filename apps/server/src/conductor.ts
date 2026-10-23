@@ -57,6 +57,7 @@ import { keyId, mintAuthKey, readTailnetOAuth } from "./tailnet-keys.ts";
 import { hostLoginFor } from "./host-login.ts";
 import { TerminalHub } from "./terminals.ts";
 import type { Bank } from "./bank.ts";
+import type { AppConnections, AppLinks } from "./app-links.ts";
 import { CardFiles } from "./card-files.ts";
 import { desktopToken, guardToken, hashToken, newId, viewToken, type Store } from "./store.ts";
 
@@ -161,6 +162,8 @@ export class Conductor {
   });
   /** Nibblets' cards, once the bank is set up; it writes their files through `cardFiles`. */
   bank: Bank | null = null;
+  /** The server's app links, whose grants a nibblet's guard serves; set once the server has them. */
+  appLinks: AppLinks | null = null;
   /** `location_get` asks waiting on a device; set once the server has them. */
   locations: LocationRequests | null = null;
   serverName = "nibblet";
@@ -930,7 +933,8 @@ export class Conductor {
     );
     if (onePassword) this.onePasswordVaults.set(nibbletId, onePassword.vaults);
     else this.onePasswordVaults.delete(nibbletId);
-    const mcpServers = await this.ownMcpServers(row);
+    const apps = await this.appConnections(nibbletId);
+    const mcpServers = await this.ownMcpServers(row, apps);
     link.send({
       type: "configure",
       config: {
@@ -946,6 +950,7 @@ export class Conductor {
           ...(this.browserOn(row) ? ["computer"] : []),
           ...(onePassword ? ["onepassword"] : []),
           ...mcpServers.map((server) => server.name),
+          ...apps.servers.map((server) => server.name),
         ],
         cli: await cliLogins(this.config, row.cliCredentials, (m) =>
           console.warn(`[${nibbletId}] ${m}`),
@@ -959,10 +964,19 @@ export class Conductor {
     return true;
   }
 
-  /** Its own MCP servers, less any the host's tools now cover. */
-  private async ownMcpServers(row: { hostTools: string[]; mcpServers: McpServerDef[] }) {
+  /**
+   * Its own MCP servers, less any the host's tools now cover, and any its
+   * app links' tools go by the name of.
+   */
+  private async ownMcpServers(
+    row: { hostTools: string[]; mcpServers: McpServerDef[] },
+    apps: AppConnections,
+  ) {
+    const linked = new Set(apps.servers.map((server) => server.name));
     // One saved before its name was taken by a built-in would replace the built-in.
-    const own = row.mcpServers.filter((server) => !isReservedMcpName(server.name));
+    const own = row.mcpServers.filter(
+      (server) => !isReservedMcpName(server.name) && !linked.has(server.name),
+    );
     return row.hostTools.length > 0 && this.config.HOST_MCP_URL
       ? dropOverlaps(own, row.hostTools, (await hostTools(this.config)).servers)
       : own;
@@ -977,12 +991,27 @@ export class Conductor {
     const onePassword = await onePasswordLogin(this.config, this.store, nibbletId, (m) =>
       console.warn(`[${nibbletId}] ${m}`),
     );
+    const apps = await this.appConnections(nibbletId);
     return {
       browser: this.browserOn(row),
       toolApprovals: row.toolApprovals,
-      mcpServers: await this.ownMcpServers(row),
+      mcpServers: await this.ownMcpServers(row, apps),
+      appLinks: apps.servers,
       onePassword,
     };
+  }
+
+  /**
+   * Its app links (its host's, for a sub-agent): the servers its guard
+   * serves, with their credentials, and what it's told about them. None
+   * when they can't be read, rather than no guard at all.
+   */
+  private async appConnections(nibbletId: string): Promise<AppConnections> {
+    if (!this.appLinks) return { servers: [], prompts: [] };
+    return this.appLinks.connections(nibbletId).catch((err: unknown) => {
+      console.warn(`[${nibbletId}] couldn't read its app links`, err);
+      return { servers: [], prompts: [] };
+    });
   }
 
   /**
@@ -1237,6 +1266,7 @@ export class Conductor {
       now: new Date(),
       onePasswordVaults: this.onePasswordVaults.get(nibbletId),
       banks: this.bank?.providers() ?? [],
+      apps: (await this.appConnections(nibbletId)).prompts,
       // Its container's, which comes with the host's browser.
       desktop: host ? this.browserOn(host) : false,
       tailnet:

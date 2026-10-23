@@ -44,7 +44,7 @@ export function suggestedRules(server: string, tools: readonly string[] | null):
 const withoutServer = (rules: ToolRule[], server: string) =>
   rules.filter((r) => r.server !== server);
 
-function Check({
+export function Check({
   checked,
   onChange,
   disabled,

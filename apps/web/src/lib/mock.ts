@@ -12,6 +12,10 @@ import {
   mergeMcpServers,
   tailnetHostname,
   randomHamsterLook,
+  type AppGrant,
+  type AppLink,
+  type AppLinkAttempt,
+  type AppLinkKind,
   type BankField,
   type BankKind,
   type BankProvider,
@@ -668,6 +672,47 @@ export function createMockServer(): ServerConnection {
     return snapshot;
   };
   const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  // App links: an Infrawrench-like app, linked once the code's been "approved" a few seconds on.
+  const appLinkKinds: AppLinkKind[] = [
+    {
+      id: "infrawrench",
+      name: "Infrawrench",
+      description:
+        "Give nibblets their own agents in an Infrawrench organisation, each with only the scopes you tick.",
+      icon: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24" rx="5" fill="#3b4f8f"/><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.1-3.1a6 6 0 0 1-8.3 7.1l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.1-8.3z" fill="#f0c060"/></svg>')}`,
+      fields: [
+        {
+          key: "url",
+          label: "Infrawrench URL",
+          hint: "Only to link a self-hosted Infrawrench.",
+          placeholder: "https://app.infrawrench.com",
+          default: "https://app.infrawrench.com",
+          required: false,
+        },
+      ],
+    },
+  ];
+  const appLinks: AppLink[] = [];
+  const appLinkAttempts = new Map<string, AppLinkAttempt>();
+  const appGrants: AppGrant[] = [];
+  const appScopeGroups = [
+    {
+      title: "Infrastructure",
+      scopes: [
+        { value: "resources:read", label: "Resources (read)" },
+        { value: "resources:write", label: "Resources (write)" },
+      ],
+    },
+    {
+      title: "Secrets",
+      scopes: [{ value: "secrets:read", label: "Secrets (read)" }],
+    },
+    {
+      title: "Organization",
+      scopes: [{ value: "audit:read", label: "Audit log (read)" }],
+    },
+  ];
 
   // A thread with one of everything, for Pip.
   const t1 = "turn-1";
@@ -1365,6 +1410,38 @@ export function createMockServer(): ServerConnection {
         startedAt: Date.now(),
       }),
       browserBorrow: async () => null,
+      appGrants: async ({ id }) => {
+        let host = nibblets.get(id);
+        while (host?.parentId) host = nibblets.get(host.parentId);
+        return appGrants.filter((g) => g.nibbletId === host?.id);
+      },
+      setAppGrant: async ({ id, linkId, scopes, providers }) => {
+        if (nibblets.get(id)?.parentId) {
+          throw new RpcError("bad_request", "A sub-agent uses its parent's app links");
+        }
+        await pause(600);
+        const at = appGrants.findIndex((g) => g.nibbletId === id && g.linkId === linkId);
+        const grant: AppGrant = {
+          nibbletId: id,
+          linkId,
+          scopes,
+          providers,
+          state: "active",
+          detail: null,
+          createdAt: appGrants[at]?.createdAt ?? now(),
+          updatedAt: now(),
+        };
+        if (at >= 0) appGrants[at] = grant;
+        else appGrants.push(grant);
+        push({ type: "app_grants_changed", nibbletId: id });
+        return grant;
+      },
+      removeAppGrant: async ({ id, linkId }) => {
+        const at = appGrants.findIndex((g) => g.nibbletId === id && g.linkId === linkId);
+        if (at >= 0) appGrants.splice(at, 1);
+        push({ type: "app_grants_changed", nibbletId: id });
+        return { ok: true };
+      },
       decide: async ({ id, approvalId, approve, reason }) => {
         const found = items.get(id)?.find((s) => s.item.id === approvalId)?.item;
         if (found?.type === "approval" && found.status === "pending") {
@@ -1544,6 +1621,94 @@ export function createMockServer(): ServerConnection {
         mockBanks.splice(at, 1);
         push({ type: "bank_changed" });
         return bankStatus();
+      },
+    },
+    appLinks: {
+      plugins: async () => appLinkKinds,
+      list: async () => ({ links: appLinks, attempts: [...appLinkAttempts.values()] }),
+      begin: async ({ plugin }) => {
+        const kind = appLinkKinds.find((k) => k.id === plugin);
+        if (!kind) throw new RpcError("not_found", `No app link plugin called ${plugin}`);
+        const attempt: AppLinkAttempt = {
+          id: crypto.randomUUID(),
+          plugin,
+          userCode: "WXYZ-2345",
+          verificationUrl: "https://app.infrawrench.com/link-agents",
+          verificationUrlComplete: "https://app.infrawrench.com/link-agents?code=WXYZ-2345",
+          expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+        };
+        appLinkAttempts.set(attempt.id, attempt);
+        // The person approves it in the app a few seconds later.
+        setTimeout(() => {
+          if (!appLinkAttempts.delete(attempt.id)) return;
+          const taken = new Set(appLinks.map((l) => l.name));
+          let name = plugin;
+          for (let n = 2; taken.has(name); n++) name = `${plugin}-${n}`;
+          const link: AppLink = {
+            id: crypto.randomUUID(),
+            plugin,
+            name,
+            account: "Acme on Infrawrench",
+            settings: { url: "https://app.infrawrench.com" },
+            state: "linked",
+            detail: null,
+            createdAt: now(),
+          };
+          appLinks.push(link);
+          push({
+            type: "app_link_settled",
+            attemptId: attempt.id,
+            outcome: "linked",
+            linkId: link.id,
+            detail: null,
+          });
+          push({ type: "app_links_changed" });
+        }, 6000);
+        push({ type: "app_links_changed" });
+        return attempt;
+      },
+      cancel: async ({ id }) => {
+        if (appLinkAttempts.delete(id)) {
+          push({
+            type: "app_link_settled",
+            attemptId: id,
+            outcome: "cancelled",
+            linkId: null,
+            detail: null,
+          });
+          push({ type: "app_links_changed" });
+        }
+        return { ok: true };
+      },
+      remove: async ({ id }) => {
+        const at = appLinks.findIndex((l) => l.id === id);
+        if (at >= 0) appLinks.splice(at, 1);
+        for (let i = appGrants.length - 1; i >= 0; i--) {
+          const grant = appGrants[i];
+          if (grant?.linkId !== id) continue;
+          appGrants.splice(i, 1);
+          push({ type: "app_grants_changed", nibbletId: grant.nibbletId });
+        }
+        push({ type: "app_links_changed" });
+        return { ok: true };
+      },
+      adopt: async () => {
+        throw new RpcError("unauthorized", "Only the server's owner token can adopt a link");
+      },
+      describe: async ({ id }) => {
+        const link = appLinks.find((l) => l.id === id);
+        if (!link) throw new RpcError("not_found", `No app link ${id}`);
+        await pause(300);
+        return {
+          account: link.account,
+          scopeGroups: appScopeGroups,
+          providers: [
+            { id: "aws", name: "AWS" },
+            { id: "hetzner", name: "Hetzner" },
+          ],
+          ceiling: appScopeGroups.flatMap((g) => g.scopes.map((sc) => sc.value)),
+          narrowable: ["resources:read", "resources:write", "secrets:read"],
+        };
       },
     },
     snapshots: {

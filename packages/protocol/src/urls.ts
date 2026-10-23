@@ -6,3 +6,8 @@ import { z } from "zod";
  * reaches window.open or an href.
  */
 export const WebUrl = z.url({ protocol: /^https?$/ });
+
+/** Whether a string is a `WebUrl`, for checking one before it's opened. */
+export function isWebUrl(url: string): boolean {
+  return WebUrl.safeParse(url).success;
+}

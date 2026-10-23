@@ -2,6 +2,9 @@
 # Starts the nibblet stack from this checkout. The desktop app does the same
 # for you on a Mac; this is for servers and for working on nibblet itself.
 #
+# With --credentials, it only starts the credential proxy again, for logins
+# made since.
+#
 # First run writes docker/.env with fresh secrets and docker/compose.creds.yaml
 # with whichever subscription logins this machine has, then prints a link to
 # sign in with.
@@ -113,6 +116,14 @@ if docker compose version >/dev/null 2>&1; then
   compose() { docker compose -f compose.yaml -f compose.creds.yaml "$@"; }
 else
   compose() { docker-compose -f compose.yaml -f compose.creds.yaml "$@"; }
+fi
+
+# --credentials: just start the credential proxy again with the logins
+# mounted above and the keys in .env, after signing in to an agent, leaving
+# the server and the nibblets running.
+if [ "${1:-}" = --credentials ]; then
+  compose up -d --no-deps --force-recreate credproxy
+  exit 0
 fi
 
 if [ -n "$release" ]; then
