@@ -276,10 +276,11 @@ export const VOLUME_FOLDERS = [
 /**
  * What tar says of a file macOS won't let even root read or change, Full
  * Disk Access and all (the system's own caches, in a signed-in user's
- * Library), and of its having carried on past one. Root gets "Operation
- * not permitted" from nothing else.
+ * Library, and other apps' containers, which macOS guards for their apps
+ * with "Interrupted system call"), and of its having carried on past one.
+ * Root gets either from nothing else.
  */
-const FENCED = /: Operation not permitted$/;
+const FENCED = /: (Operation not permitted|Interrupted system call)$/;
 const CARRIED_ON = /^tar: Error exit delayed from previous errors\.$/;
 
 /** Whether tar's complaints were only of files macOS fences off, which a home does without. */

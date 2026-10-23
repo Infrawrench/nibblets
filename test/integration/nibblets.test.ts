@@ -66,6 +66,22 @@ const INSTALL_MS = (guest === "macos" ? 4 * 60 : 90) * 60_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** What's opened in each guest's browser and on its desktop, as the view servers start them. */
+const GUEST_APPS: Record<GuestOs, { browser: object; desktop: object }> = {
+  linux: {
+    browser: { app: "chromium", args: ["about:blank"], display: "wayland" },
+    desktop: { app: "mousepad", display: "wayland" },
+  },
+  windows: {
+    browser: {
+      app: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+      args: ["about:blank"],
+    },
+    desktop: { app: "notepad.exe" },
+  },
+  macos: { browser: { app: "Google Chrome", args: ["about:blank"] }, desktop: { app: "TextEdit" } },
+};
+
 /**
  * Microsoft's published KMS client key for Windows 11 Pro: activating with it
  * needs a KMS server, which CI hasn't got, but either way the nibblet says
@@ -310,6 +326,32 @@ describe.skipIf(missing !== null)(title, () => {
     }
     throw new Error(`The browser's view answered ${last}`);
   }, 330_000);
+
+  it(
+    "opens apps in its browser and on its desktop",
+    async ({ skip }) => {
+      if (!capabilities?.browser) skip();
+      const open = async (where: "computer" | "desktop", body: object) => {
+        const res = await fetch(`${stack.base}/api/nibblets/${nibblet.id}/${where}/sessions`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${stack.ownerToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+        });
+        const text = await res.text();
+        expect(res.ok, `${where}: ${res.status} ${text}`).toBe(true);
+        const started = z
+          .object({ session_id: z.string(), windows: z.array(z.object({})) })
+          .parse(JSON.parse(text));
+        expect(started.windows.length, `${where} opened no window: ${text}`).toBeGreaterThan(0);
+      };
+      await open("computer", GUEST_APPS[guest].browser);
+      await open("desktop", GUEST_APPS[guest].desktop);
+    },
+    5 * 60_000,
+  );
 
   it(
     "snapshots its home, and goes back to it",

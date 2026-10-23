@@ -125,6 +125,7 @@ describe("macOS's home archive", () => {
         fenced,
         "tar: nibblet/Library/ContainerManager: Couldn't visit directory: Operation not permitted",
         "tar: nibblet/Library/Group Containers: Can't set permissions: Operation not permitted",
+        "tar: nibblet/Library/Containers/com.apple.printcenter.PrintCenterWidget/Data: Couldn't visit directory: Interrupted system call",
         "tar: Error exit delayed from previous errors.",
         "",
       ]),
