@@ -356,6 +356,12 @@ describe.skipIf(missing !== null)(title, () => {
   it(
     "snapshots its home, and goes back to it",
     async () => {
+      // Its first automatic snapshot is taken once it's answered and gone idle: one at a time.
+      const deadline = Date.now() + 10 * 60_000;
+      while ((await stack.client.snapshots.list({ nibbletId: nibblet.id })).activity !== null) {
+        if (Date.now() > deadline) throw new Error("Its automatic snapshot never finished");
+        await sleep(2000);
+      }
       const snapshot = await stack.client.snapshots.create({ nibbletId: nibblet.id, label: "it" });
       const timeline = await stack.client.snapshots.list({ nibbletId: nibblet.id });
       expect(timeline.snapshots.map((s) => s.id)).toContain(snapshot.id);
