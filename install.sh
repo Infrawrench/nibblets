@@ -8,12 +8,19 @@
 #
 # Safe to run again: it updates the checkout and restarts the stack.
 #
+# To sign in to agents and link Nibblets Connect afterwards, without
+# touching the checkout or restarting the stack, run it in a terminal with:
+#
+#   bash ~/nibblets/install.sh --sign-in
+#
 # Settings, as environment variables:
 #   NIBBLETS_DIR     where the repo goes (default ~/nibblets)
 #   NIBBLETS_REPO    what to clone (default the GitHub repo)
 #   NIBBLETS_VERSION which release, like 0.2.0, or a branch, like main
 #                    (default the latest release, or main before there is one)
 #   NIBBLETS_YES=1   answer yes to every question
+#   NIBBLETS_CONNECT=0  don't link Nibblets Connect (it can be linked later
+#                       in Settings, or with --sign-in)
 #   NIBBLETS_ANTHROPIC_API_KEY  run Claude Code on this Anthropic API key
 #                               instead of a Claude subscription
 #   NIBBLETS_OPENAI_API_KEY     run Codex on this OpenAI API key instead of
@@ -34,6 +41,7 @@ GITHUB_REPO="Infrawrench/nibblets"
 REF=""
 DIR="${NIBBLETS_DIR:-$HOME/nibblets}"
 YES="${NIBBLETS_YES:-0}"
+CONNECT="${NIBBLETS_CONNECT:-1}"
 TOOLS="$HOME/.local/share/nibblets"
 CENTRAL="https://app.nibblets.dev"
 BRIDGE_PORT=8789
@@ -929,6 +937,7 @@ setup_app_links() {
 
 LINKED=0
 setup_connect() {
+  [ "$CONNECT" != 0 ] || return 0
   step "🌍 Reaching it from anywhere"
   local status
   status=$(rpc connect.status 2>/dev/null || true)
@@ -998,10 +1007,66 @@ finish() {
   fi
 }
 
+# For --sign-in: the engine this machine already runs Nibblets on, without installing one.
+find_engine() {
+  if command -v docker >/dev/null && ! docker --version 2>/dev/null | grep -qi podman; then
+    ENGINE=docker
+  elif command -v podman >/dev/null; then
+    ENGINE=podman
+  else
+    fail "There's no Docker or Podman here. Run this without --sign-in to set Nibblets up."
+  fi
+  engine_access
+}
+
+# Whatever the credential proxy reads: the Claude Code and Codex logins it
+# mounts, and the API keys in its environment. OpenCode's and Kimi Code's
+# logins are read by the host bridge whenever a nibblet starts, so they
+# need nothing more.
+proxy_inputs() {
+  local a
+  for a in claude codex deepseek; do
+    agent_signed_in "$a" && printf '%s ' "$a"
+  done
+  for a in CLAUDE_CREDENTIALS_SOURCE CODEX_AUTH_SOURCE NIBBLET_ANTHROPIC_API_KEY NIBBLET_OPENAI_API_KEY DEEPSEEK_API_KEY; do
+    printf '%s=%s ' "$a" "$(env_get "$a")"
+  done
+}
+
+# Signs in to agents and links Nibblets Connect on a machine that already
+# runs Nibblets, leaving the checkout and the stack as they are. Only the
+# credential proxy starts again, and only if what it reads changed.
+sign_in() {
+  [ -f "$DIR/docker/.env" ] || fail "Nibblets isn't set up in $DIR yet. Run this without --sign-in first."
+  [ "$INTERACTIVE" = 1 ] || fail "Signing in needs a terminal. Run this in one, without NIBBLETS_YES."
+  local before
+  before=$(proxy_inputs)
+  setup_agents
+  if [ "$(proxy_inputs)" != "$before" ]; then
+    find_engine
+    spin "Handing the new logins to the credential proxy" with_docker "cd '$DIR' && sh docker/up.sh --credentials"
+  fi
+  setup_connect
+  printf '\n%s\n\n' "${B}${GREEN}  ✨ All set. ✨${R}"
+  if [ "$LINKED" = 1 ]; then
+    say "🐹 Open ${B}${BLUE}$CENTRAL${R} to see your nibblets."
+  fi
+  say "${D}🔁 Sign in to more agents: run this again with --sign-in${R}"
+  printf '\n'
+}
+
 main() {
   mkdir -p "$TOOLS"
   : >"$LOG"
   banner
+  case "${1:-}" in
+    --sign-in)
+      sign_in
+      return
+      ;;
+    "") ;;
+    *) fail "I don't know $1. The only option is --sign-in." ;;
+  esac
   check_machine
   setup_repo
   setup_engine
