@@ -293,16 +293,31 @@ $copy = Get-CimInstance Win32_ShadowCopy | Where-Object ID -eq $made.ShadowID
 "$($copy.ID)|$($copy.DeviceObject)"
 `;
 
-/** Ends every process of a user (`$p.user`, as `\name`), and waits for them to be gone. */
-const ENDED = `
-$deadline = (Get-Date).AddSeconds(30)
-do {
-  $left = @(Get-Process -IncludeUserName | Where-Object { $_.UserName -and $_.UserName.EndsWith($p.user) })
-  $left | Stop-Process -Force -ErrorAction SilentlyContinue
-  if ($left.Count) { Start-Sleep -Milliseconds 250 }
-} while ($left.Count -and (Get-Date) -lt $deadline)
-if ($left.Count) { throw "Its user's processes wouldn't end: $(($left.Name | Sort-Object -Unique) -join ', ')" }
-`;
+/** The agent's user's processes (`$p.user` is `\nibblet`). */
+const AGENT_PROCESSES = `Get-Process -IncludeUserName | Where-Object { $_.UserName -and $_.UserName.EndsWith($p.user) }`;
+
+/**
+ * Signs the agent's user out of its desktop and waits for what it ran to
+ * end; whatever's left after a minute is ended. Its processes can't just be
+ * ended: Windows starts a signed-in user's shell again at once. It isn't
+ * signed in again (there's no ForceAutoLogon) until the VM next boots.
+ */
+async function signOut(): Promise<void> {
+  const params = { user: "\\nibblet" };
+  const sessions = await ps(
+    `${AGENT_PROCESSES} | Select-Object -ExpandProperty SessionId -Unique | Where-Object { $_ -ne 0 }`,
+    params,
+  );
+  for (const id of sessions.split(/\s+/).filter(Boolean)) {
+    await run("logoff", [id]).catch(() => undefined);
+  }
+  await ps(
+    `$deadline = (Get-Date).AddSeconds(60)
+while (@(${AGENT_PROCESSES}).Count -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+${AGENT_PROCESSES} | Stop-Process -Force -ErrorAction SilentlyContinue`,
+    params,
+  );
+}
 
 /** Shadows the home disk and links to it at SHADOW_LINK; says the shadow copy's id. */
 async function shadowHome(): Promise<string> {
@@ -439,8 +454,8 @@ export const windows: EntryPlatform = {
   async restoreHome() {
     // Only ever of a nibblet that's stopped, in a VM booted for it; but the
     // VM signed the agent's user in at boot, where Windows may have started
-    // Edge again, holding its profile's files. Everything it runs goes first.
-    await ps(ENDED, { user: "\\nibblet" });
+    // Edge again, holding its profile's files. It's signed out first.
+    await signOut();
     await ps(
       `Get-ChildItem -LiteralPath $p.home -Force | Where-Object Name -notin $p.keep | Remove-Item -Recurse -Force`,
       { home: HOME, keep: VOLUME_FOLDERS },
