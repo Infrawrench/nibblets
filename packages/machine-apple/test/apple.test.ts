@@ -23,6 +23,13 @@ describe("macOS guests' images", () => {
     expect(BOOTSTRAP_SH).toContain("shasum -a 256 -c -");
   });
 
+  it("say each step to the host while it's made, and stop at one that fails", () => {
+    expect(BOOTSTRAP_SH).toContain("trap failed EXIT");
+    expect(BOOTSTRAP_SH).toContain('tell "failed: $step');
+    // Every step after the bootstrap's start says what it is.
+    expect(BOOTSTRAP_SH.match(/^\s+say "/gm)?.length).toBeGreaterThanOrEqual(6);
+  });
+
   it("build Tailscale without a C compiler, which a fresh macOS hasn't got", () => {
     expect(BOOTSTRAP_SH).toContain("CGO_ENABLED=0");
   });
