@@ -2,21 +2,44 @@ import { execFile, spawn } from "node:child_process";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { HostContext, ImageJob } from "@nibblets/machine/host";
+import { socketPath, type HostContext, type ImageJob } from "@nibblets/machine/host";
 import { z } from "zod";
 
 const run = promisify(execFile);
 
+/** How long its first boot runs before it's shut down. */
+const FIRST_BOOT_MS = 3 * 60_000;
+
 /**
  * Giving a fresh macOS guest the guest agent, without anyone at its
  * screen: macOS has no answer file, and its Setup Assistant wants a person.
- * So the guest's Data volume is mounted here and given a LaunchDaemon
- * (bootstrap.sh, as root, at every boot), the host's own VM helper (for
- * `guest-relay`, its port to the host), and the mark that says setup's been
- * done. Writing root's files needs an administrator, so macOS asks for
- * one's password, once. Then it's booted once to install Node and the
- * runner, and shuts itself down: the image is made.
+ * So it's booted once for the system to set itself up (its privacy
+ * database among it), then the guest's Data volume is mounted here and
+ * given a LaunchDaemon (bootstrap.sh, as root, at every boot), the host's
+ * own VM helper (for `guest-relay`, its port to the host), the mark that
+ * says setup's been done, and OpenComputerUse's permissions (Accessibility
+ * and Screen Recording, which only a person can give otherwise, and which
+ * the running guest's own root can't). Writing root's files needs an
+ * administrator, so macOS asks for one's password, once. Then it's booted
+ * again to install Node, the runner, OpenComputerUse, Google Chrome and
+ * Tailscale, and shuts itself down: the image is made.
  */
+
+/** The OpenComputerUse release macOS guests run, for their browser and desktop. */
+export const MACOS_OCU_VERSION = "0.11.1";
+
+/** Who signs what the bootstrap downloads: OpenComputerUse's developer, and Google. */
+export const OCU_REQUIREMENT =
+  'identifier "com.infrawrench.opencomputeruse" and anchor apple generic and certificate leaf[subject.OU] = "CS54L4CF2Z"';
+const CHROME_REQUIREMENT =
+  'identifier "com.google.Chrome" and anchor apple generic and certificate leaf[subject.OU] = "EQHXZ8M8AV"';
+
+/** What OpenComputerUse may do without asking anyone: see windows, and drive them. */
+export const OCU_SERVICES = [
+  "kTCCServiceAccessibility",
+  "kTCCServiceScreenCapture",
+  "kTCCServicePostEvent",
+];
 
 export const LAUNCH_DAEMON = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -39,7 +62,14 @@ export const LAUNCH_DAEMON = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `;
 
-/** At every boot, as root: Node and the runner, once (again for a new release), then the guest agent. */
+/**
+ * At every boot, as root: Node and the runner (again for a new release),
+ * OpenComputerUse, Google Chrome and Tailscale, each once, then the guest
+ * agent. What it downloads is checked: Node's against its sums, the apps'
+ * signatures against their developers', and Tailscale is built from source
+ * through Go's checksummed module proxy (there's no build of its daemon
+ * alone for macOS). Chrome is given its policies at every boot.
+ */
 export const BOOTSTRAP_SH = `#!/bin/sh
 set -eu
 root=/Library/Nibblets
@@ -47,6 +77,7 @@ exec >>"$root/bootstrap.log" 2>&1
 echo "bootstrap: $(date)"
 repo=$(plutil -extract repo raw -o - "$root/install.json")
 ref=$(plutil -extract ref raw -o - "$root/install.json")
+ocu=$(plutil -extract ocu raw -o - "$root/install.json")
 get() { curl -fsSL --retry 20 --retry-all-errors --retry-delay 5 "$@"; }
 
 if [ ! -x "$root/node/bin/node" ]; then
@@ -75,6 +106,55 @@ if [ "$(cat "$root/app/.nibblets" 2>/dev/null || true)" != "$want" ]; then
   echo "$want" > "$root/app/.nibblets"
 fi
 
+if [ "$(cat "$root/ocu.version" 2>/dev/null || true)" != "$ocu" ]; then
+  echo "bootstrap: OpenComputerUse $ocu"
+  rm -rf "$root/ocu" && mkdir -p "$root/ocu"
+  get "https://github.com/IAmJSD/OpenComputerUse/releases/download/v$ocu/OpenComputerUse.zip" -o "$root/ocu.zip"
+  ditto -x -k "$root/ocu.zip" "$root/ocu"
+  codesign --verify --deep --strict -R='${OCU_REQUIREMENT}' "$root/ocu/OpenComputerUse.app"
+  rm -rf /Applications/OpenComputerUse.app
+  mv "$root/ocu/OpenComputerUse.app" /Applications/
+  rm -rf "$root/ocu" "$root/ocu.zip"
+  echo "$ocu" > "$root/ocu.version"
+fi
+
+if [ ! -d "/Applications/Google Chrome.app" ]; then
+  echo "bootstrap: Google Chrome"
+  get https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg -o "$root/chrome.dmg"
+  dmg=$(mktemp -d /private/tmp/nibblet-chrome.XXXXXX)
+  hdiutil attach -nobrowse -readonly -mountpoint "$dmg" "$root/chrome.dmg" >/dev/null
+  codesign --verify --deep --strict -R='${CHROME_REQUIREMENT}' "$dmg/Google Chrome.app"
+  ditto "$dmg/Google Chrome.app" "/Applications/Google Chrome.app.new"
+  hdiutil detach "$dmg" >/dev/null
+  rm -f "$root/chrome.dmg"
+  mv "/Applications/Google Chrome.app.new" "/Applications/Google Chrome.app"
+fi
+# Its profile on the home disk, and nothing in the way when OpenComputerUse starts it.
+policies="/Library/Managed Preferences/com.google.Chrome"
+mkdir -p "/Library/Managed Preferences"
+defaults write "$policies" UserDataDir -string /Users/nibblet/.browser
+defaults write "$policies" DefaultBrowserSettingEnabled -bool false
+defaults write "$policies" BackgroundModeEnabled -bool false
+defaults write "$policies" MetricsReportingEnabled -bool false
+defaults write "$policies" PromotionalTabsEnabled -bool false
+chmod 644 "$policies.plist"
+
+if [ ! -x "$root/tailscale/tailscaled" ]; then
+  echo "bootstrap: Tailscale"
+  get "https://pkgs.tailscale.com/stable/?mode=json" -o "$root/tailscale.json"
+  version=$(plutil -extract TarballsVersion raw -o - "$root/tailscale.json")
+  go=$(get "https://go.dev/VERSION?m=text" | head -n 1)
+  work=$(mktemp -d /private/tmp/nibblet-go.XXXXXX)
+  get "https://dl.google.com/go/$go.darwin-arm64.tar.gz" -o "$work/go.tgz"
+  echo "$(get "https://dl.google.com/go/$go.darwin-arm64.tar.gz.sha256")  $work/go.tgz" | shasum -a 256 -c -
+  tar -xzf "$work/go.tgz" -C "$work"
+  mkdir -p "$root/tailscale.new"
+  GOPATH="$work/path" GOCACHE="$work/cache" GOTOOLCHAIN=auto CGO_ENABLED=0 GOBIN="$root/tailscale.new" \\
+    "$work/go/bin/go" install "tailscale.com/cmd/tailscale@v$version" "tailscale.com/cmd/tailscaled@v$version"
+  chmod -R u+w "$work" && rm -rf "$work" "$root/tailscale.json"
+  rm -rf "$root/tailscale" && mv "$root/tailscale.new" "$root/tailscale"
+fi
+
 if [ -e "$root/preparing" ]; then
   rm -f "$root/preparing"
   shutdown -h now
@@ -98,10 +178,102 @@ install -o root -g wheel -m 644 "$files/install.json" "$mnt/Library/Nibblets/ins
 install -o root -g wheel -m 755 "$files/nibblet-vm" "$mnt/Library/Nibblets/bin/nibblet-vm"
 install -o root -g wheel -m 644 "$files/dev.nibblets.agent.plist" "$mnt/Library/LaunchDaemons/dev.nibblets.agent.plist"
 touch "$mnt/Library/Nibblets/preparing"
+# The system's privacy database, which its first boot made, and which only a
+# person at its screen could add to otherwise.
+tcc="$mnt/Library/Application Support/com.apple.TCC/TCC.db"
+if [ ! -f "$tcc" ]; then echo "The guest's first boot made no privacy database" >&2; exit 1; fi
+sqlite3 "$tcc" < "$files/tcc.sql"
 install -d -o root -g wheel "$mnt/private/var/db"
 touch "$mnt/private/var/db/.AppleSetupDone"
 chown root:wheel "$mnt/private/var/db/.AppleSetupDone"
 `;
+
+/** A code signing requirement, compiled to the form TCC keeps, as hex. */
+async function compiledRequirement(requirement: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("csreq", ["-r-", "-b", "/dev/stdout"], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const out: Buffer[] = [];
+    let err = "";
+    child.stdout.on("data", (c: Buffer) => out.push(c));
+    child.stderr.on("data", (c: Buffer) => (err += c.toString()));
+    child.once("error", reject);
+    child.once("close", (code) =>
+      code === 0
+        ? resolve(Buffer.concat(out).toString("hex"))
+        : reject(new Error(err.trim() || `csreq exited ${code}`)),
+    );
+    child.stdin.end(requirement);
+  });
+}
+
+/**
+ * OpenComputerUse's rows in the guest's privacy database: allowed, as
+ * System Settings would have it, for the app its developer signed alone.
+ */
+export function tccSql(csreqHex: string): string {
+  if (!/^[0-9a-f]+$/.test(csreqHex)) throw new Error("not a compiled requirement");
+  return `${OCU_SERVICES.map(
+    (service) =>
+      `INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, flags) VALUES ('${service}', 'com.infrawrench.opencomputeruse', 0, 2, 4, 1, X'${csreqHex}', 0);`,
+  ).join("\n")}\n`;
+}
+
+const tccRows = async () => tccSql(await compiledRequirement(OCU_REQUIREMENT));
+
+/** Boots the image's disk with the helper until it stops, or `limitMs`, then stops it. */
+async function boot(
+  helper: string,
+  job: ImageJob,
+  name: string,
+  limitMs: number,
+  onLimit: "fail" | "stop",
+): Promise<void> {
+  const spec = join(job.dir, `${name}.json`);
+  await writeFile(
+    spec,
+    JSON.stringify({
+      guest: "macos",
+      cpus: 4,
+      // Enough to install and build in, beside whatever else the host runs.
+      memoryMb: 4096,
+      disks: [{ path: join(job.dir, "disk.img"), readOnly: false }],
+      efiVariables: null,
+      macos: {
+        hardwareModel: join(job.dir, "hardware-model"),
+        machineIdentifier: join(job.dir, "machine-identifier"),
+        auxiliaryStorage: join(job.dir, "aux.img"),
+      },
+      macAddress: "02:6e:69:62:62:6c",
+      console: join(job.dir, `${name}.log`),
+      // Not beside the image: a unix socket's path is short, and the image's folder may be deep.
+      agentSocket: socketPath("apple", `image-${name}`, "agent"),
+      state: join(job.dir, `${name}.state`),
+    }),
+  );
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(helper, ["run", spec], { stdio: "ignore" });
+      let limited = false;
+      const timer = setTimeout(() => {
+        limited = true;
+        // Asked to shut down, then turned off if it doesn't.
+        child.kill(onLimit === "stop" ? "SIGTERM" : "SIGINT");
+        if (onLimit === "fail") reject(new Error(`Its ${name} boot took too long`));
+      }, limitMs);
+      child.once("error", reject);
+      child.once("exit", (code) => {
+        clearTimeout(timer);
+        if (code === 0 || (limited && onLimit === "stop")) resolve();
+        else reject(new Error(`Its ${name} boot stopped with ${code}`));
+      });
+    });
+  } finally {
+    for (const ext of ["json", "state"]) await rm(join(job.dir, `${name}.${ext}`), { force: true });
+    await rm(socketPath("apple", `image-${name}`, "agent"), { force: true });
+  }
+}
 
 /** A plist, as JSON, through plutil. */
 async function plistJson(plist: string): Promise<unknown> {
@@ -149,13 +321,21 @@ export async function provisionMacos(
   const files = join(job.dir, "provision");
   await mkdir(files, { recursive: true });
   await writeFile(join(files, "bootstrap.sh"), BOOTSTRAP_SH);
-  await writeFile(join(files, "install.json"), JSON.stringify({ repo: job.repo, ref: job.ref }));
+  await writeFile(
+    join(files, "install.json"),
+    JSON.stringify({ repo: job.repo, ref: job.ref, ocu: MACOS_OCU_VERSION }),
+  );
+  await writeFile(join(files, "tcc.sql"), await tccRows());
   await writeFile(join(files, "dev.nibblets.agent.plist"), LAUNCH_DAEMON);
   await copyFile(helper, join(files, "nibblet-vm"));
   const script = join(files, "provision.sh");
   await writeFile(script, PROVISION_SH);
 
-  job.progress(0.9, "Giving it the Nibblets guest agent (it asks for your password)");
+  // Its first boot, to Setup Assistant: long enough for the system to make what's its own.
+  job.progress(0.9, "Starting macOS for the first time");
+  await boot(helper, job, "first", FIRST_BOOT_MS, "stop");
+
+  job.progress(0.91, "Giving it the Nibblets guest agent (it asks for your password)");
   const attached = Attached.parse(
     await plistJson(
       (
@@ -198,43 +378,8 @@ export async function provisionMacos(
   }
   await rm(files, { recursive: true, force: true });
 
-  // Booted once, to install Node and the runner; it shuts itself down when it has.
-  job.progress(0.92, "Installing the runner in it");
-  const spec = join(job.dir, "prepare.json");
-  await writeFile(
-    spec,
-    JSON.stringify({
-      guest: "macos",
-      cpus: 4,
-      memoryMb: 8192,
-      disks: [{ path: join(job.dir, "disk.img"), readOnly: false }],
-      efiVariables: null,
-      macos: {
-        hardwareModel: join(job.dir, "hardware-model"),
-        machineIdentifier: join(job.dir, "machine-identifier"),
-        auxiliaryStorage: join(job.dir, "aux.img"),
-      },
-      macAddress: "02:6e:69:62:62:6c",
-      console: join(job.dir, "prepare.log"),
-      agentSocket: join(job.dir, "prepare.sock"),
-      state: join(job.dir, "prepare.state"),
-    }),
-  );
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(helper, ["run", spec], { stdio: "ignore" });
-    const timer = setTimeout(() => {
-      child.kill("SIGINT");
-      reject(new Error("Installing the runner in macOS took too long"));
-    }, 60 * 60_000);
-    child.once("error", reject);
-    child.once("exit", (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new Error(`Its first boot stopped with ${code}`));
-    });
-  });
-  for (const f of ["prepare.json", "prepare.sock", "prepare.state"]) {
-    await rm(join(job.dir, f), { force: true });
-  }
+  // Booted again, to install what it runs; it shuts itself down when it has.
+  job.progress(0.92, "Installing the runner, OpenComputerUse, Chrome and Tailscale in it");
+  await boot(helper, job, "prepare", 60 * 60_000, "fail");
   ctx.log("its macOS image is made");
 }

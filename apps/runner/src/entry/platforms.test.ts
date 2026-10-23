@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pfRules, userCommands, USERS } from "./macos.ts";
+import { kcpassword, pfRules, SUDOERS_RULES, userCommands, USERS } from "./macos.ts";
 import { aclArgs, rangesExcept } from "./windows.ts";
 
 describe("Windows Firewall's ranges", () => {
@@ -59,13 +59,54 @@ describe("macOS's firewall", () => {
   });
 });
 
+describe("macOS's tailnet fence", () => {
+  const rules = pfRules(null, null, { uid: 1200, ports: [3000] }).split("\n");
+
+  it("lets Tailscale's user reach only the shared ports on loopback", () => {
+    expect(rules).toContain(
+      "pass out quick on lo0 proto { tcp udp } to any port 3000 user 1200 keep state",
+    );
+    expect(rules.at(-2)).toBe("block return out quick on lo0 proto { tcp udp } all user 1200");
+  });
+
+  it("keeps state for everyone else's, so tailscaled's replies to the agent get through", () => {
+    expect(
+      rules.indexOf("pass out quick on lo0 proto { tcp udp } all user != 1200 keep state"),
+    ).toBe(1);
+  });
+
+  it("isn't there for a nibblet off the tailnet", () => {
+    expect(pfRules(null, null)).not.toContain("lo0");
+  });
+});
+
 describe("macOS's users", () => {
-  it("are hidden, with no password, and the uids the entry starts them as", () => {
+  it("are hidden, with no password to begin with, and the uids the entry starts them as", () => {
     const [agent] = USERS;
     if (!agent) throw new Error("no agent user");
-    const commands = userCommands(agent);
+    const commands = userCommands(agent, "A-UUID");
     expect(commands).toContainEqual(["-create", "/Users/nibblet", "UniqueID", "1001"]);
     expect(commands).toContainEqual(["-create", "/Users/nibblet", "IsHidden", "1"]);
     expect(commands).toContainEqual(["-create", "/Users/nibblet", "Password", "*"]);
+    expect(commands).toContainEqual(["-create", "/Users/nibblet", "GeneratedUID", "A-UUID"]);
+  });
+
+  it("include Tailscale's own, with its uid", () => {
+    expect(USERS.map((u) => [u.name, u.uid])).toContainEqual(["_nibblettailscale", 1200]);
+  });
+});
+
+describe("macOS's desktop", () => {
+  it("signs in with the password macOS's way of hiding it", () => {
+    // What macOS itself writes for "password".
+    expect(kcpassword("password").toString("hex")).toBe("0de82150a5d3af8ea3b91f7d");
+  });
+
+  it("lets the guard run only the session script as root, with only its tokens", () => {
+    expect(SUDOERS_RULES).toContain(
+      "_nibbletguard ALL = (root) NOPASSWD: /Library/Nibblets/bin/nibblet-session",
+    );
+    expect(SUDOERS_RULES).toContain('env_keep += "OCU_SERVE_TOKEN OCU_VIEW_TOKEN"');
+    expect(SUDOERS_RULES).not.toContain("SETENV");
   });
 });

@@ -111,8 +111,6 @@ describe.skipIf(missing !== null)(title, () => {
     ...(process.env.NIBBLET_TEST_HYPERV_SWITCH
       ? { hypervSwitch: process.env.NIBBLET_TEST_HYPERV_SWITCH }
       : {}),
-    // Off on every host unless asked for, and asked for by testing them.
-    macosGuests: guest === "macos",
     log: process.env.NIBBLET_TEST_VERBOSE ? (line) => console.log(line) : undefined,
   });
   /** A runner of another stack's, which this one's server must leave alone. */

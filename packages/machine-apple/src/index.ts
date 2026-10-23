@@ -64,13 +64,7 @@ export interface AppleOptions {
    * Swift compiler the first time, and signed for this Mac alone.
    */
   helper?: string;
-  /** Whether to offer macOS guests, on Apple silicon: off for now, while they're unfinished. */
-  macos?: boolean;
 }
-
-/** Why a macOS guest is refused while they're off. */
-const MACOS_OFF =
-  "macOS guests are turned off on this host (set NIBBLET_MACOS_GUESTS=1 for its bridge to try them)";
 
 const files = (vm: VmRef) => ({
   spec: join(vm.dir, "helper.json"),
@@ -105,12 +99,10 @@ export class AppleVirtualization implements HypervisorPlugin {
   readonly name = meta.name;
   readonly diskFormat: "raw" = "raw";
   private readonly given: string | undefined;
-  private readonly macos: boolean;
   private built: Promise<string> | null = null;
 
   constructor(opts: AppleOptions = {}) {
     this.given = opts.helper;
-    this.macos = opts.macos ?? false;
   }
 
   /** The helper, built (once) if there's no prebuilt one. */
@@ -175,7 +167,7 @@ export class AppleVirtualization implements HypervisorPlugin {
       return { available: false, detail: "This Mac can't run virtual machines", guests: [] };
     }
     const guests: GuestOs[] = ["linux"];
-    if (this.macos && check.macos && arch() === "arm64") guests.push("macos");
+    if (check.macos && arch() === "arm64") guests.push("macos");
     return { available: true, detail: null, guests };
   }
 
@@ -186,12 +178,10 @@ export class AppleVirtualization implements HypervisorPlugin {
   async prepareImage(ctx: HostContext, guest: GuestOs, job: ImageJob): Promise<void> {
     if (guest !== "macos")
       throw new Error(`Apple Virtualization doesn't make ${guest} images itself`);
-    if (!this.macos) throw new Error(MACOS_OFF);
     await prepareMacos(ctx, await this.helper(ctx), job);
   }
 
   async start(ctx: HostContext, vm: VmSpec): Promise<void> {
-    if (vm.guest === "macos" && !this.macos) throw new Error(MACOS_OFF);
     const f = files(vm);
     await mkdir(vm.dir, { recursive: true });
     const helper = await this.helper(ctx);

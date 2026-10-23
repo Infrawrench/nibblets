@@ -476,7 +476,7 @@ func install(bundle: String, ipsw: String, diskGb: UInt64) -> Never {
           let spec = VmSpec(
             guest: "macos",
             cpus: max(requirements.minimumSupportedCPUCount, 4),
-            memoryMb: max(requirements.minimumSupportedMemorySize / 1024 / 1024, 8192),
+            memoryMb: max(requirements.minimumSupportedMemorySize / 1024 / 1024, 4096),
             disks: [DiskSpec(path: disk, readOnly: false)], efiVariables: nil, macos: paths,
             macAddress: VZMACAddress.randomLocallyAdministered().string,
             console: dir.appendingPathComponent("install.log").path,

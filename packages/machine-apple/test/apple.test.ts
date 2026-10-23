@@ -1,23 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { AppleVirtualization } from "../src/index.ts";
+import { BOOTSTRAP_SH, OCU_REQUIREMENT, OCU_SERVICES, tccSql } from "../src/provision.ts";
 
-const ctx = { dir: "/nowhere", docker: null, log: () => {} };
-const job = { dir: "/nowhere", source: undefined, repo: "r/r", ref: "main", progress: () => {} };
+describe("macOS guests' images", () => {
+  it("let OpenComputerUse see and drive windows, when its developer signed it", () => {
+    const sql = tccSql("fade0c00");
+    for (const service of OCU_SERVICES) {
+      expect(sql).toContain(`VALUES ('${service}', 'com.infrawrench.opencomputeruse', 0, 2,`);
+    }
+    expect(sql).toContain("X'fade0c00'");
+    expect(OCU_REQUIREMENT).toContain('certificate leaf[subject.OU] = "CS54L4CF2Z"');
+  });
 
-describe("macOS guests", () => {
-  it("are off unless asked for: no image is made, and no VM started", async () => {
-    const apple = new AppleVirtualization({ helper: "/nowhere/nibblet-vm" });
-    await expect(apple.prepareImage(ctx, "macos", job)).rejects.toThrow(/turned off/);
-    await expect(
-      apple.start(ctx, {
-        id: "nib_1",
-        dir: "/nowhere/vm",
-        guest: "macos",
-        cpus: 2,
-        memoryMb: 4096,
-        imageDir: "/nowhere/image",
-        fresh: true,
-      }),
-    ).rejects.toThrow(/turned off/);
+  it("never put anything but a compiled requirement in their SQL", () => {
+    expect(() => tccSql("00'); DROP TABLE access; --")).toThrow();
+  });
+
+  it("check the apps they download against their developers' signatures", () => {
+    expect(BOOTSTRAP_SH).toContain(
+      `codesign --verify --deep --strict -R='${OCU_REQUIREMENT}' "$root/ocu/OpenComputerUse.app"`,
+    );
+    expect(BOOTSTRAP_SH).toMatch(/-R='identifier "com\.google\.Chrome"[^']*EQHXZ8M8AV"'/);
+    expect(BOOTSTRAP_SH).toContain("shasum -a 256 -c -");
+  });
+
+  it("build Tailscale without a C compiler, which a fresh macOS hasn't got", () => {
+    expect(BOOTSTRAP_SH).toContain("CGO_ENABLED=0");
   });
 });
