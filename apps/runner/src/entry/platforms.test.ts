@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  emptyHome,
-  kcpassword,
-  pfRules,
-  SUDOERS_RULES,
-  userCommands,
-  USERS,
-  VOLUME_FOLDERS,
-} from "./macos.ts";
+import { userCommands, USERS } from "../machine/macos-desktop.ts";
+import { emptyHome, pfRules, SUDOERS_RULES, VOLUME_FOLDERS } from "./macos.ts";
 import { aclArgs, rangesExcept } from "./windows.ts";
 
 describe("Windows Firewall's ranges", () => {
@@ -106,11 +99,6 @@ describe("macOS's users", () => {
 });
 
 describe("macOS's desktop", () => {
-  it("signs in with the password macOS's way of hiding it", () => {
-    // What macOS itself writes for "password".
-    expect(kcpassword("password").toString("hex")).toBe("0de82150a5d3af8ea3b91f7d");
-  });
-
   it("lets the guard run only the session script as root, with only its tokens", () => {
     expect(SUDOERS_RULES).toContain(
       "_nibbletguard ALL = (root) NOPASSWD: /Library/Nibblets/bin/nibblet-session",

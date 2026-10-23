@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { BOOTSTRAP_SH, OCU_REQUIREMENT, tccSql } from "../src/provision.ts";
+import {
+  BOOTSTRAP_SH,
+  FSTAB,
+  OCU_REQUIREMENT,
+  SIGNIN_AGENT,
+  SIGNIN_SH,
+  tccSql,
+} from "../src/provision.ts";
 
 describe("macOS guests' images", () => {
   it("give each app its permission for the code its developer signed alone", () => {
@@ -47,5 +54,16 @@ describe("macOS guests' images", () => {
 
   it("build Tailscale without a C compiler, which a fresh macOS hasn't got", () => {
     expect(BOOTSTRAP_SH).toContain("CGO_ENABLED=0");
+  });
+
+  it("mount the home disk over the agent's home at boot, by the name the guest agent gives it", () => {
+    expect(FSTAB).toBe("LABEL=Nibblet\\040Home /Users/nibblet apfs rw\n");
+  });
+
+  it("turn on signing in from the login window's own session, the one place macOS lets it be", () => {
+    expect(SIGNIN_AGENT).toContain(
+      "<key>LimitLoadToSessionType</key>\n  <string>LoginWindow</string>",
+    );
+    expect(SIGNIN_SH).toContain("sysadminctl -autologin set -userName nibblet");
   });
 });

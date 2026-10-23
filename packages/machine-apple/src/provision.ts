@@ -205,6 +205,50 @@ fi
 exec "$root/node/bin/node" "$root/app/apps/runner/src/machine/agent.ts"
 `;
 
+/**
+ * In the login window's own session, as root: turns on signing in by itself
+ * for the agent's user when the guest agent asks, with the password it
+ * gives (the runner's machine/macos-desktop.ts). macOS takes that password
+ * from nowhere else: sysadminctl can only set it from this session.
+ */
+export const SIGNIN_SH = `#!/bin/sh
+dir=/private/var/db/nibblets
+while :; do
+  if [ -f "$dir/signin.request" ]; then
+    said=$(sysadminctl -autologin set -userName nibblet -password "$(cat "$dir/signin.request")" 2>&1)
+    rm -f "$dir/signin.request"
+    printf '%s\\n' "$said" > "$dir/signin.result.new"
+    mv -f "$dir/signin.result.new" "$dir/signin.result"
+  fi
+  sleep 1
+done
+`;
+
+export const SIGNIN_AGENT = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.nibblets.signin</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>/Library/Nibblets/signin.sh</string>
+  </array>
+  <key>LimitLoadToSessionType</key>
+  <string>LoginWindow</string>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
+`;
+
+/**
+ * Mounts each VM's home disk (the guest agent names it so) over the agent's
+ * home at boot, before the login window signs anyone in to it.
+ */
+export const FSTAB = "LABEL=Nibblet\\040Home /Users/nibblet apfs rw\n";
+
 /** Run as root, by osascript: the guest's Data volume, given the files beside it. */
 const PROVISION_SH = `#!/bin/sh
 set -eu
@@ -220,6 +264,10 @@ install -o root -g wheel -m 755 "$files/bootstrap.sh" "$mnt/Library/Nibblets/boo
 install -o root -g wheel -m 644 "$files/install.json" "$mnt/Library/Nibblets/install.json"
 install -o root -g wheel -m 755 "$files/nibblet-vm" "$mnt/Library/Nibblets/bin/nibblet-vm"
 install -o root -g wheel -m 644 "$files/dev.nibblets.agent.plist" "$mnt/Library/LaunchDaemons/dev.nibblets.agent.plist"
+install -o root -g wheel -m 755 "$files/signin.sh" "$mnt/Library/Nibblets/signin.sh"
+install -d -o root -g wheel -m 755 "$mnt/Library/LaunchAgents" "$mnt/Users/nibblet"
+install -o root -g wheel -m 644 "$files/dev.nibblets.signin.plist" "$mnt/Library/LaunchAgents/dev.nibblets.signin.plist"
+install -o root -g wheel -m 644 "$files/fstab" "$mnt/private/etc/fstab"
 touch "$mnt/Library/Nibblets/preparing"
 # The system's privacy database, which its first boot made, and which only a
 # person at its screen could add to otherwise.
@@ -457,6 +505,9 @@ export async function provisionMacos(
   );
   await writeFile(join(files, "tcc.sql"), await tccRows());
   await writeFile(join(files, "dev.nibblets.agent.plist"), LAUNCH_DAEMON);
+  await writeFile(join(files, "signin.sh"), SIGNIN_SH);
+  await writeFile(join(files, "dev.nibblets.signin.plist"), SIGNIN_AGENT);
+  await writeFile(join(files, "fstab"), FSTAB);
   await copyFile(helper, join(files, "nibblet-vm"));
   const script = join(files, "provision.sh");
   await writeFile(script, PROVISION_SH);

@@ -4,8 +4,8 @@
  * Linux; and pf for the firewall, in an anchor under the com.apple one the
  * stock rules already load, so nothing of the system's is touched.
  *
- * The agent's user is signed in to the desktop, once its home disk is
- * mounted, as Windows' is at boot: the browser (Google Chrome) and the
+ * The agent's user is signed in to the desktop at boot, as Windows' is
+ * (machine/macos-desktop.ts): the browser (Google Chrome) and the
  * desktop's apps are OpenComputerUse's, run as that user in that session.
  * The guard starts its OpenComputerUse through sudo, which may run only
  * the session script (SESSION_SCRIPT) for it, with its two tokens.
@@ -15,9 +15,8 @@
  * user may reach on loopback.
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, chown, lstat, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, chown, lstat, mkdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -30,6 +29,7 @@ import {
   TAILSCALE_GID,
   TAILSCALE_UID,
 } from "@nibblets/protocol";
+import { users, waitForDesktop } from "../machine/macos-desktop.ts";
 import { MACOS_TAILSCALE } from "../tailscale.ts";
 import { ownSubnet, tailnetPorts } from "./linux.ts";
 import { inherit, pick, sleep } from "./shared.ts";
@@ -51,14 +51,6 @@ export const OCU_APP = "/Applications/OpenComputerUse.app";
 /** Starts OpenComputerUse in the agent's desktop session, as the agent's user. */
 export const SESSION_SCRIPT = path.join(NIBBLETS, "bin", "nibblet-session");
 const SUDOERS = "/private/etc/sudoers.d/nibblets";
-/**
- * The agent's user's password, for signing it in to the desktop: on its
- * home disk, so its login keychain opens with it whichever image it boots,
- * and root's alone.
- */
-const LOGIN_SECRET = path.join(HOME, ".nibblet-login");
-/** How long signing in to the desktop may take: making a new user's session is slow. */
-const SIGN_IN_MS = 3 * 60_000;
 
 const log = (message: string) => console.log(`entry: ${message}`);
 
@@ -67,76 +59,6 @@ const exists = (p: string) =>
     () => true,
     () => false,
   );
-
-/** The users, as dscl makes them: the agent's own group, the guard's, and Tailscale's. */
-export const USERS = [
-  {
-    name: "nibblet",
-    uid: AGENT_UID,
-    gid: AGENT_GID,
-    group: "nibblet",
-    home: HOME,
-    shell: "/bin/zsh",
-    realName: "Nibblet",
-  },
-  {
-    name: "_nibbletguard",
-    uid: GUARD_UID,
-    gid: GUARD_GID,
-    group: "_nibbletguard",
-    home: GUARD_HOME,
-    shell: "/usr/bin/false",
-    realName: "Nibblet guard",
-  },
-  {
-    name: "_nibblettailscale",
-    uid: TAILSCALE_UID,
-    gid: TAILSCALE_GID,
-    group: "_nibblettailscale",
-    home: MACOS_TAILSCALE.state,
-    shell: "/usr/bin/false",
-    realName: "Nibblet Tailscale",
-  },
-];
-
-/**
- * The dscl commands that make a user that isn't there yet, hidden from the
- * login window. None has a password to begin with; the agent's is given
- * one to sign in to the desktop with (`signIn`).
- */
-export function userCommands(user: (typeof USERS)[number]): string[][] {
-  const g = `/Groups/${user.group}`;
-  const u = `/Users/${user.name}`;
-  return [
-    ["-create", g],
-    ["-create", g, "PrimaryGroupID", String(user.gid)],
-    ["-create", u],
-    ["-create", u, "UniqueID", String(user.uid)],
-    ["-create", u, "PrimaryGroupID", String(user.gid)],
-    ["-create", u, "NFSHomeDirectory", user.home],
-    ["-create", u, "UserShell", user.shell],
-    ["-create", u, "RealName", user.realName],
-    ["-create", u, "IsHidden", "1"],
-    ["-create", u, "Password", "*"],
-  ];
-}
-
-/**
- * Makes each user that isn't there yet, or wasn't finished (the commands
- * only set what they name, so running them again is safe). macOS gives
- * each its GeneratedUID itself, and won't have it set.
- */
-async function users(): Promise<void> {
-  for (const user of USERS) {
-    const uid = await run("dscl", [".", "-read", `/Users/${user.name}`, "UniqueID"]).then(
-      (r) => r.stdout.trim(),
-      () => "",
-    );
-    if (uid === `UniqueID: ${user.uid}`) continue;
-    for (const args of userCommands(user)) await run("dscl", [".", ...args]);
-    log(`made the ${user.name} user`);
-  }
-}
 
 /** What the tailnet may reach: Tailscale's user, on loopback, and the ports shared. */
 export interface TailnetFence {
@@ -284,167 +206,6 @@ async function sessionScript(): Promise<void> {
   await run("mv", ["-f", `${SUDOERS}.new`, SUDOERS]);
 }
 
-/** macOS's obfuscation of an automatic login's password, in /etc/kcpassword. */
-export function kcpassword(password: string): Buffer {
-  const key = [0x7d, 0x89, 0x52, 0x23, 0xd2, 0xbc, 0xdd, 0xea, 0xa3, 0xb9, 0x1f];
-  const plain = Buffer.from(`${password}\0`, "utf8");
-  const out = Buffer.alloc(Math.ceil(plain.length / 12) * 12);
-  plain.copy(out);
-  for (let i = 0; i < out.length; i++) out[i] = (out[i] ?? 0) ^ (key[i % key.length] ?? 0);
-  return out;
-}
-
-/**
- * The desktop's commands, which each get a minute: one that waits on
- * something (dscl, for a password it can't ask for) mustn't hold up the
- * nibblet for good.
- */
-const quick = (cmd: string, args: string[]) => run(cmd, args, { timeout: 60_000 });
-
-/** Whether the agent's user has a password yet: dscl makes it with none. */
-async function hasPassword(): Promise<boolean> {
-  const authority = await quick("dscl", [
-    ".",
-    "-read",
-    "/Users/nibblet",
-    "AuthenticationAuthority",
-  ]).then(
-    (r) => r.stdout,
-    () => "",
-  );
-  return authority.includes(";ShadowHash;");
-}
-
-/** Who's signed in to the desktop, if anyone: the console's owner. */
-async function consoleUser(): Promise<string | null> {
-  const owner = await quick("stat", ["-f", "%Su", "/dev/console"]).then(
-    (r) => r.stdout.trim(),
-    () => "",
-  );
-  return owner && owner !== "root" ? owner : null;
-}
-
-/** Setup Assistant's first-login screens, as its preferences name them. */
-const SETUP_SCREENS = [
-  "DidSeeAccessibility",
-  "DidSeeActivationLock",
-  "DidSeeAppearanceSetup",
-  "DidSeeApplePaySetup",
-  "DidSeeAvatarSetup",
-  "DidSeeCloudSetup",
-  "DidSeeIntelligence",
-  "DidSeeLockdownMode",
-  "DidSeePrivacy",
-  "DidSeeScreenTime",
-  "DidSeeSiriSetup",
-  "DidSeeSyncSetup",
-  "DidSeeSyncSetup2",
-  "DidSeeTermsOfAddress",
-  "DidSeeTouchIDSetup",
-  "DidSeeTrueTonePrivacy",
-  "DidSeeWalletSetup",
-  "DidSeeiCloudLoginForStorageServices",
-];
-
-/**
- * The first-login screens that would stand in front of the desktop (an
- * Apple Account, Siri, Screen Time and the rest), as seen, in the agent's
- * own preferences.
- */
-async function skipSetupScreens(version: string, build: string): Promise<void> {
-  const prefs = path.join(HOME, "Library", "Preferences");
-  const file = path.join(prefs, "com.apple.SetupAssistant.plist");
-  const seenBuild = await quick("plutil", [
-    "-extract",
-    "LastSeenBuddyBuildVersion",
-    "raw",
-    "-o",
-    "-",
-    file,
-  ]).then(
-    (r) => r.stdout.trim(),
-    () => "",
-  );
-  if (seenBuild === build) return;
-  await mkdir(prefs, { recursive: true });
-  await chown(path.join(HOME, "Library"), AGENT_UID, AGENT_GID);
-  await chown(prefs, AGENT_UID, AGENT_GID);
-  // A file of plist, written as one: cfprefsd has nothing to do with it.
-  if (!(await exists(file))) await quick("plutil", ["-create", "xml1", file]);
-  const set = (key: string, type: "-bool" | "-string", value: string) =>
-    quick("plutil", ["-replace", key, type, value, file]);
-  for (const key of SETUP_SCREENS) await set(key, "-bool", "YES");
-  for (const key of ["LastSeenCloudProductVersion", "LastSeenDiagnosticsProductVersion"])
-    await set(key, "-string", version);
-  await set("LastSeenBuddyBuildVersion", "-string", build);
-  await set("SkipFirstLoginOptimization", "-bool", "YES");
-  await chown(file, AGENT_UID, AGENT_GID);
-}
-
-/**
- * Signs the agent's user in to the desktop, unless it is already, and waits
- * until it is. Only now, with its home disk mounted, never at boot: an
- * automatic login is set just for this one and taken away again.
- */
-async function signIn(): Promise<void> {
-  if ((await consoleUser()) === "nibblet") return;
-  let password = (await readFile(LOGIN_SECRET, "utf8").catch(() => "")).trim();
-  if (!password) {
-    password = randomBytes(18).toString("base64url");
-    await quick("dscl", [".", "-passwd", "/Users/nibblet", password]);
-    await writeFile(LOGIN_SECRET, password, { mode: 0o600 });
-    await chown(LOGIN_SECRET, 0, 0);
-    // A keychain from before is locked with a password that's gone.
-    await rm(path.join(HOME, "Library", "Keychains"), { recursive: true, force: true });
-  } else if (!(await hasPassword())) {
-    // A new image's user: the same as before, for its keychain. Once it has
-    // one, it's left alone: signed in, macOS guards it with a secure token.
-    await quick("dscl", [".", "-passwd", "/Users/nibblet", password]);
-  }
-  const [version, build] = await Promise.all([
-    quick("sw_vers", ["-productVersion"]).then((r) => r.stdout.trim()),
-    quick("sw_vers", ["-buildVersion"]).then((r) => r.stdout.trim()),
-  ]);
-  await skipSetupScreens(version, build);
-  await writeFile("/private/etc/kcpassword", kcpassword(password), { mode: 0o600 });
-  const loginwindow = "/Library/Preferences/com.apple.loginwindow";
-  await quick("defaults", ["write", loginwindow, "autoLoginUser", "nibblet"]);
-  try {
-    // The login window starts again, and signs in as autoLoginUser.
-    await quick("killall", ["loginwindow"]).catch(() => undefined);
-    const until = Date.now() + SIGN_IN_MS;
-    while ((await consoleUser()) !== "nibblet") {
-      if (Date.now() > until) {
-        throw new Error(
-          `its user didn't sign in to the desktop. The login window said:\n${await loginwindowSaid()}`,
-        );
-      }
-      await sleep(1000);
-    }
-    log("signed in to the desktop");
-  } finally {
-    await quick("defaults", ["delete", loginwindow, "autoLoginUser"]).catch(() => undefined);
-    await rm("/private/etc/kcpassword", { force: true });
-  }
-}
-
-/** The end of what the login window logged lately, to say why a sign-in didn't happen. */
-async function loginwindowSaid(): Promise<string> {
-  return quick("log", [
-    "show",
-    "--last",
-    "5m",
-    "--style",
-    "compact",
-    "--predicate",
-    'process == "loginwindow"',
-  ]).then(
-    (r) => r.stdout.trim().split("\n").slice(-15).join("\n"),
-    (err: unknown) =>
-      `(its log couldn't be read: ${err instanceof Error ? err.message : String(err)})`,
-  );
-}
-
 /** Tailscale's folders: its state, its own alone, and its control socket's, which only it can open. */
 async function tailscaleFolders(): Promise<void> {
   await ownedDir(MACOS_TAILSCALE.state, TAILSCALE_UID, TAILSCALE_GID, 0o700);
@@ -531,7 +292,7 @@ export const macos: EntryPlatform = {
   guardEnv: ["PATH", "LANG", "TZ", "NODE_ENV"],
 
   async prepare() {
-    await users();
+    await users(log);
     const joining = process.env.NIBBLET_TAILSCALE === "1";
     const leaving = !joining && tailscaleLeft();
     const fence = joining
@@ -543,7 +304,7 @@ export const macos: EntryPlatform = {
     await folders();
     await sessionScript();
     if (existsSync(OCU_APP)) {
-      await signIn().catch((err: unknown) =>
+      await waitForDesktop(log).catch((err: unknown) =>
         log(
           `couldn't sign in to the desktop, so there's no browser or desktop: ${err instanceof Error ? err.message : String(err)}`,
         ),
@@ -595,6 +356,8 @@ export const macos: EntryPlatform = {
       env,
       stdio: "inherit",
       detached: opts.group,
+      // Its working folder, which the runner works in: launchd starts the agent in /.
+      cwd: who === "guard" ? GUARD_HOME : path.join(HOME, "work"),
     });
   },
 
