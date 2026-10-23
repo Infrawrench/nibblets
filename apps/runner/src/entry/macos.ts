@@ -414,7 +414,11 @@ async function signIn(): Promise<void> {
     await quick("killall", ["loginwindow"]).catch(() => undefined);
     const until = Date.now() + SIGN_IN_MS;
     while ((await consoleUser()) !== "nibblet") {
-      if (Date.now() > until) throw new Error("its user didn't sign in to the desktop");
+      if (Date.now() > until) {
+        throw new Error(
+          `its user didn't sign in to the desktop. The login window said:\n${await loginwindowSaid()}`,
+        );
+      }
       await sleep(1000);
     }
     log("signed in to the desktop");
@@ -422,6 +426,23 @@ async function signIn(): Promise<void> {
     await quick("defaults", ["delete", loginwindow, "autoLoginUser"]).catch(() => undefined);
     await rm("/private/etc/kcpassword", { force: true });
   }
+}
+
+/** The end of what the login window logged lately, to say why a sign-in didn't happen. */
+async function loginwindowSaid(): Promise<string> {
+  return quick("log", [
+    "show",
+    "--last",
+    "5m",
+    "--style",
+    "compact",
+    "--predicate",
+    'process == "loginwindow"',
+  ]).then(
+    (r) => r.stdout.trim().split("\n").slice(-15).join("\n"),
+    (err: unknown) =>
+      `(its log couldn't be read: ${err instanceof Error ? err.message : String(err)})`,
+  );
 }
 
 /** Tailscale's folders: its state, its own alone, and its control socket's, which only it can open. */

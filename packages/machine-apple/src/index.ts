@@ -48,6 +48,8 @@ const helperSource = (file: string) => fileURLToPath(new URL(`../helper/${file}`
 /** How big a VM's disks grow to: the system disk (from a much smaller image), and its home. */
 const SYSTEM_GB = 32;
 const HOME_GB = 64;
+/** What macOS asks for at least: with less, it crawls (a VM booted for a job alone is smaller). */
+const MACOS_MIN_MEMORY_MB = 4096;
 
 const State = z.object({
   state: z.enum(["starting", "running", "stopped"]),
@@ -212,7 +214,7 @@ export class AppleVirtualization implements HypervisorPlugin {
     const spec = {
       guest: vm.guest,
       cpus: vm.cpus,
-      memoryMb: vm.memoryMb,
+      memoryMb: vm.guest === "macos" ? Math.max(vm.memoryMb, MACOS_MIN_MEMORY_MB) : vm.memoryMb,
       disks: [
         { path: f.system, readOnly: false },
         { path: f.home, readOnly: false },
