@@ -166,6 +166,28 @@ describe("systemPrompt", () => {
     expect(systemPrompt({ ...base, nibblet: limited, banks: [] })).not.toContain("## Spending");
   });
 
+  it("tells a nibblet which apps it's linked to, with its scopes", () => {
+    const prompt = systemPrompt({
+      ...base,
+      nibblet,
+      apps: [
+        {
+          name: "infrawrench",
+          title: "Infrawrench",
+          account: "Acme on Infrawrench",
+          scopes: ["resources:read", "secrets:read"],
+          providers: ["aws"],
+          prompt: "Infrawrench's tools act there as you.",
+        },
+      ],
+    });
+    expect(prompt).toContain(
+      "- Infrawrench, as Acme on Infrawrench, through the `infrawrench` tools. Your scopes: resources:read, secrets:read (only for aws).",
+    );
+    expect(prompt).toContain("Infrawrench's tools act there as you.");
+    expect(systemPrompt({ ...base, nibblet, apps: [] })).not.toContain("## Linked apps");
+  });
+
   const london = {
     latitude: 51.52461,
     longitude: -0.07813,
