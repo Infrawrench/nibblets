@@ -280,6 +280,29 @@ describe("linking Infrawrench", () => {
   });
 });
 
+describe("adopting a link Infrawrench made itself", () => {
+  it("checks its credential and says who it is, as linking would", async () => {
+    const app = fakeInfrawrench();
+    const plugin = infrawrenchPlugin({ url: INFRAWRENCH_URL }, app);
+    expect(await plugin.adopt?.("iwl_secret")).toEqual({
+      link: { ref: "lnk-uuid-1", secret: "iwl_secret" },
+      account: "Acme on Infrawrench",
+    });
+    expect(app.calls).toMatchObject([
+      { method: "GET", path: "/api/agent-link", auth: "Bearer iwl_secret" },
+    ]);
+  });
+
+  it("refuses a credential Infrawrench doesn't take", async () => {
+    const app = fakeInfrawrench();
+    const plugin = infrawrenchPlugin({ url: INFRAWRENCH_URL }, app);
+    const adopted = plugin.adopt?.("iwl_wrong");
+    await expect(adopted).rejects.toBeInstanceOf(AppLinkError);
+    await expect(adopted).rejects.not.toBeInstanceOf(AppLinkRevokedError);
+    await expect(adopted).rejects.toThrow("doesn't take that link's credential");
+  });
+});
+
 describe("a nibblet's agent", () => {
   it("is made, changed, inspected and revoked over the link's routes", async () => {
     const { app, plugin, link } = await linked();

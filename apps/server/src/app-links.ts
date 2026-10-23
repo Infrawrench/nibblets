@@ -47,7 +47,7 @@ export interface AppLinkStore {
   createAppLink(row: Omit<AppLinkRow, "createdAt" | "updatedAt">): Promise<AppLinkRow>;
   updateAppLink(
     id: string,
-    patch: Partial<Pick<AppLinkRow, "account" | "state" | "detail">>,
+    patch: Partial<Pick<AppLinkRow, "account" | "state" | "detail" | "secret">>,
   ): Promise<void>;
   /** Its grants go with it. */
   deleteAppLink(id: string): Promise<void>;
@@ -255,7 +255,9 @@ export class AppLinks {
           this.settle(attempt, answer.status, null, null);
           return;
         case "linked": {
-          const id = await this.serially(() => this.keep(attempt, answer.link, answer.account));
+          const id = await this.serially(() =>
+            this.keep(attempt.factory, attempt.settings, answer.link, answer.account),
+          );
           this.settle(attempt, "linked", id, null);
           return;
         }
@@ -273,20 +275,62 @@ export class AppLinks {
     }
   }
 
-  private async keep(attempt: Attempt, link: LinkRef, account: string): Promise<string> {
+  /**
+   * Takes on a link its app approved some other way (the app set this server
+   * up, say), once the app says its secret works, and keeps it as a link
+   * made here would be.
+   */
+  adopt(pluginId: string, input: AppLinkSettings, secret: string): Promise<AppLink> {
+    return this.serially(async () => {
+      const factory = this.factory(pluginId);
+      const settings = this.refusals(() => resolveSettings(factory.fields, input));
+      const plugin = this.refusals(() => factory.create(settings, { fetch: this.fetch }));
+      if (!plugin.adopt) {
+        throw new RpcError("bad_request", `${factory.name} can only be linked with a code`);
+      }
+      const adopted = await plugin.adopt(secret).catch((err: unknown) => {
+        throw this.failure(factory.id, err);
+      });
+      const id = await this.keep(factory, settings, adopted.link, adopted.account);
+      this.deps.publish({ type: "app_links_changed" });
+      return toAppLink(await this.link(id));
+    });
+  }
+
+  /**
+   * Keeps a link the app approved. One the server already has (the same
+   * link in the app, adopted again, say) is brought up to date rather than
+   * kept twice.
+   */
+  private async keep(
+    factory: AppLinkFactory,
+    settings: AppLinkSettings,
+    link: LinkRef,
+    account: string,
+  ): Promise<string> {
     const links = await this.deps.store.appLinks();
+    const known = links.find((l) => l.plugin === factory.id && l.ref === link.ref);
+    if (known) {
+      await this.deps.store.updateAppLink(known.id, {
+        secret: link.secret,
+        account,
+        state: "linked",
+        detail: null,
+      });
+      return known.id;
+    }
     const row = await this.deps.store.createAppLink({
       id: newId("lnk"),
-      plugin: attempt.factory.id,
-      name: newLinkName(attempt.factory.id, new Set(links.map((l) => l.name))),
-      settings: attempt.settings,
+      plugin: factory.id,
+      name: newLinkName(factory.id, new Set(links.map((l) => l.name))),
+      settings,
       ref: link.ref,
       secret: link.secret,
       account,
       state: "linked",
       detail: null,
     });
-    console.log(`app links: linked ${attempt.factory.name} as ${account}`);
+    console.log(`app links: linked ${factory.name} as ${account}`);
     return row.id;
   }
 

@@ -102,7 +102,12 @@ export function systemPromptExtra(store: Store): Promise<string> {
   return store.getSetting(SYSTEM_PROMPT_SETTING, (v) => z.string().parse(v), "");
 }
 
-export function createHandlers(s: Services): Handlers<Contract, Record<string, never>> {
+/** Who's calling: whether with the owner token (the installer, or the desktop app), not a paired device. */
+export interface RpcContext {
+  owner: boolean;
+}
+
+export function createHandlers(s: Services): Handlers<Contract, RpcContext> {
   const { store, conductor, scheduler, tunnel } = s;
 
   const checkModel = async (harness: HarnessId, model: string) => {
@@ -352,6 +357,13 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       remove: async ({ id }) => {
         await s.appLinks.remove(id);
         return ok;
+      },
+      adopt: async ({ plugin, settings, secret }, ctx) => {
+        // The installer hands over a link the app approved; a paired device can link with a code.
+        if (!ctx.owner) {
+          throw new RpcError("unauthorized", "Only the server's owner token can adopt a link");
+        }
+        return s.appLinks.adopt(plugin, settings, secret);
       },
       describe: ({ id }) => s.appLinks.describe(id),
     },

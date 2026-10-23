@@ -322,6 +322,19 @@ export function infrawrenchPlugin(
       };
     },
 
+    async adopt(secret) {
+      let info: LinkInfo;
+      try {
+        info = LinkInfo.parse(await asLink({ ref: "", secret }, "GET", "/api/agent-link"));
+      } catch (err) {
+        if (err instanceof AppLinkRevokedError) {
+          throw new AppLinkError("Infrawrench doesn't take that link's credential");
+        }
+        throw err;
+      }
+      return { link: { ref: info.id, secret }, account: account(info) };
+    },
+
     connection(grant) {
       return {
         mcp: { url: `${base}/api/mcp`, headers: { authorization: `Bearer ${grant.secret}` } },

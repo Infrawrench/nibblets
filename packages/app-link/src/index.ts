@@ -42,6 +42,14 @@ export interface AppLinkPlugin {
   /** Who the link is as now, and which of its grants the app has revoked. */
   inspect(link: LinkRef): Promise<LinkInspection>;
   /**
+   * Takes on a link the app made and approved some other way (say the app
+   * set this server up itself, already signed in): checks its secret with
+   * the app, and says who it is, as a `linked` poll would. Throws an
+   * `AppLinkError` when the app doesn't take it. Optional: an app that can
+   * only link with a code doesn't have it.
+   */
+  adopt?(secret: string): Promise<LinkAdopted>;
+  /**
    * How a nibblet reaches the app with a grant. Only ever sent to its
    * guard, since it carries the grant's secret.
    */
@@ -76,6 +84,11 @@ export type LinkPoll =
   | { status: "denied" }
   | { status: "expired" }
   | { status: "linked"; link: LinkRef; account: string };
+
+export interface LinkAdopted {
+  link: LinkRef;
+  account: string;
+}
 
 /** A link as the server keeps it. */
 export interface LinkRef {
