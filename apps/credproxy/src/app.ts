@@ -163,7 +163,9 @@ export function createApp(opts: AppOptions) {
     const target = manager.provider.upstream(url.pathname.slice(prefix.length) || "/", url.search);
     // Buffer the request so a 401 can be retried with a refreshed token.
     // Responses, which are the streamed half, pass straight through.
-    const body = req.method === "GET" || req.method === "HEAD" ? null : await req.arrayBuffer();
+    const raw = req.method === "GET" || req.method === "HEAD" ? null : await req.arrayBuffer();
+    const { rewriteBody } = manager.provider;
+    const body = raw && rewriteBody ? rewriteBody(raw) : raw;
 
     const send = (tokens: Awaited<ReturnType<TokenManager["get"]>>) => {
       const headers = new Headers(req.headers);

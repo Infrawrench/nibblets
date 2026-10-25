@@ -78,8 +78,51 @@ export function anthropicProvider(upstreamBase = "https://api.anthropic.com") {
       headers.set("authorization", `Bearer ${tokens.accessToken}`);
       headers.set("anthropic-beta", mergeBetas(headers.get("anthropic-beta"), OAUTH_BETA));
       if (!headers.has("anthropic-version")) headers.set("anthropic-version", "2023-06-01");
+      asInteractiveHeaders(headers);
     },
+    rewriteBody: asInteractiveBody,
   });
+}
+
+/**
+ * Claude Code's `User-Agent` up to its entrypoint: `claude-cli/2.1.296 (external, sdk-cli,
+ * agent-sdk/0.3.296)` from the Agent SDK, `claude-cli/2.1.310 (external, cli)` from the TUI.
+ */
+const CLAUDE_CODE_AGENT = /^(claude-cli\/\S+) \(external,[^)]*\)/;
+
+/** The first system block Claude Code sends, up to the entrypoint's value. */
+const BILLING_LINE = /^(x-anthropic-billing-header:.*?\bcc_entrypoint=)[^;]*/;
+
+const SystemBlocks = z.looseObject({
+  system: z.array(z.looseObject({ text: z.string().optional() })),
+});
+
+/**
+ * Subscriptions meter the Agent SDK's requests faster than the interactive
+ * CLI's for the same tokens, so the harness's Claude Code says it's the CLI.
+ * Only its entrypoint changes; its version stays its own. API keys aren't
+ * metered that way, so their provider leaves requests alone.
+ */
+export function asInteractiveHeaders(headers: Headers): void {
+  const agent = headers.get("user-agent");
+  if (!agent || !CLAUDE_CODE_AGENT.test(agent)) return;
+  headers.set("user-agent", agent.replace(CLAUDE_CODE_AGENT, "$1 (external, cli)"));
+  headers.set("x-app", "cli");
+}
+
+/** Sets `cc_entrypoint=cli` on Claude Code's billing line; any other body is sent as is. */
+export function asInteractiveBody(body: ArrayBuffer): ArrayBuffer {
+  let parsed;
+  try {
+    parsed = SystemBlocks.safeParse(JSON.parse(new TextDecoder().decode(body)));
+  } catch {
+    return body;
+  }
+  if (!parsed.success) return body;
+  const first = parsed.data.system[0];
+  if (!first?.text || !BILLING_LINE.test(first.text)) return body;
+  first.text = first.text.replace(BILLING_LINE, "$1cli");
+  return new TextEncoder().encode(JSON.stringify(parsed.data)).buffer;
 }
 
 /** Adds betas to a comma-separated `anthropic-beta` value, keeping order and dropping repeats. */

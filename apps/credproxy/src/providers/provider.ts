@@ -26,6 +26,8 @@ export interface ProviderPlugin {
   upstream(path: string, search: string): string;
   /** Sets auth on an outgoing request's headers. */
   authorise(headers: Headers, tokens: OAuthTokens): void;
+  /** Rewrites an outgoing request's body, if the provider needs to; it's sent as is otherwise. */
+  rewriteBody?(body: ArrayBuffer): ArrayBuffer;
 }
 
 export function defineProvider(plugin: ProviderPlugin): ProviderPlugin {
