@@ -100,6 +100,24 @@ function header(init: RequestInit, name: string): string | null {
   return new Headers(init.headers).get(name);
 }
 
+/** What the Agent SDK's Claude Code sends, as captured from 2.1.296. */
+const SDK_AGENT = "claude-cli/2.1.296 (external, sdk-cli, agent-sdk/0.3.296)";
+
+function sdkBody(billing = "cc_version=2.1.296.406; cc_entrypoint=sdk-cli;"): string {
+  return JSON.stringify({
+    model: "claude-opus-5-5",
+    messages: [{ role: "user", content: "hi" }],
+    system: [
+      { type: "text", text: `x-anthropic-billing-header: ${billing}` },
+      { type: "text", text: "You are a Claude agent, built on Anthropic's Claude Agent SDK." },
+    ],
+  });
+}
+
+function bodyBytes(init: RequestInit): Uint8Array {
+  return init.body instanceof ArrayBuffer ? new Uint8Array(init.body) : new Uint8Array();
+}
+
 describe("mergeBetas", () => {
   it("adds the OAuth beta once, keeping existing ones in order", () => {
     expect(mergeBetas(null, "oauth-2025-04-20")).toBe("oauth-2025-04-20");
@@ -305,6 +323,35 @@ describe("proxy", () => {
     expect(header(sent, "anthropic-version")).toBe("2023-06-01");
   });
 
+  it("presents the Agent SDK's Claude Code as the interactive CLI", async () => {
+    const { app, fetch } = setup(() => new Response("{}"));
+    await app.request("/anthropic/v1/messages?beta=true", {
+      method: "POST",
+      headers: { "x-api-key": KEY, "user-agent": SDK_AGENT },
+      body: sdkBody(),
+    });
+    const sent = fetch.mock.calls[0]?.[1] ?? {};
+    expect(header(sent, "user-agent")).toBe("claude-cli/2.1.296 (external, cli)");
+    expect(header(sent, "x-app")).toBe("cli");
+    expect(JSON.parse(new TextDecoder().decode(bodyBytes(sent)))).toEqual(
+      JSON.parse(sdkBody("cc_version=2.1.296.406; cc_entrypoint=cli;")),
+    );
+  });
+
+  it("leaves requests that aren't Claude Code's alone", async () => {
+    const { app, fetch } = setup(() => new Response("{}"));
+    const body = JSON.stringify({ system: [{ type: "text", text: "You are opencode" }] });
+    await app.request("/anthropic/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": KEY, "user-agent": "opencode/1.0" },
+      body,
+    });
+    const sent = fetch.mock.calls[0]?.[1] ?? {};
+    expect(header(sent, "user-agent")).toBe("opencode/1.0");
+    expect(header(sent, "x-app")).toBeNull();
+    expect(new TextDecoder().decode(bodyBytes(sent))).toBe(body);
+  });
+
   it("swaps the runner key for the DeepSeek API key", async () => {
     const { app, fetch } = setup(
       () => new Response("data: hi\n\n", { headers: { "content-type": "text/event-stream" } }),
@@ -464,6 +511,20 @@ describe("proxy on API keys", () => {
     expect(header(sent, "x-api-key")).toBe("sk-ant-key");
     expect(header(sent, "authorization")).toBeNull();
     expect(header(sent, "anthropic-beta")).toBe("fine-grained-tool-streaming-2025-05-14");
+  });
+
+  it("leaves the Agent SDK's Claude Code as it is", async () => {
+    const { app, fetch } = setup(() => new Response("{}"));
+    const body = sdkBody();
+    await app.request("/anthropic/v1/messages?beta=true", {
+      method: "POST",
+      headers: { "x-api-key": NIB_KEY, "user-agent": SDK_AGENT },
+      body,
+    });
+    const sent = fetch.mock.calls[0]?.[1] ?? {};
+    expect(header(sent, "user-agent")).toBe(SDK_AGENT);
+    expect(header(sent, "x-app")).toBeNull();
+    expect(new TextDecoder().decode(bodyBytes(sent))).toBe(body);
   });
 
   it("sends Codex to the OpenAI API with the API key and no ChatGPT account", async () => {
