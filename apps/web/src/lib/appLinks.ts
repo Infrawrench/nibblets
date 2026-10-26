@@ -1,4 +1,19 @@
-import type { AppGrant, AppLinkOutcome } from "@nibblets/protocol";
+import {
+  isWebUrl,
+  type AppGrant,
+  type AppLinkAttempt,
+  type AppLinkOutcome,
+} from "@nibblets/protocol";
+
+/**
+ * Where to send the person to approve a link: its page with the code
+ * filled in if there is one. Null for anything but http or https, which is
+ * never opened or linked to.
+ */
+export function approvalPage(attempt: AppLinkAttempt): string | null {
+  const url = attempt.verificationUrlComplete ?? attempt.verificationUrl;
+  return isWebUrl(url) ? url : null;
+}
 
 /** What a nibblet's form for one link holds before it's saved. */
 export interface GrantDraft {

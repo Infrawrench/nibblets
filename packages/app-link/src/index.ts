@@ -39,7 +39,7 @@ export interface AppLinkPlugin {
    * the app already revoked is not an error.
    */
   unlink(link: LinkRef): Promise<void>;
-  /** Who the link is as now, and which of its grants the app has revoked. */
+  /** Who the link is as now, and which of its grants the app still has live. */
   inspect(link: LinkRef): Promise<LinkInspection>;
   /**
    * Takes on a link the app made and approved some other way (say the app
@@ -138,8 +138,11 @@ export interface GrantSecret extends GrantRef {
 
 export interface LinkInspection {
   account: string;
-  /** Refs of grants the app has revoked (from its own settings, say). */
-  revoked: string[];
+  /**
+   * Refs of the grants the app has live. Any other the server holds was
+   * revoked in the app (from its own settings, say), or is gone.
+   */
+  live: string[];
 }
 
 export interface AppLinkConnection {

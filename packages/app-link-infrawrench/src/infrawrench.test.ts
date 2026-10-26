@@ -244,6 +244,57 @@ describe("linking Infrawrench", () => {
     expect(app.calls.at(-1)?.body).toEqual({ deviceCode: "dc_1" });
   });
 
+  it("won't send the person anywhere but Infrawrench's own page", async () => {
+    for (const page of ["javascript:alert(document.cookie)", "https://evil.example/link-agents"]) {
+      const plugin = infrawrenchPlugin(
+        { url: INFRAWRENCH_URL },
+        {
+          fetch: async () =>
+            Response.json(
+              {
+                deviceCode: "dc",
+                userCode: "ABCD-EFGH",
+                verificationUrl: `${INFRAWRENCH_URL}/link-agents`,
+                verificationUrlComplete: page,
+                expiresIn: 900,
+                interval: 5,
+              },
+              { status: 201 },
+            ),
+        },
+      );
+      await expect(plugin.begin({ label: "Nibblets" })).rejects.toThrow("isn't its own");
+    }
+  });
+
+  it("undoes an approval whose answer it can't read, since it won't be answered again", async () => {
+    const calls: { method: string; auth: string | null }[] = [];
+    const plugin = infrawrenchPlugin(
+      { url: INFRAWRENCH_URL },
+      {
+        fetch: async (_input, init) => {
+          calls.push({
+            method: init?.method ?? "GET",
+            auth: new Headers(init?.headers).get("authorization"),
+          });
+          return init?.method === "DELETE"
+            ? Response.json({ ok: true })
+            : Response.json({ status: "approved", credential: "iwl_new", link: { id: "x" } });
+        },
+      },
+    );
+    const start = {
+      secret: "dc",
+      userCode: "X",
+      verificationUrl: INFRAWRENCH_URL,
+      verificationUrlComplete: null,
+      expiresAt: new Date(Date.now() + 60_000),
+      interval: 5,
+    };
+    await expect(plugin.poll(start)).rejects.toBeInstanceOf(AppLinkError);
+    expect(calls.at(-1)).toEqual({ method: "DELETE", auth: "Bearer iwl_new" });
+  });
+
   it("says when the person denied it", async () => {
     const app = fakeInfrawrench();
     const plugin = infrawrenchPlugin({ url: INFRAWRENCH_URL }, app);
@@ -333,7 +384,10 @@ describe("a nibblet's agent", () => {
       path: "/api/agent-link/agents/agent-1",
     });
 
-    expect(await plugin.inspect(link)).toEqual({ account: "Acme on Infrawrench", revoked: [] });
+    expect(await plugin.inspect(link)).toEqual({
+      account: "Acme on Infrawrench",
+      live: ["agent-1"],
+    });
 
     await plugin.revoke(link, grant);
     expect(app.agents[0]?.revokedAt).not.toBeNull();
@@ -341,7 +395,7 @@ describe("a nibblet's agent", () => {
     await plugin.revoke(link, grant);
     expect(await plugin.inspect(link)).toEqual({
       account: "Acme on Infrawrench",
-      revoked: ["agent-1"],
+      live: [],
     });
   });
 

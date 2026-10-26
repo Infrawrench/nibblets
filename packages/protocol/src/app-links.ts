@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WebUrl } from "./urls.ts";
 
 /**
  * App links: other apps a nibblet can act in under an identity of its own.
@@ -76,9 +77,10 @@ export const AppLinkAttempt = z.object({
   plugin: AppLinkPluginId,
   /** What to type, or check, on the app's page. */
   userCode: z.string(),
-  verificationUrl: z.string(),
+  /** Only ever http or https, since the UI opens it. */
+  verificationUrl: WebUrl,
   /** The same page with the code filled in, when the app has one. */
-  verificationUrlComplete: z.string().nullable(),
+  verificationUrlComplete: WebUrl.nullable(),
   expiresAt: Timestamp,
 });
 export type AppLinkAttempt = z.infer<typeof AppLinkAttempt>;
