@@ -43,6 +43,28 @@ export function grantDraftChanged(draft: GrantDraft, grant: AppGrant | undefined
   return !same(draft.scopes, grant.scopes) || !same(draft.providers, grant.providers);
 }
 
+/**
+ * Whether a scope can be ticked with providers chosen: only ones the app
+ * says choosing providers limits (`narrowable`, null for all of them).
+ */
+export function canNarrow(scope: string, narrowable: readonly string[] | null): boolean {
+  return narrowable === null || narrowable.includes(scope);
+}
+
+/**
+ * The form with other providers chosen. Once there's any, scopes they can't
+ * limit are unticked, since they'd still reach every provider.
+ */
+export function withProviders(
+  draft: GrantDraft,
+  providers: string[],
+  narrowable: readonly string[] | null,
+): GrantDraft {
+  const scopes =
+    providers.length > 0 ? draft.scopes.filter((s) => canNarrow(s, narrowable)) : draft.scopes;
+  return { ...draft, providers, scopes };
+}
+
 /** A list with one item ticked or unticked. */
 export function ticked(list: readonly string[], item: string, on: boolean): string[] {
   return on ? [...new Set([...list, item])] : list.filter((x) => x !== item);

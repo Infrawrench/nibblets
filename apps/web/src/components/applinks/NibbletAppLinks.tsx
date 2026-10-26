@@ -2,7 +2,14 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AppGrant, AppLink, AppLinkKind, Nibblet } from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
-import { grantDraftChanged, grantDraftOf, ticked, type GrantDraft } from "../../lib/appLinks.ts";
+import {
+  canNarrow,
+  grantDraftChanged,
+  grantDraftOf,
+  ticked,
+  withProviders,
+  type GrantDraft,
+} from "../../lib/appLinks.ts";
 import { keys } from "../../lib/servers.tsx";
 import { Button } from "../ui/Button.tsx";
 import { SectionHeading } from "../ui/Field.tsx";
@@ -164,7 +171,11 @@ function GrantRow({
                   <Check
                     key={scope.value}
                     checked={draft.scopes.includes(scope.value)}
-                    disabled={saving}
+                    disabled={
+                      saving ||
+                      (draft.providers.length > 0 &&
+                        !canNarrow(scope.value, description.data.narrowable))
+                    }
                     onChange={(on) =>
                       setDraft({ ...draft, scopes: ticked(draft.scopes, scope.value, on) })
                     }
@@ -186,12 +197,25 @@ function GrantRow({
                     checked={draft.providers.includes(provider.id)}
                     disabled={saving}
                     onChange={(on) =>
-                      setDraft({ ...draft, providers: ticked(draft.providers, provider.id, on) })
+                      setDraft(
+                        withProviders(
+                          draft,
+                          ticked(draft.providers, provider.id, on),
+                          description.data.narrowable,
+                        ),
+                      )
                     }
                   >
                     {provider.name}
                   </Check>
                 ))}
+                {draft.providers.length > 0 &&
+                description.data.ceiling.some((s) => !canNarrow(s, description.data.narrowable)) ? (
+                  <span className="px-1.5 text-2xs text-faint">
+                    Only for these providers, it can only have scopes they limit: the others would
+                    reach every provider, so they're off.
+                  </span>
+                ) : null}
               </div>
             ) : null}
           </>

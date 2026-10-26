@@ -60,6 +60,7 @@ function fakeApp() {
         scopeGroups: [{ title: "All", scopes: [{ value: "read", label: "Read" }] }],
         providers: null,
         ceiling: ["read", "write"],
+        narrowable: null,
       };
     },
     grant: async (_link, request) => {

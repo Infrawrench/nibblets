@@ -1,6 +1,13 @@
 import type { AppGrant } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
-import { approvalPage, grantDraftChanged, grantDraftOf, ticked } from "./appLinks.ts";
+import {
+  approvalPage,
+  canNarrow,
+  grantDraftChanged,
+  grantDraftOf,
+  ticked,
+  withProviders,
+} from "./appLinks.ts";
 
 const grant: AppGrant = {
   nibbletId: "nib_1",
@@ -66,5 +73,28 @@ describe("the page to approve a link on", () => {
         verificationUrlComplete: null,
       }),
     ).toBeNull();
+  });
+});
+
+describe("narrowing a grant to providers", () => {
+  const narrowable = ["resources:read", "secrets:read"];
+  const draft = { on: true, scopes: ["resources:read", "audit:read"], providers: [] };
+
+  it("unticks scopes the providers can't limit once any is chosen", () => {
+    expect(withProviders(draft, ["aws"], narrowable)).toEqual({
+      on: true,
+      scopes: ["resources:read"],
+      providers: ["aws"],
+    });
+    // None chosen is all of them, so every scope can stay.
+    expect(withProviders(draft, [], narrowable).scopes).toEqual(draft.scopes);
+    // An app that doesn't say limits none of them.
+    expect(withProviders(draft, ["aws"], null).scopes).toEqual(draft.scopes);
+  });
+
+  it("says which scopes can be ticked with providers chosen", () => {
+    expect(canNarrow("secrets:read", narrowable)).toBe(true);
+    expect(canNarrow("audit:read", narrowable)).toBe(false);
+    expect(canNarrow("audit:read", null)).toBe(true);
   });
 });
