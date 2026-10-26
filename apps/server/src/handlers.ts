@@ -281,6 +281,9 @@ export function createHandlers(s: Services): Handlers<Contract, RpcContext> {
         await conductor.approvals.decide(id, approvalId, approve, reason);
         return ok;
       },
+      view: ({ id, viewId }) => conductor.appViews.content(id, viewId),
+      viewCall: ({ id, itemId, tool, arguments: args }) =>
+        conductor.appViews.call(id, itemId, tool, args),
     },
 
     machines: {

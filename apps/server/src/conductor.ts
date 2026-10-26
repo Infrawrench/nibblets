@@ -59,6 +59,7 @@ import { TerminalHub } from "./terminals.ts";
 import type { Bank } from "./bank.ts";
 import type { AppConnections, AppLinks } from "./app-links.ts";
 import { CardFiles } from "./card-files.ts";
+import { AppViews } from "./views.ts";
 import { desktopToken, guardToken, hashToken, newId, viewToken, type Store } from "./store.ts";
 
 export interface RunnerLink {
@@ -130,6 +131,8 @@ export class Conductor {
   private readonly config: Config;
   /** Gated tool calls waiting for the user. */
   readonly approvals: Approvals;
+  /** MCP App views in threads, and the tool calls they make through the runner. */
+  readonly appViews: AppViews;
   /** Nibblets waiting out a subscription usage limit. */
   readonly limits: LimitWaits;
   /** Each nibblet's monthly budget for API-key usage, and its spending. */
@@ -175,6 +178,11 @@ export class Conductor {
     this.machines = machines;
     this.config = config;
     this.approvals = new Approvals(store, config.NIBBLET_APPROVAL_TIMEOUT_MINUTES * 60_000);
+    this.appViews = new AppViews(store, (nibbletId, message) => {
+      const link = this.links.get(nibbletId);
+      link?.send(message);
+      return link !== undefined;
+    });
     this.providerLimits = new ProviderLimits(config);
     this.budgets = new Budgets(store);
     this.limits = new LimitWaits(store, {
@@ -632,6 +640,7 @@ export class Conductor {
     this.links.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
     this.cardFiles.runnerGone(nibbletId);
+    this.appViews.runnerGone(nibbletId);
     const machine = await this.machineOf(nibbletId).catch(() => null);
     if (machine && !(await machine.plugin.running(machine.host).catch(() => false))) {
       // It went down with its parent's container.
@@ -697,6 +706,7 @@ export class Conductor {
     this.links.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
     this.cardFiles.runnerGone(nibbletId);
+    this.appViews.runnerGone(nibbletId);
     // Mark it stopped first, so the container's exit event reads as expected.
     const stopped = await this.store.updateNibblet(nibbletId, {
       status: "stopped",
@@ -926,6 +936,7 @@ export class Conductor {
     if (previous && previous !== link) {
       this.terminals.runnerGone(nibbletId);
       this.cardFiles.runnerGone(nibbletId);
+      this.appViews.runnerGone(nibbletId);
     }
     this.links.set(nibbletId, link);
     const onePassword = await onePasswordLogin(this.config, this.store, nibbletId, (m) =>
@@ -1083,6 +1094,7 @@ export class Conductor {
     this.views.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
     this.cardFiles.runnerGone(nibbletId);
+    this.appViews.runnerGone(nibbletId);
     this.failActive(nibbletId, "failed", "Lost touch with its container");
   }
 
@@ -1155,6 +1167,9 @@ export class Conductor {
       }
       case "card_done":
         this.cardFiles.fromRunner(nibbletId, message);
+        return;
+      case "view_call_done":
+        this.appViews.fromRunner(nibbletId, message);
         return;
       case "terminal_output":
       case "terminal_exit":
@@ -1431,6 +1446,7 @@ export class Conductor {
     this.links.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
     this.cardFiles.runnerGone(nibbletId);
+    this.appViews.runnerGone(nibbletId);
     this.failActive(nibbletId, "failed", "Its container stopped");
     await this.subagentsGone(nibbletId, "Its parent's container stopped");
     const tail = exitReason(await this.machineFor(nibblet).logs(nibbletId, 40));

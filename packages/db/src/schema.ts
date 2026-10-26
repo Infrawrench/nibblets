@@ -2,6 +2,8 @@ import type {
   AppGrantState,
   AppLinkSettings,
   AppLinkState,
+  AppViewCsp,
+  AppViewPermissions,
   CardClosedBy,
   CardKind,
   CardState,
@@ -332,4 +334,24 @@ export const nibbletAppGrants = pgTable(
     primaryKey({ columns: [t.nibbletId, t.linkId] }),
     index("nibblet_app_grants_link_idx").on(t.linkId),
   ],
+);
+
+/**
+ * MCP App views a nibblet's tools showed, by a hash of what's in them, so
+ * every `app_view` item from one tool shares one row.
+ */
+export const appViews = pgTable(
+  "app_views",
+  {
+    nibbletId: text("nibblet_id")
+      .notNull()
+      .references(() => nibblets.id, { onDelete: "cascade" }),
+    id: text("id").notNull(),
+    html: text("html").notNull(),
+    csp: jsonb("csp").$type<AppViewCsp>().notNull().default({}),
+    permissions: jsonb("permissions").$type<AppViewPermissions>().notNull().default({}),
+    prefersBorder: boolean("prefers_border"),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.nibbletId, t.id] })],
 );

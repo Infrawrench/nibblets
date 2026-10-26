@@ -1,5 +1,6 @@
 import {
   appLinks,
+  appViews,
   authTokens,
   cards,
   items,
@@ -23,6 +24,7 @@ import {
   ToolRules,
   randomHamsterLook,
   RpcError,
+  type AppViewContent,
   type Card,
   type CreateNibblet,
   type Heartbeat,
@@ -395,6 +397,31 @@ export class Store {
   }
 
   /** Approval items still marked pending, across every nibblet. */
+  /** Keeps an MCP App view, once per nibblet however many calls show it, and returns its id. */
+  async putAppView(nibbletId: string, view: AppViewContent): Promise<string> {
+    const id = createHash("sha256").update(JSON.stringify(view)).digest("hex");
+    await this.db
+      .insert(appViews)
+      .values({ nibbletId, id, ...view })
+      .onConflictDoNothing();
+    return id;
+  }
+
+  async appView(nibbletId: string, id: string): Promise<AppViewContent | null> {
+    const [row] = await this.db
+      .select()
+      .from(appViews)
+      .where(and(eq(appViews.nibbletId, nibbletId), eq(appViews.id, id)));
+    return row
+      ? {
+          html: row.html,
+          csp: row.csp,
+          permissions: row.permissions,
+          prefersBorder: row.prefersBorder,
+        }
+      : null;
+  }
+
   async pendingApprovalItems(): Promise<
     { nibbletId: string; item: Extract<ThreadItem, { type: "approval" }> }[]
   > {

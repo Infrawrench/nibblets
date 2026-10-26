@@ -29,12 +29,14 @@ import { procedure } from "./rpc.ts";
 import { Snapshot, SnapshotActivity, SnapshotTimeline } from "./snapshots.ts";
 import { TailnetKeys } from "./tailscale.ts";
 import { AppUpdate, HarnessUpdates } from "./updates.ts";
+import { AppViewContent } from "./views.ts";
 import { BudgetStatus } from "./budget.ts";
 import {
   BackgroundTask,
   CreateNibblet,
   CreateSchedule,
   DesktopApp,
+  JsonValue,
   Memory,
   Nibblet,
   Schedule,
@@ -110,6 +112,22 @@ export const contract = {
     answerLocation: procedure(
       z.object({ id: z.string(), requestId: z.string(), location: LocationFix.nullable() }),
       Ok,
+    ),
+    /** An MCP App view's HTML and settings, by an `app_view` item's `viewId`. */
+    view: procedure(z.object({ id: z.string(), viewId: z.string() }), AppViewContent),
+    /**
+     * A tool call from an `app_view`'s view, to a tool on the same server
+     * the view may see. Gated like the nibblet's own calls. Answers with the
+     * tool's `CallToolResult`, as JSON.
+     */
+    viewCall: procedure(
+      z.object({
+        id: z.string(),
+        itemId: z.string(),
+        tool: z.string(),
+        arguments: z.record(z.string(), JsonValue).default({}),
+      }),
+      JsonValue,
     ),
     /** What it has running in the background, from `task_start`. Empty while it's asleep. */
     tasks: procedure(Id, z.array(BackgroundTask)),

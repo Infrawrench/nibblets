@@ -7,6 +7,7 @@ import type { McpServerSpec } from "@nibblets/harness";
 import { GATE_PORT, RunnerEnv } from "@nibblets/protocol";
 import { DesktopApps } from "./apps.ts";
 import { CardFiles } from "./cards.ts";
+import { callForView } from "./view-calls.ts";
 import type { Computer } from "./computer.ts";
 import { Connection } from "./connection.ts";
 import { DESKTOP_VIEW_URL, joinDesktop, startDesktop } from "./desktop.ts";
@@ -164,6 +165,11 @@ connection = new Connection({
           await cards.remove(msg.cardId);
           return null;
         });
+        return;
+      case "view_call":
+        void callForView(msg, (server) => `${gateBase}/app/${encodeURIComponent(server)}`).then(
+          (done) => connection?.send(done),
+        );
         return;
       default:
         runner.handle(msg);

@@ -20,3 +20,4 @@ export * from "./location.ts";
 export * from "./machines.ts";
 export * from "./guest.ts";
 export * from "./http.ts";
+export * from "./views.ts";

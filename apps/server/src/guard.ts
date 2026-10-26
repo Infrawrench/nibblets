@@ -1,4 +1,5 @@
 import {
+  GuardAppView,
   GuardApprovalRequest,
   TailnetNode,
   type GuardConfig,
@@ -25,6 +26,9 @@ export interface GuardDeps {
     tailscaleAuthKey(nibbletId: string): Promise<string>;
     setTailnetNode(nibbletId: string, node: TailnetNode): Promise<void>;
     activeTurnId(nibbletId: string): string | null;
+    appViews: {
+      record(nibbletId: string, turnId: string | null, report: GuardAppView): Promise<void>;
+    };
     approvals: {
       request(
         nibbletId: string,
@@ -51,6 +55,9 @@ interface Pending {
  *
  * Tailscale in the container, run as a third user that holds the token too,
  * fetches its auth key and reports how its machine is doing here as well.
+ *
+ * It also reports each call of a tool with an MCP App view, for the thread
+ * to show.
  *
  * Approvals are long-polled: a request waits up to POLL_MS, then says it's
  * still waiting and the guard asks again by id, so waiting on a person
@@ -136,6 +143,20 @@ export function mountGuard(app: Hono, deps: GuardDeps): void {
     );
     pending.set(approvalId, entry);
     return answer(c, approvalId, entry);
+  });
+
+  // A call of a tool with an MCP App view, made through the gate.
+  app.post("/guard/:id/view", async (c) => {
+    const id = await authorised(c);
+    if (!id) return c.json({ error: "unauthorized" }, 401);
+    const body = GuardAppView.safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: "Send a GuardAppView" }, 400);
+    try {
+      await deps.conductor.appViews.record(id, deps.conductor.activeTurnId(id), body.data);
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 413);
+    }
+    return c.json({ ok: true });
   });
 
   app.get("/guard/:id/approval/:approvalId", async (c) => {

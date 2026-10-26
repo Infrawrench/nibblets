@@ -16,6 +16,7 @@ import {
   GATE_PORT,
   GuardConfig,
   GuardEnv,
+  type GuardAppView,
   ONEPASSWORD_VAULTS_ENV,
   type JsonValue,
   type ToolRule,
@@ -51,6 +52,16 @@ export function guardClient(env: GuardEnv, fetcher: typeof fetch = fetch) {
       });
       if (!res.ok) throw new Error(`the server said ${res.status}`);
       return GuardConfig.parse(await res.json());
+    },
+    /** Hands the server a call of a tool with an MCP App view, for the thread. */
+    async view(report: GuardAppView): Promise<void> {
+      const res = await fetcher(`${base}/view`, {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify(report),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) throw new Error(`the server said ${res.status}`);
     },
     /** Asks the person, through the server, polling until they decide. */
     async ask(server: string, tool: string, input: JsonValue): Promise<Decision> {
@@ -131,6 +142,7 @@ async function main(): Promise<void> {
   };
   const gate = new McpGate({
     ask: (name, tool, input) => server.ask(name, tool, input),
+    view: (report) => server.view(report),
     rules: () => rules,
     log,
     port: env.NIBBLET_GATE_PORT ?? GATE_PORT,

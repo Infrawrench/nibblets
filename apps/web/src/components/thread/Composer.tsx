@@ -16,10 +16,13 @@ export function Composer({
   connection,
   nibblet,
   running,
+  draft,
 }: {
   connection: ServerConnection;
   nibblet: Nibblet;
   running: boolean;
+  /** Text something else suggests sending (an MCP App view, say), put in the box when it changes. */
+  draft?: { text: string; at: number };
 }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -32,6 +35,17 @@ export function Composer({
   const catalogue = useModels(connection);
   const model = catalogue.find(nibblet.harness, nibblet.model);
   const asleep = nibblet.status === "stopped";
+
+  // Suggested, not sent: the person reads it and sends it, changes it, or doesn't.
+  useEffect(() => {
+    if (!draft) return;
+    setText(draft.text);
+    const el = area.current;
+    if (!el) return;
+    el.focus();
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
+  }, [draft]);
 
   // Clears straight away: the message shows up in the thread as soon as the
   // server has it, and comes back to the box only if sending failed.

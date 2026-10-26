@@ -58,6 +58,67 @@ import {
 import type { FileRef } from "@nibblets/protocol";
 import { mockFileRef, registerMockFile } from "./files.ts";
 
+/** Fares for the demo's MCP App view. */
+const mockFares = [
+  { flight: "TP1337", airline: "TAP", departs: "09:10", price: 148 },
+  { flight: "U28733", airline: "easyJet", departs: "11:45", price: 96 },
+  { flight: "BA500", airline: "British Airways", departs: "17:20", price: 172 },
+];
+
+/**
+ * A small MCP App, speaking the protocol by hand: it lists the fares from
+ * its tool's result, holds one with a call of its own, and suggests a
+ * message.
+ */
+const mockFareView = `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  body { margin: 0; padding: 12px; font: 13px system-ui, sans-serif; color: #1c1c1e; background: #fff; }
+  body.dark { color: #dcdcdc; background: #1f1f1f; }
+  .fare { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #8884; }
+  .fare b { width: 64px; } .fare span { flex: 1; } button { font: inherit; padding: 2px 8px; }
+  #status { margin-top: 8px; opacity: 0.7; }
+</style></head><body>
+<div id="fares">Waiting for fares…</div><div id="status"></div>
+<script>
+  let next = 1; const waiting = new Map();
+  const request = (method, params) => new Promise((resolve) => {
+    const id = next++; waiting.set(id, resolve);
+    parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+  });
+  const notify = (method, params) => parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
+  const theme = (t) => document.body.classList.toggle("dark", t === "dark");
+  const status = (text) => (document.getElementById("status").textContent = text);
+  addEventListener("message", ({ data }) => {
+    if (data.id && waiting.has(data.id)) { waiting.get(data.id)(data.result); waiting.delete(data.id); return; }
+    if (data.method === "ui/notifications/host-context-changed") theme(data.params.theme);
+    if (data.method === "ui/notifications/tool-result") show(data.params.structuredContent.fares);
+  });
+  function show(fares) {
+    const list = document.getElementById("fares"); list.textContent = "";
+    for (const f of fares) {
+      const row = document.createElement("div"); row.className = "fare";
+      row.innerHTML = "<b></b><span></span><em></em>";
+      row.querySelector("b").textContent = f.departs;
+      row.querySelector("span").textContent = f.airline + " " + f.flight;
+      row.querySelector("em").textContent = "£" + f.price;
+      const hold = document.createElement("button"); hold.textContent = "Hold";
+      hold.onclick = async () => {
+        const result = await request("tools/call", { name: "hold_fare", arguments: { flight: f.flight } });
+        status(result.content[0].text);
+      };
+      const book = document.createElement("button"); book.textContent = "Ask to book";
+      book.onclick = () => request("ui/message", { role: "user", content: [{ type: "text", text: "Book " + f.flight + " at " + f.departs + ", please." }] });
+      row.append(hold, book); list.append(row);
+    }
+    notify("ui/notifications/size-changed", { height: document.documentElement.scrollHeight });
+  }
+  request("ui/initialize", {
+    protocolVersion: "2026-01-26",
+    appInfo: { name: "Fares", version: "1.0.0" },
+    appCapabilities: {},
+  }).then((result) => { theme(result.hostContext && result.hostContext.theme); notify("ui/notifications/initialized", {}); });
+</script></body></html>`;
+
 /** Where Pip's person shared from, and where every mock lookup lands. */
 const LONDON = {
   latitude: 51.5246,
@@ -757,6 +818,31 @@ export function createMockServer(): ServerConnection {
       status: "done",
     },
     {
+      type: "tool_call",
+      id: "tc-fares",
+      turnId: t1,
+      createdAt: ago(41.7),
+      name: "search_fares",
+      server: "fares",
+      input: { from: "LGW", to: "LIS", depart: "2026-10-31", back: "2026-11-02" },
+      output: "3 fares found",
+      status: "done",
+    },
+    {
+      type: "app_view",
+      id: "view-fares",
+      turnId: t1,
+      createdAt: ago(41.65),
+      server: "fares",
+      tool: "search_fares",
+      input: { from: "LGW", to: "LIS", depart: "2026-10-31", back: "2026-11-02" },
+      result: {
+        content: [{ type: "text", text: "3 fares found" }],
+        structuredContent: { fares: mockFares },
+      },
+      viewId: "mock-fares",
+    },
+    {
       type: "subagent",
       id: "sa1",
       turnId: t1,
@@ -1442,6 +1528,24 @@ export function createMockServer(): ServerConnection {
         push({ type: "app_grants_changed", nibbletId: id });
         return { ok: true };
       },
+      view: async () => ({
+        html: mockFareView,
+        csp: {},
+        permissions: {},
+        prefersBorder: null,
+      }),
+      viewCall: async ({ tool, arguments: args }) => ({
+        content: [
+          {
+            type: "text",
+            text:
+              tool === "hold_fare"
+                ? `Held ${String(args.flight)} for 24 hours`
+                : `${tool} isn't in the demo`,
+          },
+        ],
+        isError: tool !== "hold_fare",
+      }),
       decide: async ({ id, approvalId, approve, reason }) => {
         const found = items.get(id)?.find((s) => s.item.id === approvalId)?.item;
         if (found?.type === "approval" && found.status === "pending") {

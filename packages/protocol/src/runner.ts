@@ -187,6 +187,17 @@ export const ServerToRunner = z.discriminatedUnion("type", [
   z.object({ type: z.literal("card_put"), requestId: z.string(), file: CardFile }),
   /** Delete a card's file, once it's been killed. Answered with `card_done`. */
   z.object({ type: z.literal("card_remove"), requestId: z.string(), cardId: z.string() }),
+  /**
+   * An MCP App view calling a tool on its own server, through the gate as
+   * the view (so "ask me first" applies). Answered with `view_call_done`.
+   */
+  z.object({
+    type: z.literal("view_call"),
+    requestId: z.string(),
+    server: z.string(),
+    tool: z.string(),
+    arguments: z.record(z.string(), JsonValue),
+  }),
 ]);
 export type ServerToRunner = z.infer<typeof ServerToRunner>;
 
@@ -235,6 +246,13 @@ export const RunnerToServer = z.discriminatedUnion("type", [
     type: z.literal("card_done"),
     requestId: z.string(),
     path: z.string().nullable(),
+    error: z.string().nullable(),
+  }),
+  /** A `view_call` done: the tool's `CallToolResult`, or why it couldn't be called. */
+  z.object({
+    type: z.literal("view_call_done"),
+    requestId: z.string(),
+    result: JsonValue.nullable(),
     error: z.string().nullable(),
   }),
   z.object({
