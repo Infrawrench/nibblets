@@ -877,13 +877,14 @@ start_stack() {
   ok "Nibblets is running on this machine"
 }
 
-# Calls the server with the owner token. The body goes on stdin, not the
-# command line, since it can carry a secret.
+# Calls the server with the owner token. The token goes in a curl config read
+# from a pipe, and the body on stdin, never on the command line, where any
+# user could read them with ps. printf is a builtin, so it isn't there either.
 rpc() {
   local body="${2:-}"
   [ -n "$body" ] || body='{}'
   printf '%s' "$body" |
-    curl -fsS -X POST -H "authorization: Bearer $(env_get NIBBLET_OWNER_TOKEN)" \
+    curl -fsS -X POST -K <(printf 'header = "authorization: Bearer %s"\n' "$(env_get NIBBLET_OWNER_TOKEN)") \
       -H "content-type: application/json" --data-binary @- \
       "http://127.0.0.1:${NIBBLET_PORT:-8420}/api/rpc/$1"
 }
@@ -911,17 +912,15 @@ setup_app_links() {
   until curl -fsS "http://127.0.0.1:${NIBBLET_PORT:-8420}/healthz" >/dev/null 2>&1; do
     tries=$((tries + 1))
     if [ "$tries" -ge 60 ]; then
-      warn "The server didn't answer, so no apps are linked. You can link them in Settings."
-      rm -f "$file"
+      warn "The server didn't answer, so no apps are linked yet. Run this again to try again."
       return 0
     fi
     sleep 1
   done
   # One link per line, each as the RPC takes it.
-  local entries entry reply
+  local entries entry reply failed=0
   entries=$(node -e 'const l=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));for(const e of Array.isArray(l)?l:[l])console.log(JSON.stringify({plugin:e.plugin,settings:e.settings??{},secret:e.secret}))' "$file" 2>/dev/null) ||
     entries=""
-  rm -f "$file"
   if [ -z "$entries" ]; then
     warn "$file isn't a list of app links, so none are linked. You can link them in Settings."
     return 0
@@ -930,9 +929,18 @@ setup_app_links() {
     if reply=$(rpc appLinks.adopt "$entry" 2>/dev/null); then
       ok "Linked to $(printf '%s' "$reply" | field account) 🎉"
     else
-      warn "The app didn't take one of the links, so it isn't linked. You can link it in Settings."
+      failed=1
+      warn "The app didn't take one of the links, so it isn't linked yet."
     fi
   done <<<"$entries"
+  # Kept until every link is taken, so running this again tries the rest
+  # (taking one again changes nothing). Only then does its secret go.
+  if [ "$failed" = 0 ]; then
+    rm -f "$file"
+  else
+    chmod 600 "$file" 2>/dev/null || true
+    hint "$file is kept, readable only by you, so you can run this again to try again."
+  fi
 }
 
 LINKED=0
@@ -1024,9 +1032,16 @@ find_engine() {
 # logins are read by the host bridge whenever a nibblet starts, so they
 # need nothing more.
 proxy_inputs() {
-  local a
-  for a in claude codex deepseek; do
-    agent_signed_in "$a" && printf '%s ' "$a"
+  local a f
+  # By content, so signing in again is seen, and by inode: the proxy mounts
+  # each file on its own, so it keeps reading the old one if a sign-in
+  # replaces it rather than writing it in place.
+  for f in "$HOME/.claude/.credentials.json" "$HOME/.codex/auth.json"; do
+    if [ -f "$f" ]; then
+      printf '%s %s ' "$(sha256sum "$f" | cut -d' ' -f1)" "$(stat -c %i "$f")"
+    else
+      printf 'none '
+    fi
   done
   for a in CLAUDE_CREDENTIALS_SOURCE CODEX_AUTH_SOURCE NIBBLET_ANTHROPIC_API_KEY NIBBLET_OPENAI_API_KEY DEEPSEEK_API_KEY; do
     printf '%s=%s ' "$a" "$(env_get "$a")"
