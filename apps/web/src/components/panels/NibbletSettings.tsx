@@ -16,6 +16,7 @@ import { Switch } from "../ui/Switch.tsx";
 import { NibbletTools } from "../tools/NibbletTools.tsx";
 import { PromptNameField } from "../PromptNameField.tsx";
 import { NibbletVaults } from "../onepassword/OnePasswordSection.tsx";
+import { NibbletAppLinks } from "../applinks/NibbletAppLinks.tsx";
 import { BudgetSection } from "./BudgetSection.tsx";
 import { LocationSection } from "./LocationSection.tsx";
 import { ResourcesSection } from "./ResourcesSection.tsx";
@@ -235,6 +236,8 @@ export function NibbletSettings({
       />
 
       <NibbletVaults connection={connection} nibblet={nibblet} />
+
+      <NibbletAppLinks connection={connection} nibblet={nibblet} />
 
       <NibbletSpending connection={connection} nibblet={nibblet} />
 

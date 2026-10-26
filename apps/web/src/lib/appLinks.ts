@@ -1,0 +1,54 @@
+import type { AppGrant, AppLinkOutcome } from "@nibblets/protocol";
+
+/** What a nibblet's form for one link holds before it's saved. */
+export interface GrantDraft {
+  on: boolean;
+  scopes: string[];
+  /** Empty for all of them. */
+  providers: string[];
+}
+
+/** The form as a grant (or none) leaves it. */
+export function grantDraftOf(grant: AppGrant | undefined): GrantDraft {
+  return grant && grant.state !== "revoking"
+    ? { on: true, scopes: [...grant.scopes], providers: [...grant.providers] }
+    : { on: false, scopes: [], providers: [] };
+}
+
+const same = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]);
+
+/**
+ * Whether saving would change anything: turning it on, or other scopes or
+ * providers. A grant the app revoked is saved again to make a new one.
+ */
+export function grantDraftChanged(draft: GrantDraft, grant: AppGrant | undefined): boolean {
+  if (!draft.on) return false;
+  if (!grant || grant.state !== "active") return true;
+  return !same(draft.scopes, grant.scopes) || !same(draft.providers, grant.providers);
+}
+
+/** A list with one item ticked or unticked. */
+export function ticked(list: readonly string[], item: string, on: boolean): string[] {
+  return on ? [...new Set([...list, item])] : list.filter((x) => x !== item);
+}
+
+/** How an attempt to link ended, in words for Settings. */
+export function outcomeText(
+  outcome: AppLinkOutcome,
+  name: string,
+  detail: string | null,
+): string | null {
+  switch (outcome) {
+    case "linked":
+      return null;
+    case "denied":
+      return `It was turned down in ${name}.`;
+    case "expired":
+      return "The code ran out before it was approved. Link again for a new one.";
+    case "cancelled":
+      return null;
+    case "failed":
+      return detail ?? `${name} couldn't link.`;
+  }
+}
