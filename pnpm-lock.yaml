@@ -325,6 +325,12 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.1
         version: 1.32.1(supports-color@7.2.0)(zod@4.6.7)
+      '@nibblets/app-link':
+        specifier: workspace:*
+        version: link:../../packages/app-link
+      '@nibblets/app-link-infrawrench':
+        specifier: workspace:*
+        version: link:../../packages/app-link-infrawrench
       '@nibblets/bank':
         specifier: workspace:*
         version: link:../../packages/bank
@@ -468,6 +474,24 @@ importers:
       vite:
         specifier: ^8.3.4
         version: 8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)
+
+  packages/app-link:
+    dependencies:
+      '@nibblets/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+
+  packages/app-link-infrawrench:
+    dependencies:
+      '@nibblets/app-link':
+        specifier: workspace:*
+        version: link:../app-link
+      '@nibblets/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
   packages/bank:
     dependencies:

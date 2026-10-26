@@ -15,6 +15,7 @@ export * from "./urls.ts";
 export * from "./tailscale.ts";
 export * from "./budget.ts";
 export * from "./bank.ts";
+export * from "./app-links.ts";
 export * from "./location.ts";
 export * from "./machines.ts";
 export * from "./guest.ts";
