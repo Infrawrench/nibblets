@@ -1,4 +1,7 @@
 import type {
+  AppGrantState,
+  AppLinkSettings,
+  AppLinkState,
   CardClosedBy,
   CardKind,
   CardState,
@@ -273,5 +276,60 @@ export const cards = pgTable(
   (t) => [
     index("cards_nibblet_idx").on(t.nibbletId, t.createdAt),
     index("cards_state_idx").on(t.state),
+  ],
+);
+
+/**
+ * The server's links to other apps (an Infrawrench organisation, say), made
+ * once with a code the person approved in the app. The secret is what the
+ * server authenticates to the app with: kept like a nibblet's MCP headers,
+ * and never sent to the UI.
+ */
+export const appLinks = pgTable("app_links", {
+  id: text("id").primaryKey(),
+  /** The app link plugin it's on. */
+  plugin: text("plugin").notNull(),
+  /** What its tools are called in a nibblet: the plugin's id, or with more after it. */
+  name: text("name").notNull().unique(),
+  settings: jsonb("settings").$type<AppLinkSettings>().notNull().default({}),
+  /** The app's own id for it. */
+  ref: text("ref").notNull(),
+  secret: text("secret").notNull(),
+  /** Who it's linked as, in the app's words. */
+  account: text("account").notNull(),
+  state: text("state").$type<AppLinkState>().notNull().default("linked"),
+  detail: text("detail"),
+  createdAt: createdAt(),
+  /** When its state last changed, to give up on one that can't be removed. */
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * A nibblet's own credential on an app link, with the scopes the person
+ * ticked. Not tied to the nibblet's row: a nibblet that's deleted while the
+ * app can't be reached leaves its grant `revoking`, and the server keeps
+ * trying to revoke it in the app.
+ */
+export const nibbletAppGrants = pgTable(
+  "nibblet_app_grants",
+  {
+    nibbletId: text("nibblet_id").notNull(),
+    linkId: text("link_id")
+      .notNull()
+      .references(() => appLinks.id, { onDelete: "cascade" }),
+    /** The app's own id for it. */
+    ref: text("ref").notNull(),
+    secret: text("secret").notNull(),
+    scopes: text("scopes").array().notNull().default([]),
+    /** Empty for all of them. */
+    providers: text("providers").array().notNull().default([]),
+    state: text("state").$type<AppGrantState>().notNull().default("active"),
+    detail: text("detail"),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.nibbletId, t.linkId] }),
+    index("nibblet_app_grants_link_idx").on(t.linkId),
   ],
 );

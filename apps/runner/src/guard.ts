@@ -2,8 +2,9 @@
  * The guard: the part of a nibblet's container that holds secrets, run by
  * the container's entry as its own user so the agent (another user) can't
  * read its memory, environment or files. It runs the browser
- * (OpenComputerUse), and the gate in front of the browser, 1Password and the
- * nibblet's own MCP servers, which it starts itself with their secrets. Its
+ * (OpenComputerUse), and the gate in front of the browser, 1Password, the
+ * nibblet's own MCP servers and its app links' tools, which it starts
+ * itself with their secrets. Its
  * settings come from the server with its own token, and "ask me first"
  * calls wait on the server, so neither depends on anything the agent can
  * reach.
@@ -107,6 +108,10 @@ export function gatedSpecs(
       server.type === "http"
         ? { type: "http", url: server.url, headers: server.headers }
         : { type: "stdio", command: server.command, args: server.args, env: server.env };
+  }
+  // An app link's tools take the name over from its own server, as the server already does.
+  for (const app of config.appLinks) {
+    specs[app.name] = { type: "http", url: app.url, headers: app.headers };
   }
   return specs;
 }

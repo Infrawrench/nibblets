@@ -30,6 +30,7 @@ import { Notifier } from "./notifier.ts";
 import { tailscaleStatus } from "./hostmcp.ts";
 import { Bank } from "./bank.ts";
 import { Banks } from "./banks.ts";
+import { AppLinks } from "./app-links.ts";
 import { Geocoder } from "./geocode.ts";
 import { LocationRequests } from "./location-requests.ts";
 import { PublicAddresses } from "./public-address.ts";
@@ -109,6 +110,21 @@ async function main(): Promise<void> {
   const banks = new Banks({ store, bank, address: publicAddress, env: process.env });
   await banks.load();
   conductor.bank = bank;
+  const appLinks = new AppLinks({
+    store,
+    publish: (message) => bus.publish(message),
+    label: async () => `Nibblets on ${await serverName(store, config.NIBBLET_HOST_NAME)}`,
+    // Sub-agents serve their host's app links, so they're handed them again too.
+    reconfigure: async (nibbletId) => {
+      const tree = [nibbletId];
+      for (let i = 0; i < tree.length; i++) {
+        const id = tree[i] ?? "";
+        await conductor.reconfigure(id);
+        tree.push(...(await store.children(id)).map((child) => child.id));
+      }
+    },
+  });
+  conductor.appLinks = appLinks;
   const geocoder = new Geocoder({ url: config.NIBBLET_GEOCODER_URL, version: VERSION });
   const locations = new LocationRequests({ store, geocoder, viewers: () => bus.viewers });
   conductor.locations = locations;
@@ -170,6 +186,7 @@ async function main(): Promise<void> {
       appUpdates,
       bank,
       banks,
+      appLinks,
       geocoder,
       locations,
       publicAddress,
@@ -200,6 +217,7 @@ async function main(): Promise<void> {
   snapshots.start();
   if (config.NIBBLET_HARNESS_UPDATES) harnessUpdates.start();
   bank.start();
+  appLinks.start();
   // An update leaves the last release's images behind; reconcile has just
   // moved running nibblets off them. Again daily, for those that were stopped.
   const prune = () =>
@@ -224,6 +242,7 @@ async function main(): Promise<void> {
     snapshots.stop();
     harnessUpdates.stop();
     bank.stop();
+    appLinks.stop();
     clearInterval(pruning);
     clearInterval(budgetSweep);
     central.stop();
