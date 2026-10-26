@@ -18,6 +18,10 @@
 #                               instead of a Claude subscription
 #   NIBBLETS_OPENAI_API_KEY     run Codex on this OpenAI API key instead of
 #                               a ChatGPT subscription
+#   NIBBLETS_APP_LINKS_FILE     a JSON file of app links an app already approved
+#                               for this server, [{ "plugin", "settings", "secret" }],
+#                               to start out linked (say Infrawrench set it up).
+#                               Make it 0600; it's deleted once it's been read
 #
 # Copyright (C) 2026 Infrawrench. Licensed under the GNU GPL, version 2.
 
@@ -865,13 +869,62 @@ start_stack() {
   ok "Nibblets is running on this machine"
 }
 
+# Calls the server with the owner token. The body goes on stdin, not the
+# command line, since it can carry a secret.
 rpc() {
-  curl -fsS -X POST -H "authorization: Bearer $(env_get NIBBLET_OWNER_TOKEN)" \
-    -H "content-type: application/json" -d '{}' "http://127.0.0.1:${NIBBLET_PORT:-8420}/api/rpc/$1"
+  local body="${2:-}"
+  [ -n "$body" ] || body='{}'
+  printf '%s' "$body" |
+    curl -fsS -X POST -H "authorization: Bearer $(env_get NIBBLET_OWNER_TOKEN)" \
+      -H "content-type: application/json" --data-binary @- \
+      "http://127.0.0.1:${NIBBLET_PORT:-8420}/api/rpc/$1"
 }
 # Picks one field out of an RPC reply.
 field() {
   node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{let v;try{v=process.argv[1].split(".").reduce((o,k)=>o?.[k],JSON.parse(s).data)}catch{}process.stdout.write(v==null?"":String(v))})' "$1"
+}
+
+# App links an app approved for this server before it existed (Infrawrench,
+# when it sets up a machine for Nibblets), handed over in a file rather than
+# a variable or an argument, where other users could see the secret.
+setup_app_links() {
+  local file="${NIBBLETS_APP_LINKS_FILE:-}"
+  [ -n "$file" ] || return 0
+  step "🔗 Linking apps"
+  if [ ! -r "$file" ]; then
+    warn "Can't read $file, so no apps are linked. You can link them in Settings."
+    return 0
+  fi
+  case "$(stat -c %a "$file" 2>/dev/null || echo 600)" in
+    600 | 400) ;;
+    *) warn "$file can be read by other users. Make it 0600 next time." ;;
+  esac
+  local tries=0
+  until curl -fsS "http://127.0.0.1:${NIBBLET_PORT:-8420}/healthz" >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 60 ]; then
+      warn "The server didn't answer, so no apps are linked. You can link them in Settings."
+      rm -f "$file"
+      return 0
+    fi
+    sleep 1
+  done
+  # One link per line, each as the RPC takes it.
+  local entries entry reply
+  entries=$(node -e 'const l=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));for(const e of Array.isArray(l)?l:[l])console.log(JSON.stringify({plugin:e.plugin,settings:e.settings??{},secret:e.secret}))' "$file" 2>/dev/null) ||
+    entries=""
+  rm -f "$file"
+  if [ -z "$entries" ]; then
+    warn "$file isn't a list of app links, so none are linked. You can link them in Settings."
+    return 0
+  fi
+  while IFS= read -r entry; do
+    if reply=$(rpc appLinks.adopt "$entry" 2>/dev/null); then
+      ok "Linked to $(printf '%s' "$reply" | field account) 🎉"
+    else
+      warn "The app didn't take one of the links, so it isn't linked. You can link it in Settings."
+    fi
+  done <<<"$entries"
 }
 
 LINKED=0
@@ -956,6 +1009,7 @@ main() {
   setup_vms
   setup_agents
   start_stack
+  setup_app_links
   setup_connect
   finish
 }

@@ -38,7 +38,7 @@ describe.skipIf(!url)("sharing a location with a nibblet", () => {
       geocoder: new Geocoder({ url: "https://n.example", version: "1", fetch: lookups }),
       models: { accepts: async () => true },
       conductor: { recheckBudgetWaits: async () => undefined, reconfigure },
-    } as unknown as Services).nibblets.update(input, {});
+    } as unknown as Services).nibblets.update(input, { owner: true });
 
   beforeAll(async () => {
     // A database of its own, so the other database tests can't empty its tables.

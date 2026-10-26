@@ -14,6 +14,7 @@ import {
   type AppLinkRow,
   type AppLinkStore,
 } from "./app-links.ts";
+import { createHandlers, type Services } from "./handlers.ts";
 
 /** An app that keeps its link and agents in memory, and can go down or revoke things. */
 function fakeApp() {
@@ -99,6 +100,13 @@ function fakeApp() {
         account: "Acme Inc",
         revoked: [...app.agents].filter(([, a]) => a.revoked).map(([ref]) => ref),
       };
+    },
+    adopt: async (secret) => {
+      reachable("start");
+      if (secret !== "iwl_x" && secret !== "iwl_y") {
+        throw new AppLinkError("Fake doesn't take that link's credential");
+      }
+      return { link: { ref: "app-link-1", secret }, account: "Acme" };
     },
     connection: (grant) => ({
       mcp: {
@@ -448,5 +456,76 @@ describe("a link", () => {
     t.app.linkRevoked = true;
     await t.links.sync();
     expect((await t.links.list()).links).toMatchObject([{ state: "revoked" }]);
+  });
+});
+
+describe("adopting a link the app made itself", () => {
+  it("keeps it as a link made here would be, once, with the newest secret", async () => {
+    const t = setUp();
+    const adopted = await t.links.adopt("fake", {}, "iwl_x");
+    expect(adopted).toMatchObject({
+      plugin: "fake",
+      name: "fake",
+      account: "Acme",
+      settings: { url: "https://fake.example" },
+      state: "linked",
+    });
+    expect(JSON.stringify(adopted)).not.toContain("iwl_x");
+    expect(t.messages).toContainEqual({ type: "app_links_changed" });
+
+    // Again, say the installer ran twice, or the app handed over a new secret.
+    const again = await t.links.adopt("fake", {}, "iwl_y");
+    expect(again.id).toBe(adopted.id);
+    expect(t.store.links).toHaveLength(1);
+    expect(t.store.links[0]?.secret).toBe("iwl_y");
+
+    // It works like any other link.
+    await t.links.setGrant("nib_1", adopted.id, ["read"], []);
+    expect(t.app.agents.get("agent-1")).toMatchObject({ externalId: "nib_1" });
+  });
+
+  it("keeps nothing when the app doesn't take the secret", async () => {
+    const t = setUp();
+    await expect(t.links.adopt("fake", {}, "iwl_wrong")).rejects.toMatchObject({
+      code: "bad_request",
+      message: "Fake doesn't take that link's credential",
+    });
+    t.app.down = true;
+    await expect(t.links.adopt("fake", {}, "iwl_x")).rejects.toMatchObject({
+      code: "unavailable",
+    });
+    expect(t.store.links).toEqual([]);
+  });
+
+  it("is refused for a plugin that can only link with a code", async () => {
+    const { factory } = fakeApp();
+    const t = setUp();
+    const codeOnly = defineAppLinkFactory({
+      ...factory,
+      id: "codeonly",
+      create: (settings, deps) => ({ ...factory.create(settings, deps), adopt: undefined }),
+    });
+    const links = new AppLinks({
+      store: t.store,
+      factories: [codeOnly],
+      publish: () => undefined,
+      label: async () => "",
+      reconfigure: async () => undefined,
+    });
+    await expect(links.adopt("codeonly", {}, "iwl_x")).rejects.toMatchObject({
+      code: "bad_request",
+    });
+  });
+
+  it("is only for the server's owner token", async () => {
+    const adopt = vi.fn(async () => ({}));
+    const handlers = createHandlers({ appLinks: { adopt } } as unknown as Services);
+    const input = { plugin: "fake", settings: {}, secret: "iwl_x" };
+    await expect(handlers.appLinks.adopt(input, { owner: false })).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+    expect(adopt).not.toHaveBeenCalled();
+    await handlers.appLinks.adopt(input, { owner: true });
+    expect(adopt).toHaveBeenCalledWith("fake", {}, "iwl_x");
   });
 });

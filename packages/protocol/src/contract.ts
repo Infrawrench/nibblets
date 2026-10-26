@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   AppGrant,
+  AppLink,
   AppLinkAttempt,
   AppLinkDescription,
   AppLinkKind,
@@ -299,6 +300,20 @@ export const contract = {
     cancel: procedure(Id, Ok),
     /** Unlinks: the app revokes the link and every nibblet's credential on it. */
     remove: procedure(Id, Ok),
+    /**
+     * Takes on a link the app already approved some other way (it set this
+     * server up itself, say), as if it had been linked here. Only with the
+     * server's owner token, which is the installer's. Adopting the same link
+     * again keeps one, with the newest secret.
+     */
+    adopt: procedure(
+      z.object({
+        plugin: AppLinkPluginId,
+        settings: AppLinkSettings.default({}),
+        secret: z.string().min(1).max(4000),
+      }),
+      AppLink,
+    ),
     /** What the link may grant a nibblet, as the app says now. */
     describe: procedure(Id, AppLinkDescription),
   },

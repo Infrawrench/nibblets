@@ -551,7 +551,7 @@ export class Store {
 
   async updateAppLink(
     id: string,
-    patch: Partial<Pick<typeof appLinks.$inferInsert, "account" | "state" | "detail">>,
+    patch: Partial<Pick<typeof appLinks.$inferInsert, "account" | "state" | "detail" | "secret">>,
   ): Promise<void> {
     await this.db
       .update(appLinks)

@@ -1688,6 +1688,9 @@ export function createMockServer(): ServerConnection {
         push({ type: "app_links_changed" });
         return { ok: true };
       },
+      adopt: async () => {
+        throw new RpcError("unauthorized", "Only the server's owner token can adopt a link");
+      },
       describe: async ({ id }) => {
         const link = appLinks.find((l) => l.id === id);
         if (!link) throw new RpcError("not_found", `No app link ${id}`);

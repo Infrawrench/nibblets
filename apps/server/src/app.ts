@@ -215,7 +215,9 @@ export function createApp(services: Services, bus: Bus) {
 
   app.post("/api/rpc/:path", requireUser, async (c) => {
     const input: unknown = await c.req.json().catch(() => ({}));
-    const res = await dispatch(c.req.param("path") ?? "", input, {});
+    const res = await dispatch(c.req.param("path") ?? "", input, {
+      owner: safeEqual(bearer(c), config.NIBBLET_OWNER_TOKEN),
+    });
     const status = res.ok
       ? 200
       : res.error.code === "not_found"
