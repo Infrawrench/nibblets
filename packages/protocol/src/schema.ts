@@ -401,6 +401,20 @@ export const ThreadItem = z.discriminatedUnion("type", [
     output: z.string().nullable(),
     status: z.enum(["running", "done", "error"]),
   }),
+  /**
+   * What a tool with an MCP App view showed: the view, live in a sandboxed
+   * frame, given the call's input and result. Its HTML is kept apart, by
+   * `viewId` (`nibblets.view`), since every call of the tool shares it.
+   */
+  ItemBase.extend({
+    type: z.literal("app_view"),
+    server: z.string(),
+    tool: z.string(),
+    input: JsonValue,
+    /** MCP's `CallToolResult`, as JSON. */
+    result: JsonValue,
+    viewId: z.string(),
+  }),
   ItemBase.extend({
     type: z.literal("subagent"),
     childId: z.string(),

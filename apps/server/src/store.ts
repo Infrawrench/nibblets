@@ -1,8 +1,11 @@
 import {
+  appLinks,
+  appViews,
   authTokens,
   cards,
   items,
   memories,
+  nibbletAppGrants,
   nibblets,
   pairingCodes,
   schedules,
@@ -21,6 +24,7 @@ import {
   ToolRules,
   randomHamsterLook,
   RpcError,
+  type AppViewContent,
   type Card,
   type CreateNibblet,
   type Heartbeat,
@@ -393,6 +397,31 @@ export class Store {
   }
 
   /** Approval items still marked pending, across every nibblet. */
+  /** Keeps an MCP App view, once per nibblet however many calls show it, and returns its id. */
+  async putAppView(nibbletId: string, view: AppViewContent): Promise<string> {
+    const id = createHash("sha256").update(JSON.stringify(view)).digest("hex");
+    await this.db
+      .insert(appViews)
+      .values({ nibbletId, id, ...view })
+      .onConflictDoNothing();
+    return id;
+  }
+
+  async appView(nibbletId: string, id: string): Promise<AppViewContent | null> {
+    const [row] = await this.db
+      .select()
+      .from(appViews)
+      .where(and(eq(appViews.nibbletId, nibbletId), eq(appViews.id, id)));
+    return row
+      ? {
+          html: row.html,
+          csp: row.csp,
+          permissions: row.permissions,
+          prefersBorder: row.prefersBorder,
+        }
+      : null;
+  }
+
   async pendingApprovalItems(): Promise<
     { nibbletId: string; item: Extract<ThreadItem, { type: "approval" }> }[]
   > {
@@ -531,6 +560,84 @@ export class Store {
     const [row] = await this.db.update(cards).set(patch).where(eq(cards.id, id)).returning();
     if (!row) throw new RpcError("not_found", `No card ${id}`);
     return row;
+  }
+
+  // App links, and nibblets' grants on them
+
+  async appLinks(): Promise<(typeof appLinks.$inferSelect)[]> {
+    return this.db.select().from(appLinks).orderBy(asc(appLinks.createdAt));
+  }
+
+  async createAppLink(
+    row: Omit<typeof appLinks.$inferInsert, "createdAt" | "updatedAt">,
+  ): Promise<typeof appLinks.$inferSelect> {
+    const [made] = await this.db.insert(appLinks).values(row).returning();
+    if (!made) throw new Error("insert returned nothing");
+    return made;
+  }
+
+  async updateAppLink(
+    id: string,
+    patch: Partial<Pick<typeof appLinks.$inferInsert, "account" | "state" | "detail" | "secret">>,
+  ): Promise<void> {
+    await this.db
+      .update(appLinks)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(eq(appLinks.id, id));
+  }
+
+  async deleteAppLink(id: string): Promise<void> {
+    await this.db.delete(appLinks).where(eq(appLinks.id, id));
+  }
+
+  async appGrants(filter: {
+    nibbletId?: string;
+    linkId?: string;
+  }): Promise<(typeof nibbletAppGrants.$inferSelect)[]> {
+    return this.db
+      .select()
+      .from(nibbletAppGrants)
+      .where(
+        and(
+          filter.nibbletId === undefined
+            ? undefined
+            : eq(nibbletAppGrants.nibbletId, filter.nibbletId),
+          filter.linkId === undefined ? undefined : eq(nibbletAppGrants.linkId, filter.linkId),
+        ),
+      )
+      .orderBy(asc(nibbletAppGrants.createdAt));
+  }
+
+  async putAppGrant(
+    row: Omit<typeof nibbletAppGrants.$inferInsert, "createdAt" | "updatedAt">,
+  ): Promise<void> {
+    const now = new Date();
+    await this.db
+      .insert(nibbletAppGrants)
+      .values(row)
+      .onConflictDoUpdate({
+        target: [nibbletAppGrants.nibbletId, nibbletAppGrants.linkId],
+        set: { ...row, createdAt: now, updatedAt: now },
+      });
+  }
+
+  async updateAppGrant(
+    nibbletId: string,
+    linkId: string,
+    patch: Partial<
+      Pick<typeof nibbletAppGrants.$inferInsert, "scopes" | "providers" | "state" | "detail">
+    >,
+  ): Promise<void> {
+    await this.db
+      .update(nibbletAppGrants)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(and(eq(nibbletAppGrants.nibbletId, nibbletId), eq(nibbletAppGrants.linkId, linkId)));
+  }
+
+  async deleteAppGrant(nibbletId: string, linkId: string): Promise<void> {
+    await this.db
+      .delete(nibbletAppGrants)
+      .where(and(eq(nibbletAppGrants.nibbletId, nibbletId), eq(nibbletAppGrants.linkId, linkId)));
   }
 
   async scheduleRow(id: string): Promise<ScheduleRow> {

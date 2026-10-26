@@ -15,7 +15,16 @@ import {
   type ServerCapabilities,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServerSpec } from "@nibblets/harness";
-import { declinedMessage, needsApproval, type JsonValue, type ToolRule } from "@nibblets/protocol";
+import {
+  declinedMessage,
+  needsApproval,
+  readAppView,
+  toolView,
+  type GuardAppView,
+  type JsonValue,
+  type ToolRule,
+  type ToolView,
+} from "@nibblets/protocol";
 import { createServer, type Server as HttpServer } from "node:http";
 
 export interface Decision {
@@ -33,7 +42,16 @@ export interface GateOptions {
   port?: number;
   /** `POST /refresh`: the runner saying the settings changed. */
   onRefresh?(): Promise<void>;
+  /** A call of a tool with an MCP App view, for the thread to show. */
+  view?(report: GuardAppView): Promise<void>;
 }
+
+/**
+ * Who's calling: the harness, for the agent (`/mcp/<name>`), or the runner,
+ * for an MCP App view in the chat (`/app/<name>`). Each sees only the tools
+ * meant for it.
+ */
+type Caller = "model" | "app";
 
 type ToolResult = Awaited<ReturnType<Client["callTool"]>> | CallToolResult;
 
@@ -47,6 +65,8 @@ class Upstream {
   private readonly spec: McpServerSpec;
   /** Identifies the definition, so a changed server is reconnected. */
   readonly key: string;
+  /** What each tool's `_meta` says about its view, as last listed. */
+  private readonly views = new Map<string, ToolView>();
 
   constructor(name: string, spec: McpServerSpec) {
     this.name = name;
@@ -81,6 +101,24 @@ class Upstream {
     return client;
   }
 
+  /** Notes the views of tools the server listed. */
+  noteTools(tools: readonly { name: string; _meta?: object }[]): void {
+    for (const tool of tools) this.views.set(tool.name, toolView(tool._meta));
+  }
+
+  /** A tool's view, listing the server's tools first if it hasn't been seen. */
+  async viewOf(client: Client, tool: string): Promise<ToolView> {
+    if (!this.views.has(tool)) {
+      let cursor: string | undefined;
+      do {
+        const page = await client.listTools(cursor ? { cursor } : undefined);
+        this.noteTools(page.tools);
+        cursor = page.nextCursor;
+      } while (cursor);
+    }
+    return this.views.get(tool) ?? toolView(undefined);
+  }
+
   async close(): Promise<void> {
     const client = await this.client?.catch(() => null);
     this.client = null;
@@ -100,6 +138,10 @@ function stringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
  * the harness only ever sees the gate. Everything is forwarded unchanged,
  * except that a `tools/call` matching a rule waits for the user, and a
  * declined one comes back as an error result the agent can read.
+ *
+ * It's also the host for MCP Apps: it reports each call of a tool with a
+ * view (`opts.view`), and serves the same servers at `/app/<name>` for the
+ * runner to make views' own calls, with only the tools views may call.
  */
 export class McpGate {
   private readonly upstreams = new Map<string, Upstream>();
@@ -120,8 +162,9 @@ export class McpGate {
           res.writeHead(204).end();
           return;
         }
-        const match = /^\/mcp\/([^/?]+)/.exec(req.url ?? "");
-        const up = match?.[1] ? this.upstreams.get(decodeURIComponent(match[1])) : undefined;
+        const match = /^\/(mcp|app)\/([^/?]+)/.exec(req.url ?? "");
+        const up = match?.[2] ? this.upstreams.get(decodeURIComponent(match[2])) : undefined;
+        const caller: Caller = match?.[1] === "app" ? "app" : "model";
         if (!up) {
           res
             .writeHead(404, { "content-type": "application/json" })
@@ -138,7 +181,7 @@ export class McpGate {
           res.end(JSON.stringify({ error: message }));
           return;
         }
-        const server = this.proxy(up.name, client);
+        const server = this.proxy(up, client, caller);
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
           enableJsonResponse: true,
@@ -195,15 +238,28 @@ export class McpGate {
     await new Promise<void>((r) => (this.http ? this.http.close(() => r()) : r()));
   }
 
-  /** Decides one call: forward it, or answer for it when the user said no. */
+  /**
+   * Decides one call: forward it, or answer for it when the user said no or
+   * it isn't the caller's to make. A call the agent makes of a tool with a
+   * view is reported, with the view, once it's answered.
+   */
   async call(
-    name: string,
+    up: Upstream,
     client: Client,
     params: { name: string; arguments?: Record<string, unknown> },
+    caller: Caller = "model",
   ): Promise<ToolResult> {
-    if (needsApproval(this.opts.rules(), name, params.name)) {
-      const input: JsonValue = JSON.parse(JSON.stringify(params.arguments ?? {}));
-      const decision = await this.opts.ask(name, params.name, input);
+    const view = await up.viewOf(client, params.name).catch(() => toolView(undefined));
+    if (!view.visibility.includes(caller)) {
+      const only = caller === "app" ? "the agent" : "its view in the chat";
+      return {
+        content: [{ type: "text", text: `${params.name} is only for ${only} to call` }],
+        isError: true,
+      };
+    }
+    const input: JsonValue = JSON.parse(JSON.stringify(params.arguments ?? {}));
+    if (needsApproval(this.opts.rules(), up.name, params.name)) {
+      const decision = await this.opts.ask(up.name, params.name, input);
       if (!decision.approved) {
         return {
           content: [{ type: "text", text: declinedMessage(decision.reason) }],
@@ -211,13 +267,45 @@ export class McpGate {
         };
       }
     }
-    return client.callTool(params, undefined, {
+    const result = await client.callTool(params, undefined, {
       timeout: CALL_TIMEOUT_MS,
       resetTimeoutOnProgress: true,
     });
+    if (caller === "model" && view.uri && this.opts.view) {
+      // Not waited for: the agent has its answer whether or not the view shows.
+      void this.report(up.name, client, params.name, view.uri, input, result).catch(
+        (err: unknown) =>
+          this.opts.log(
+            `couldn't show ${up.name}'s view of ${params.name}: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+      );
+    }
+    return result;
   }
 
-  private proxy(name: string, client: Client): Server {
+  private async report(
+    server: string,
+    client: Client,
+    tool: string,
+    uri: string,
+    input: JsonValue,
+    result: ToolResult,
+  ): Promise<void> {
+    const resource = await client.readResource({ uri });
+    const view = readAppView(resource.contents);
+    if (!view) throw new Error(`${uri} isn't an MCP App`);
+    await this.opts.view?.({
+      server,
+      tool,
+      input,
+      result: JSON.parse(JSON.stringify(result)),
+      uri,
+      view,
+    });
+  }
+
+  private proxy(up: Upstream, client: Client, caller: Caller): Server {
+    const name = up.name;
     const upstream = client.getServerCapabilities() ?? {};
     const capabilities: ServerCapabilities = {};
     if (upstream.tools) capabilities.tools = {};
@@ -225,8 +313,16 @@ export class McpGate {
     if (upstream.prompts) capabilities.prompts = {};
     const server = new Server({ name: `gate:${name}`, version: "0.1.0" }, { capabilities });
     if (upstream.tools) {
-      server.setRequestHandler(ListToolsRequestSchema, (req) => client.listTools(req.params));
-      server.setRequestHandler(CallToolRequestSchema, (req) => this.call(name, client, req.params));
+      server.setRequestHandler(ListToolsRequestSchema, async (req) => {
+        const listed = await client.listTools(req.params);
+        up.noteTools(listed.tools);
+        // A tool only its view may call isn't the agent's to see, and the other way round.
+        const tools = listed.tools.filter((t) => toolView(t._meta).visibility.includes(caller));
+        return { ...listed, tools };
+      });
+      server.setRequestHandler(CallToolRequestSchema, (req) =>
+        this.call(up, client, req.params, caller),
+      );
     }
     if (upstream.resources) {
       server.setRequestHandler(ListResourcesRequestSchema, (req) =>

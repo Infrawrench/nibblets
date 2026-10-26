@@ -12,6 +12,10 @@ import {
   mergeMcpServers,
   tailnetHostname,
   randomHamsterLook,
+  type AppGrant,
+  type AppLink,
+  type AppLinkAttempt,
+  type AppLinkKind,
   type BankField,
   type BankKind,
   type BankProvider,
@@ -53,6 +57,67 @@ import {
 } from "./connection.ts";
 import type { FileRef } from "@nibblets/protocol";
 import { mockFileRef, registerMockFile } from "./files.ts";
+
+/** Fares for the demo's MCP App view. */
+const mockFares = [
+  { flight: "TP1337", airline: "TAP", departs: "09:10", price: 148 },
+  { flight: "U28733", airline: "easyJet", departs: "11:45", price: 96 },
+  { flight: "BA500", airline: "British Airways", departs: "17:20", price: 172 },
+];
+
+/**
+ * A small MCP App, speaking the protocol by hand: it lists the fares from
+ * its tool's result, holds one with a call of its own, and suggests a
+ * message.
+ */
+const mockFareView = `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  body { margin: 0; padding: 12px; font: 13px system-ui, sans-serif; color: #1c1c1e; background: #fff; }
+  body.dark { color: #dcdcdc; background: #1f1f1f; }
+  .fare { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #8884; }
+  .fare b { width: 64px; } .fare span { flex: 1; } button { font: inherit; padding: 2px 8px; }
+  #status { margin-top: 8px; opacity: 0.7; }
+</style></head><body>
+<div id="fares">Waiting for fares…</div><div id="status"></div>
+<script>
+  let next = 1; const waiting = new Map();
+  const request = (method, params) => new Promise((resolve) => {
+    const id = next++; waiting.set(id, resolve);
+    parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+  });
+  const notify = (method, params) => parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
+  const theme = (t) => document.body.classList.toggle("dark", t === "dark");
+  const status = (text) => (document.getElementById("status").textContent = text);
+  addEventListener("message", ({ data }) => {
+    if (data.id && waiting.has(data.id)) { waiting.get(data.id)(data.result); waiting.delete(data.id); return; }
+    if (data.method === "ui/notifications/host-context-changed") theme(data.params.theme);
+    if (data.method === "ui/notifications/tool-result") show(data.params.structuredContent.fares);
+  });
+  function show(fares) {
+    const list = document.getElementById("fares"); list.textContent = "";
+    for (const f of fares) {
+      const row = document.createElement("div"); row.className = "fare";
+      row.innerHTML = "<b></b><span></span><em></em>";
+      row.querySelector("b").textContent = f.departs;
+      row.querySelector("span").textContent = f.airline + " " + f.flight;
+      row.querySelector("em").textContent = "£" + f.price;
+      const hold = document.createElement("button"); hold.textContent = "Hold";
+      hold.onclick = async () => {
+        const result = await request("tools/call", { name: "hold_fare", arguments: { flight: f.flight } });
+        status(result.content[0].text);
+      };
+      const book = document.createElement("button"); book.textContent = "Ask to book";
+      book.onclick = () => request("ui/message", { role: "user", content: [{ type: "text", text: "Book " + f.flight + " at " + f.departs + ", please." }] });
+      row.append(hold, book); list.append(row);
+    }
+    notify("ui/notifications/size-changed", { height: document.documentElement.scrollHeight });
+  }
+  request("ui/initialize", {
+    protocolVersion: "2026-01-26",
+    appInfo: { name: "Fares", version: "1.0.0" },
+    appCapabilities: {},
+  }).then((result) => { theme(result.hostContext && result.hostContext.theme); notify("ui/notifications/initialized", {}); });
+</script></body></html>`;
 
 /** Where Pip's person shared from, and where every mock lookup lands. */
 const LONDON = {
@@ -669,6 +734,47 @@ export function createMockServer(): ServerConnection {
   };
   const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+  // App links: an Infrawrench-like app, linked once the code's been "approved" a few seconds on.
+  const appLinkKinds: AppLinkKind[] = [
+    {
+      id: "infrawrench",
+      name: "Infrawrench",
+      description:
+        "Give nibblets their own agents in an Infrawrench organisation, each with only the scopes you tick.",
+      icon: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24" rx="5" fill="#3b4f8f"/><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.1-3.1a6 6 0 0 1-8.3 7.1l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.1-8.3z" fill="#f0c060"/></svg>')}`,
+      fields: [
+        {
+          key: "url",
+          label: "Infrawrench URL",
+          hint: "Only to link a self-hosted Infrawrench.",
+          placeholder: "https://app.infrawrench.com",
+          default: "https://app.infrawrench.com",
+          required: false,
+        },
+      ],
+    },
+  ];
+  const appLinks: AppLink[] = [];
+  const appLinkAttempts = new Map<string, AppLinkAttempt>();
+  const appGrants: AppGrant[] = [];
+  const appScopeGroups = [
+    {
+      title: "Infrastructure",
+      scopes: [
+        { value: "resources:read", label: "Resources (read)" },
+        { value: "resources:write", label: "Resources (write)" },
+      ],
+    },
+    {
+      title: "Secrets",
+      scopes: [{ value: "secrets:read", label: "Secrets (read)" }],
+    },
+    {
+      title: "Organization",
+      scopes: [{ value: "audit:read", label: "Audit log (read)" }],
+    },
+  ];
+
   // A thread with one of everything, for Pip.
   const t1 = "turn-1";
   const seed: ThreadItem[] = [
@@ -710,6 +816,31 @@ export function createMockServer(): ServerConnection {
       output:
         "1. Prefers aisle seats, hates early flights before 8am (saved 12 Sep)\n2. Home airport: LGW",
       status: "done",
+    },
+    {
+      type: "tool_call",
+      id: "tc-fares",
+      turnId: t1,
+      createdAt: ago(41.7),
+      name: "search_fares",
+      server: "fares",
+      input: { from: "LGW", to: "LIS", depart: "2026-10-31", back: "2026-11-02" },
+      output: "3 fares found",
+      status: "done",
+    },
+    {
+      type: "app_view",
+      id: "view-fares",
+      turnId: t1,
+      createdAt: ago(41.65),
+      server: "fares",
+      tool: "search_fares",
+      input: { from: "LGW", to: "LIS", depart: "2026-10-31", back: "2026-11-02" },
+      result: {
+        content: [{ type: "text", text: "3 fares found" }],
+        structuredContent: { fares: mockFares },
+      },
+      viewId: "mock-fares",
     },
     {
       type: "subagent",
@@ -1365,6 +1496,56 @@ export function createMockServer(): ServerConnection {
         startedAt: Date.now(),
       }),
       browserBorrow: async () => null,
+      appGrants: async ({ id }) => {
+        let host = nibblets.get(id);
+        while (host?.parentId) host = nibblets.get(host.parentId);
+        return appGrants.filter((g) => g.nibbletId === host?.id);
+      },
+      setAppGrant: async ({ id, linkId, scopes, providers }) => {
+        if (nibblets.get(id)?.parentId) {
+          throw new RpcError("bad_request", "A sub-agent uses its parent's app links");
+        }
+        await pause(600);
+        const at = appGrants.findIndex((g) => g.nibbletId === id && g.linkId === linkId);
+        const grant: AppGrant = {
+          nibbletId: id,
+          linkId,
+          scopes,
+          providers,
+          state: "active",
+          detail: null,
+          createdAt: appGrants[at]?.createdAt ?? now(),
+          updatedAt: now(),
+        };
+        if (at >= 0) appGrants[at] = grant;
+        else appGrants.push(grant);
+        push({ type: "app_grants_changed", nibbletId: id });
+        return grant;
+      },
+      removeAppGrant: async ({ id, linkId }) => {
+        const at = appGrants.findIndex((g) => g.nibbletId === id && g.linkId === linkId);
+        if (at >= 0) appGrants.splice(at, 1);
+        push({ type: "app_grants_changed", nibbletId: id });
+        return { ok: true };
+      },
+      view: async () => ({
+        html: mockFareView,
+        csp: {},
+        permissions: {},
+        prefersBorder: null,
+      }),
+      viewCall: async ({ tool, arguments: args }) => ({
+        content: [
+          {
+            type: "text",
+            text:
+              tool === "hold_fare"
+                ? `Held ${String(args.flight)} for 24 hours`
+                : `${tool} isn't in the demo`,
+          },
+        ],
+        isError: tool !== "hold_fare",
+      }),
       decide: async ({ id, approvalId, approve, reason }) => {
         const found = items.get(id)?.find((s) => s.item.id === approvalId)?.item;
         if (found?.type === "approval" && found.status === "pending") {
@@ -1544,6 +1725,94 @@ export function createMockServer(): ServerConnection {
         mockBanks.splice(at, 1);
         push({ type: "bank_changed" });
         return bankStatus();
+      },
+    },
+    appLinks: {
+      plugins: async () => appLinkKinds,
+      list: async () => ({ links: appLinks, attempts: [...appLinkAttempts.values()] }),
+      begin: async ({ plugin }) => {
+        const kind = appLinkKinds.find((k) => k.id === plugin);
+        if (!kind) throw new RpcError("not_found", `No app link plugin called ${plugin}`);
+        const attempt: AppLinkAttempt = {
+          id: crypto.randomUUID(),
+          plugin,
+          userCode: "WXYZ-2345",
+          verificationUrl: "https://app.infrawrench.com/link-agents",
+          verificationUrlComplete: "https://app.infrawrench.com/link-agents?code=WXYZ-2345",
+          expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+        };
+        appLinkAttempts.set(attempt.id, attempt);
+        // The person approves it in the app a few seconds later.
+        setTimeout(() => {
+          if (!appLinkAttempts.delete(attempt.id)) return;
+          const taken = new Set(appLinks.map((l) => l.name));
+          let name = plugin;
+          for (let n = 2; taken.has(name); n++) name = `${plugin}-${n}`;
+          const link: AppLink = {
+            id: crypto.randomUUID(),
+            plugin,
+            name,
+            account: "Acme on Infrawrench",
+            settings: { url: "https://app.infrawrench.com" },
+            state: "linked",
+            detail: null,
+            createdAt: now(),
+          };
+          appLinks.push(link);
+          push({
+            type: "app_link_settled",
+            attemptId: attempt.id,
+            outcome: "linked",
+            linkId: link.id,
+            detail: null,
+          });
+          push({ type: "app_links_changed" });
+        }, 6000);
+        push({ type: "app_links_changed" });
+        return attempt;
+      },
+      cancel: async ({ id }) => {
+        if (appLinkAttempts.delete(id)) {
+          push({
+            type: "app_link_settled",
+            attemptId: id,
+            outcome: "cancelled",
+            linkId: null,
+            detail: null,
+          });
+          push({ type: "app_links_changed" });
+        }
+        return { ok: true };
+      },
+      remove: async ({ id }) => {
+        const at = appLinks.findIndex((l) => l.id === id);
+        if (at >= 0) appLinks.splice(at, 1);
+        for (let i = appGrants.length - 1; i >= 0; i--) {
+          const grant = appGrants[i];
+          if (grant?.linkId !== id) continue;
+          appGrants.splice(i, 1);
+          push({ type: "app_grants_changed", nibbletId: grant.nibbletId });
+        }
+        push({ type: "app_links_changed" });
+        return { ok: true };
+      },
+      adopt: async () => {
+        throw new RpcError("unauthorized", "Only the server's owner token can adopt a link");
+      },
+      describe: async ({ id }) => {
+        const link = appLinks.find((l) => l.id === id);
+        if (!link) throw new RpcError("not_found", `No app link ${id}`);
+        await pause(300);
+        return {
+          account: link.account,
+          scopeGroups: appScopeGroups,
+          providers: [
+            { id: "aws", name: "AWS" },
+            { id: "hetzner", name: "Hetzner" },
+          ],
+          ceiling: appScopeGroups.flatMap((g) => g.scopes.map((sc) => sc.value)),
+          narrowable: ["resources:read", "resources:write", "secrets:read"],
+        };
       },
     },
     snapshots: {

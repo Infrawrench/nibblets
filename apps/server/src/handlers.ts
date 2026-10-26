@@ -15,6 +15,7 @@ import { cliStatuses } from "./clilogins.ts";
 import { SYSTEM_PROMPT_SETTING } from "./context.ts";
 import { readTailnetOAuth, setTailnetKeys, tailnetKeys } from "./tailnet-keys.ts";
 import { forgetGrants, onePasswordStatus, readGrants, setGrants } from "./onepassword.ts";
+import type { AppLinks } from "./app-links.ts";
 import type { Bank } from "./bank.ts";
 import type { Banks } from "./banks.ts";
 import type { PublicAddresses } from "./public-address.ts";
@@ -58,6 +59,7 @@ export interface Services {
   appUpdates: AppUpdater;
   bank: Bank;
   banks: Banks;
+  appLinks: AppLinks;
   geocoder: Geocoder;
   locations: LocationRequests;
   publicAddress: PublicAddresses;
@@ -100,7 +102,12 @@ export function systemPromptExtra(store: Store): Promise<string> {
   return store.getSetting(SYSTEM_PROMPT_SETTING, (v) => z.string().parse(v), "");
 }
 
-export function createHandlers(s: Services): Handlers<Contract, Record<string, never>> {
+/** Who's calling: whether with the owner token (the installer, or the desktop app), not a paired device. */
+export interface RpcContext {
+  owner: boolean;
+}
+
+export function createHandlers(s: Services): Handlers<Contract, RpcContext> {
   const { store, conductor, scheduler, tunnel } = s;
 
   const checkModel = async (harness: HarnessId, model: string) => {
@@ -221,6 +228,8 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       delete: async ({ id }) => {
         await conductor.delete(id);
         await forgetGrants(s.config, store, id);
+        // Its credentials in other apps go with it, or are revoked once the app can be reached.
+        await s.appLinks.forget(id);
         return ok;
       },
       start: ({ id }) => conductor.start(id),
@@ -261,10 +270,20 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       browserBorrowStart: ({ id }) => s.borrow.start(id),
       browserBorrowEnd: ({ id }) => s.borrow.end(id),
       browserBorrow: async ({ id }) => s.borrow.current(id),
+      appGrants: ({ id }) => s.appLinks.grants(id),
+      setAppGrant: ({ id, linkId, scopes, providers }) =>
+        s.appLinks.setGrant(id, linkId, scopes, providers),
+      removeAppGrant: async ({ id, linkId }) => {
+        await s.appLinks.removeGrant(id, linkId);
+        return ok;
+      },
       decide: async ({ id, approvalId, approve, reason }) => {
         await conductor.approvals.decide(id, approvalId, approve, reason);
         return ok;
       },
+      view: ({ id, viewId }) => conductor.appViews.content(id, viewId),
+      viewCall: ({ id, itemId, tool, arguments: args }) =>
+        conductor.appViews.call(id, itemId, tool, args),
     },
 
     machines: {
@@ -329,6 +348,27 @@ export function createHandlers(s: Services): Handlers<Contract, Record<string, n
       kill: ({ id }) => s.bank.kill(id, "user"),
       configure: (change) => s.banks.configure(change),
       remove: ({ id }) => s.banks.remove(id),
+    },
+    appLinks: {
+      plugins: async () => s.appLinks.plugins(),
+      list: () => s.appLinks.list(),
+      begin: ({ plugin, settings }) => s.appLinks.begin(plugin, settings),
+      cancel: async ({ id }) => {
+        s.appLinks.cancel(id);
+        return ok;
+      },
+      remove: async ({ id }) => {
+        await s.appLinks.remove(id);
+        return ok;
+      },
+      adopt: async ({ plugin, settings, secret }, ctx) => {
+        // The installer hands over a link the app approved; a paired device can link with a code.
+        if (!ctx.owner) {
+          throw new RpcError("unauthorized", "Only the server's owner token can adopt a link");
+        }
+        return s.appLinks.adopt(plugin, settings, secret);
+      },
+      describe: ({ id }) => s.appLinks.describe(id),
     },
     snapshots: {
       list: ({ nibbletId }) => s.snapshots.list(nibbletId),

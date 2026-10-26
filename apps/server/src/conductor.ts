@@ -57,7 +57,9 @@ import { keyId, mintAuthKey, readTailnetOAuth } from "./tailnet-keys.ts";
 import { hostLoginFor } from "./host-login.ts";
 import { TerminalHub } from "./terminals.ts";
 import type { Bank } from "./bank.ts";
+import type { AppConnections, AppLinks } from "./app-links.ts";
 import { CardFiles } from "./card-files.ts";
+import { AppViews } from "./views.ts";
 import { desktopToken, guardToken, hashToken, newId, viewToken, type Store } from "./store.ts";
 
 export interface RunnerLink {
@@ -129,6 +131,8 @@ export class Conductor {
   private readonly config: Config;
   /** Gated tool calls waiting for the user. */
   readonly approvals: Approvals;
+  /** MCP App views in threads, and the tool calls they make through the runner. */
+  readonly appViews: AppViews;
   /** Nibblets waiting out a subscription usage limit. */
   readonly limits: LimitWaits;
   /** Each nibblet's monthly budget for API-key usage, and its spending. */
@@ -161,6 +165,8 @@ export class Conductor {
   });
   /** Nibblets' cards, once the bank is set up; it writes their files through `cardFiles`. */
   bank: Bank | null = null;
+  /** The server's app links, whose grants a nibblet's guard serves; set once the server has them. */
+  appLinks: AppLinks | null = null;
   /** `location_get` asks waiting on a device; set once the server has them. */
   locations: LocationRequests | null = null;
   serverName = "nibblet";
@@ -172,6 +178,11 @@ export class Conductor {
     this.machines = machines;
     this.config = config;
     this.approvals = new Approvals(store, config.NIBBLET_APPROVAL_TIMEOUT_MINUTES * 60_000);
+    this.appViews = new AppViews(store, (nibbletId, message) => {
+      const link = this.links.get(nibbletId);
+      link?.send(message);
+      return link !== undefined;
+    });
     this.providerLimits = new ProviderLimits(config);
     this.budgets = new Budgets(store);
     this.limits = new LimitWaits(store, {
@@ -629,6 +640,7 @@ export class Conductor {
     this.links.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
     this.cardFiles.runnerGone(nibbletId);
+    this.appViews.runnerGone(nibbletId);
     const machine = await this.machineOf(nibbletId).catch(() => null);
     if (machine && !(await machine.plugin.running(machine.host).catch(() => false))) {
       // It went down with its parent's container.
@@ -694,6 +706,7 @@ export class Conductor {
     this.links.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
     this.cardFiles.runnerGone(nibbletId);
+    this.appViews.runnerGone(nibbletId);
     // Mark it stopped first, so the container's exit event reads as expected.
     const stopped = await this.store.updateNibblet(nibbletId, {
       status: "stopped",
@@ -923,6 +936,7 @@ export class Conductor {
     if (previous && previous !== link) {
       this.terminals.runnerGone(nibbletId);
       this.cardFiles.runnerGone(nibbletId);
+      this.appViews.runnerGone(nibbletId);
     }
     this.links.set(nibbletId, link);
     const onePassword = await onePasswordLogin(this.config, this.store, nibbletId, (m) =>
@@ -930,7 +944,8 @@ export class Conductor {
     );
     if (onePassword) this.onePasswordVaults.set(nibbletId, onePassword.vaults);
     else this.onePasswordVaults.delete(nibbletId);
-    const mcpServers = await this.ownMcpServers(row);
+    const apps = await this.appConnections(nibbletId);
+    const mcpServers = await this.ownMcpServers(row, apps);
     link.send({
       type: "configure",
       config: {
@@ -946,6 +961,7 @@ export class Conductor {
           ...(this.browserOn(row) ? ["computer"] : []),
           ...(onePassword ? ["onepassword"] : []),
           ...mcpServers.map((server) => server.name),
+          ...apps.servers.map((server) => server.name),
         ],
         cli: await cliLogins(this.config, row.cliCredentials, (m) =>
           console.warn(`[${nibbletId}] ${m}`),
@@ -959,10 +975,19 @@ export class Conductor {
     return true;
   }
 
-  /** Its own MCP servers, less any the host's tools now cover. */
-  private async ownMcpServers(row: { hostTools: string[]; mcpServers: McpServerDef[] }) {
+  /**
+   * Its own MCP servers, less any the host's tools now cover, and any its
+   * app links' tools go by the name of.
+   */
+  private async ownMcpServers(
+    row: { hostTools: string[]; mcpServers: McpServerDef[] },
+    apps: AppConnections,
+  ) {
+    const linked = new Set(apps.servers.map((server) => server.name));
     // One saved before its name was taken by a built-in would replace the built-in.
-    const own = row.mcpServers.filter((server) => !isReservedMcpName(server.name));
+    const own = row.mcpServers.filter(
+      (server) => !isReservedMcpName(server.name) && !linked.has(server.name),
+    );
     return row.hostTools.length > 0 && this.config.HOST_MCP_URL
       ? dropOverlaps(own, row.hostTools, (await hostTools(this.config)).servers)
       : own;
@@ -977,12 +1002,27 @@ export class Conductor {
     const onePassword = await onePasswordLogin(this.config, this.store, nibbletId, (m) =>
       console.warn(`[${nibbletId}] ${m}`),
     );
+    const apps = await this.appConnections(nibbletId);
     return {
       browser: this.browserOn(row),
       toolApprovals: row.toolApprovals,
-      mcpServers: await this.ownMcpServers(row),
+      mcpServers: await this.ownMcpServers(row, apps),
+      appLinks: apps.servers,
       onePassword,
     };
+  }
+
+  /**
+   * Its app links (its host's, for a sub-agent): the servers its guard
+   * serves, with their credentials, and what it's told about them. None
+   * when they can't be read, rather than no guard at all.
+   */
+  private async appConnections(nibbletId: string): Promise<AppConnections> {
+    if (!this.appLinks) return { servers: [], prompts: [] };
+    return this.appLinks.connections(nibbletId).catch((err: unknown) => {
+      console.warn(`[${nibbletId}] couldn't read its app links`, err);
+      return { servers: [], prompts: [] };
+    });
   }
 
   /**
@@ -1054,6 +1094,7 @@ export class Conductor {
     this.views.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
     this.cardFiles.runnerGone(nibbletId);
+    this.appViews.runnerGone(nibbletId);
     this.failActive(nibbletId, "failed", "Lost touch with its container");
   }
 
@@ -1126,6 +1167,9 @@ export class Conductor {
       }
       case "card_done":
         this.cardFiles.fromRunner(nibbletId, message);
+        return;
+      case "view_call_done":
+        this.appViews.fromRunner(nibbletId, message);
         return;
       case "terminal_output":
       case "terminal_exit":
@@ -1237,6 +1281,7 @@ export class Conductor {
       now: new Date(),
       onePasswordVaults: this.onePasswordVaults.get(nibbletId),
       banks: this.bank?.providers() ?? [],
+      apps: (await this.appConnections(nibbletId)).prompts,
       // Its container's, which comes with the host's browser.
       desktop: host ? this.browserOn(host) : false,
       tailnet:
@@ -1401,6 +1446,7 @@ export class Conductor {
     this.links.delete(nibbletId);
     this.terminals.runnerGone(nibbletId);
     this.cardFiles.runnerGone(nibbletId);
+    this.appViews.runnerGone(nibbletId);
     this.failActive(nibbletId, "failed", "Its container stopped");
     await this.subagentsGone(nibbletId, "Its parent's container stopped");
     const tail = exitReason(await this.machineFor(nibblet).logs(nibbletId, 40));

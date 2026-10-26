@@ -2,8 +2,9 @@
  * The guard: the part of a nibblet's container that holds secrets, run by
  * the container's entry as its own user so the agent (another user) can't
  * read its memory, environment or files. It runs the browser
- * (OpenComputerUse), and the gate in front of the browser, 1Password and the
- * nibblet's own MCP servers, which it starts itself with their secrets. Its
+ * (OpenComputerUse), and the gate in front of the browser, 1Password, the
+ * nibblet's own MCP servers and its app links' tools, which it starts
+ * itself with their secrets. Its
  * settings come from the server with its own token, and "ask me first"
  * calls wait on the server, so neither depends on anything the agent can
  * reach.
@@ -15,6 +16,7 @@ import {
   GATE_PORT,
   GuardConfig,
   GuardEnv,
+  type GuardAppView,
   ONEPASSWORD_VAULTS_ENV,
   type JsonValue,
   type ToolRule,
@@ -50,6 +52,16 @@ export function guardClient(env: GuardEnv, fetcher: typeof fetch = fetch) {
       });
       if (!res.ok) throw new Error(`the server said ${res.status}`);
       return GuardConfig.parse(await res.json());
+    },
+    /** Hands the server a call of a tool with an MCP App view, for the thread. */
+    async view(report: GuardAppView): Promise<void> {
+      const res = await fetcher(`${base}/view`, {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify(report),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) throw new Error(`the server said ${res.status}`);
     },
     /** Asks the person, through the server, polling until they decide. */
     async ask(server: string, tool: string, input: JsonValue): Promise<Decision> {
@@ -108,6 +120,10 @@ export function gatedSpecs(
         ? { type: "http", url: server.url, headers: server.headers }
         : { type: "stdio", command: server.command, args: server.args, env: server.env };
   }
+  // An app link's tools take the name over from its own server, as the server already does.
+  for (const app of config.appLinks) {
+    specs[app.name] = { type: "http", url: app.url, headers: app.headers };
+  }
   return specs;
 }
 
@@ -126,6 +142,7 @@ async function main(): Promise<void> {
   };
   const gate = new McpGate({
     ask: (name, tool, input) => server.ask(name, tool, input),
+    view: (report) => server.view(report),
     rules: () => rules,
     log,
     port: env.NIBBLET_GATE_PORT ?? GATE_PORT,

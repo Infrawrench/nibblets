@@ -8,16 +8,27 @@
 #
 # Safe to run again: it updates the checkout and restarts the stack.
 #
+# To sign in to agents and link Nibblets Connect afterwards, without
+# touching the checkout or restarting the stack, run it in a terminal with:
+#
+#   bash ~/nibblets/install.sh --sign-in
+#
 # Settings, as environment variables:
 #   NIBBLETS_DIR     where the repo goes (default ~/nibblets)
 #   NIBBLETS_REPO    what to clone (default the GitHub repo)
 #   NIBBLETS_VERSION which release, like 0.2.0, or a branch, like main
 #                    (default the latest release, or main before there is one)
 #   NIBBLETS_YES=1   answer yes to every question
+#   NIBBLETS_CONNECT=0  don't link Nibblets Connect (it can be linked later
+#                       in Settings, or with --sign-in)
 #   NIBBLETS_ANTHROPIC_API_KEY  run Claude Code on this Anthropic API key
 #                               instead of a Claude subscription
 #   NIBBLETS_OPENAI_API_KEY     run Codex on this OpenAI API key instead of
 #                               a ChatGPT subscription
+#   NIBBLETS_APP_LINKS_FILE     a JSON file of app links an app already approved
+#                               for this server, [{ "plugin", "settings", "secret" }],
+#                               to start out linked (say Infrawrench set it up).
+#                               Make it 0600; it's deleted once it's been read
 #
 # Copyright (C) 2026 Infrawrench. Licensed under the GNU GPL, version 2.
 
@@ -30,6 +41,7 @@ GITHUB_REPO="Infrawrench/nibblets"
 REF=""
 DIR="${NIBBLETS_DIR:-$HOME/nibblets}"
 YES="${NIBBLETS_YES:-0}"
+CONNECT="${NIBBLETS_CONNECT:-1}"
 TOOLS="$HOME/.local/share/nibblets"
 CENTRAL="https://app.nibblets.dev"
 BRIDGE_PORT=8789
@@ -865,17 +877,75 @@ start_stack() {
   ok "Nibblets is running on this machine"
 }
 
+# Calls the server with the owner token. The token goes in a curl config read
+# from a pipe, and the body on stdin, never on the command line, where any
+# user could read them with ps. printf is a builtin, so it isn't there either.
 rpc() {
-  curl -fsS -X POST -H "authorization: Bearer $(env_get NIBBLET_OWNER_TOKEN)" \
-    -H "content-type: application/json" -d '{}' "http://127.0.0.1:${NIBBLET_PORT:-8420}/api/rpc/$1"
+  local body="${2:-}"
+  [ -n "$body" ] || body='{}'
+  printf '%s' "$body" |
+    curl -fsS -X POST -K <(printf 'header = "authorization: Bearer %s"\n' "$(env_get NIBBLET_OWNER_TOKEN)") \
+      -H "content-type: application/json" --data-binary @- \
+      "http://127.0.0.1:${NIBBLET_PORT:-8420}/api/rpc/$1"
 }
 # Picks one field out of an RPC reply.
 field() {
   node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{let v;try{v=process.argv[1].split(".").reduce((o,k)=>o?.[k],JSON.parse(s).data)}catch{}process.stdout.write(v==null?"":String(v))})' "$1"
 }
 
+# App links an app approved for this server before it existed (Infrawrench,
+# when it sets up a machine for Nibblets), handed over in a file rather than
+# a variable or an argument, where other users could see the secret.
+setup_app_links() {
+  local file="${NIBBLETS_APP_LINKS_FILE:-}"
+  [ -n "$file" ] || return 0
+  step "🔗 Linking apps"
+  if [ ! -r "$file" ]; then
+    warn "Can't read $file, so no apps are linked. You can link them in Settings."
+    return 0
+  fi
+  case "$(stat -c %a "$file" 2>/dev/null || echo 600)" in
+    600 | 400) ;;
+    *) warn "$file can be read by other users. Make it 0600 next time." ;;
+  esac
+  local tries=0
+  until curl -fsS "http://127.0.0.1:${NIBBLET_PORT:-8420}/healthz" >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 60 ]; then
+      warn "The server didn't answer, so no apps are linked yet. Run this again to try again."
+      return 0
+    fi
+    sleep 1
+  done
+  # One link per line, each as the RPC takes it.
+  local entries entry reply failed=0
+  entries=$(node -e 'const l=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));for(const e of Array.isArray(l)?l:[l])console.log(JSON.stringify({plugin:e.plugin,settings:e.settings??{},secret:e.secret}))' "$file" 2>/dev/null) ||
+    entries=""
+  if [ -z "$entries" ]; then
+    warn "$file isn't a list of app links, so none are linked. You can link them in Settings."
+    return 0
+  fi
+  while IFS= read -r entry; do
+    if reply=$(rpc appLinks.adopt "$entry" 2>/dev/null); then
+      ok "Linked to $(printf '%s' "$reply" | field account) 🎉"
+    else
+      failed=1
+      warn "The app didn't take one of the links, so it isn't linked yet."
+    fi
+  done <<<"$entries"
+  # Kept until every link is taken, so running this again tries the rest
+  # (taking one again changes nothing). Only then does its secret go.
+  if [ "$failed" = 0 ]; then
+    rm -f "$file"
+  else
+    chmod 600 "$file" 2>/dev/null || true
+    hint "$file is kept, readable only by you, so you can run this again to try again."
+  fi
+}
+
 LINKED=0
 setup_connect() {
+  [ "$CONNECT" != 0 ] || return 0
   step "🌍 Reaching it from anywhere"
   local status
   status=$(rpc connect.status 2>/dev/null || true)
@@ -945,10 +1015,73 @@ finish() {
   fi
 }
 
+# For --sign-in: the engine this machine already runs Nibblets on, without installing one.
+find_engine() {
+  if command -v docker >/dev/null && ! docker --version 2>/dev/null | grep -qi podman; then
+    ENGINE=docker
+  elif command -v podman >/dev/null; then
+    ENGINE=podman
+  else
+    fail "There's no Docker or Podman here. Run this without --sign-in to set Nibblets up."
+  fi
+  engine_access
+}
+
+# Whatever the credential proxy reads: the Claude Code and Codex logins it
+# mounts, and the API keys in its environment. OpenCode's and Kimi Code's
+# logins are read by the host bridge whenever a nibblet starts, so they
+# need nothing more.
+proxy_inputs() {
+  local a f
+  # By content, so signing in again is seen, and by inode: the proxy mounts
+  # each file on its own, so it keeps reading the old one if a sign-in
+  # replaces it rather than writing it in place.
+  for f in "$HOME/.claude/.credentials.json" "$HOME/.codex/auth.json"; do
+    if [ -f "$f" ]; then
+      printf '%s %s ' "$(sha256sum "$f" | cut -d' ' -f1)" "$(stat -c %i "$f")"
+    else
+      printf 'none '
+    fi
+  done
+  for a in CLAUDE_CREDENTIALS_SOURCE CODEX_AUTH_SOURCE NIBBLET_ANTHROPIC_API_KEY NIBBLET_OPENAI_API_KEY DEEPSEEK_API_KEY; do
+    printf '%s=%s ' "$a" "$(env_get "$a")"
+  done
+}
+
+# Signs in to agents and links Nibblets Connect on a machine that already
+# runs Nibblets, leaving the checkout and the stack as they are. Only the
+# credential proxy starts again, and only if what it reads changed.
+sign_in() {
+  [ -f "$DIR/docker/.env" ] || fail "Nibblets isn't set up in $DIR yet. Run this without --sign-in first."
+  [ "$INTERACTIVE" = 1 ] || fail "Signing in needs a terminal. Run this in one, without NIBBLETS_YES."
+  local before
+  before=$(proxy_inputs)
+  setup_agents
+  if [ "$(proxy_inputs)" != "$before" ]; then
+    find_engine
+    spin "Handing the new logins to the credential proxy" with_docker "cd '$DIR' && sh docker/up.sh --credentials"
+  fi
+  setup_connect
+  printf '\n%s\n\n' "${B}${GREEN}  ✨ All set. ✨${R}"
+  if [ "$LINKED" = 1 ]; then
+    say "🐹 Open ${B}${BLUE}$CENTRAL${R} to see your nibblets."
+  fi
+  say "${D}🔁 Sign in to more agents: run this again with --sign-in${R}"
+  printf '\n'
+}
+
 main() {
   mkdir -p "$TOOLS"
   : >"$LOG"
   banner
+  case "${1:-}" in
+    --sign-in)
+      sign_in
+      return
+      ;;
+    "") ;;
+    *) fail "I don't know $1. The only option is --sign-in." ;;
+  esac
   check_machine
   setup_repo
   setup_engine
@@ -956,6 +1089,7 @@ main() {
   setup_vms
   setup_agents
   start_stack
+  setup_app_links
   setup_connect
   finish
 }

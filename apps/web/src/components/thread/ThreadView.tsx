@@ -32,6 +32,7 @@ import { SharedFileEntry, UserAttachments } from "../files/Files.tsx";
 import { Hamster } from "../hamster/Hamster.tsx";
 import { Button } from "../ui/Button.tsx";
 import { Input } from "../ui/Field.tsx";
+import { AppView, type AppViewHost } from "./AppView.tsx";
 
 /** Answers a gated tool call the nibblet is waiting on. */
 export type DecideFn = (approvalId: string, approve: boolean, reason?: string) => Promise<void>;
@@ -46,6 +47,7 @@ export function ThreadView({
   onDecide,
   onResume,
   onLocation,
+  viewHost,
 }: {
   items: readonly StoredItem[];
   server: string;
@@ -54,6 +56,8 @@ export function ThreadView({
   onLocation?: LocationFn;
   /** "Try now" on a usage-limit wait. */
   onResume?: () => Promise<void>;
+  /** Where MCP App views get their HTML and make their calls; without it they aren't drawn. */
+  viewHost?: AppViewHost;
 }) {
   const timeline = buildTimeline(items);
   const scroller = useRef<HTMLDivElement>(null);
@@ -87,6 +91,7 @@ export function ThreadView({
             onDecide={onDecide}
             onResume={onResume}
             onLocation={onLocation}
+            viewHost={viewHost}
           />
         ))}
       </div>
@@ -101,6 +106,7 @@ function Entry({
   onDecide,
   onResume,
   onLocation,
+  viewHost,
 }: {
   entry: TimelineEntry;
   server: string;
@@ -108,6 +114,7 @@ function Entry({
   onDecide?: DecideFn;
   onLocation?: LocationFn;
   onResume?: () => Promise<void>;
+  viewHost?: AppViewHost;
 }) {
   switch (entry.kind) {
     case "quiet":
@@ -122,6 +129,7 @@ function Entry({
               onDecide={onDecide}
               onResume={onResume}
               onLocation={onLocation}
+              viewHost={viewHost}
             />
           ))}
         </Quiet>
@@ -156,6 +164,8 @@ function Entry({
           return <Reasoning item={item} />;
         case "tool_call":
           return <ToolCall item={item} />;
+        case "app_view":
+          return viewHost ? <AppView item={item} host={viewHost} /> : null;
         case "subagent":
           return (
             <Subagent

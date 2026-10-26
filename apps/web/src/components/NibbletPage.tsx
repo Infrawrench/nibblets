@@ -56,6 +56,8 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
   const thread = useThread(connection, id);
   const catalogue = useModels(connection);
   const [panel, setPanelState] = useState<PanelTab | null>(initialPanel);
+  // What an MCP App view suggested sending, for the nibblet it's in.
+  const [draft, setDraft] = useState<{ nibbletId: string; text: string; at: number }>();
   const setPanel = (p: PanelTab | null) => {
     setPanelState(p);
     if (p) storage.set(PANEL_KEY, p);
@@ -176,8 +178,18 @@ function NibbletView({ connection, id }: { connection: ServerConnection; id: str
             if (share) await answerFromDevice(connection, nibblet.id, requestId);
             else await declineLocation(connection, nibblet.id, requestId);
           }}
+          viewHost={{
+            connection,
+            nibbletId: nibblet.id,
+            onDraft: (text) => setDraft({ nibbletId: nibblet.id, text, at: Date.now() }),
+          }}
         />
-        <Composer connection={connection} nibblet={nibblet} running={running} />
+        <Composer
+          connection={connection}
+          nibblet={nibblet}
+          running={running}
+          draft={draft?.nibbletId === nibblet.id ? draft : undefined}
+        />
       </div>
       {panel ? (
         // Beside the conversation on a wide screen; over it, full size, on anything narrower.

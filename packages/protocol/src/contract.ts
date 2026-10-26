@@ -1,5 +1,16 @@
 import { z } from "zod";
 import {
+  AppGrant,
+  AppLink,
+  AppLinkAttempt,
+  AppLinkDescription,
+  AppLinkKind,
+  AppLinkOutcome,
+  AppLinkPluginId,
+  AppLinks,
+  AppLinkSettings,
+} from "./app-links.ts";
+import {
   BankName,
   BankProviderId,
   BankSettings,
@@ -18,12 +29,14 @@ import { procedure } from "./rpc.ts";
 import { Snapshot, SnapshotActivity, SnapshotTimeline } from "./snapshots.ts";
 import { TailnetKeys } from "./tailscale.ts";
 import { AppUpdate, HarnessUpdates } from "./updates.ts";
+import { AppViewContent } from "./views.ts";
 import { BudgetStatus } from "./budget.ts";
 import {
   BackgroundTask,
   CreateNibblet,
   CreateSchedule,
   DesktopApp,
+  JsonValue,
   Memory,
   Nibblet,
   Schedule,
@@ -100,6 +113,22 @@ export const contract = {
       z.object({ id: z.string(), requestId: z.string(), location: LocationFix.nullable() }),
       Ok,
     ),
+    /** An MCP App view's HTML and settings, by an `app_view` item's `viewId`. */
+    view: procedure(z.object({ id: z.string(), viewId: z.string() }), AppViewContent),
+    /**
+     * A tool call from an `app_view`'s view, to a tool on the same server
+     * the view may see. Gated like the nibblet's own calls. Answers with the
+     * tool's `CallToolResult`, as JSON.
+     */
+    viewCall: procedure(
+      z.object({
+        id: z.string(),
+        itemId: z.string(),
+        tool: z.string(),
+        arguments: z.record(z.string(), JsonValue).default({}),
+      }),
+      JsonValue,
+    ),
     /** What it has running in the background, from `task_start`. Empty while it's asleep. */
     tasks: procedure(Id, z.array(BackgroundTask)),
     stopTask: procedure(z.object({ id: z.string(), taskId: z.string() }), Ok),
@@ -120,6 +149,24 @@ export const contract = {
     browserBorrowEnd: procedure(Id, BrowserBorrow),
     /** The nibblet's current local-sign-in state, or null if it isn't borrowed. */
     browserBorrow: procedure(Id, BrowserBorrow.nullable()),
+    /** Its grants on the server's app links, whatever their state. A sub-agent uses its host's. */
+    appGrants: procedure(Id, z.array(AppGrant)),
+    /**
+     * Grants it its own credential on a link with these scopes (narrowed to
+     * these providers, or none for all), or changes the one it has. The app
+     * checks them against what the link may grant.
+     */
+    setAppGrant: procedure(
+      z.object({
+        id: z.string(),
+        linkId: z.string(),
+        scopes: z.array(z.string().min(1).max(200)).min(1).max(200),
+        providers: z.array(z.string().min(1).max(100)).max(100).default([]),
+      }),
+      AppGrant,
+    ),
+    /** Takes its grant on a link away, revoking its credential in the app. */
+    removeAppGrant: procedure(z.object({ id: z.string(), linkId: z.string() }), Ok),
   },
   machines: {
     /** Where nibblets can run on this server: containers, and the host's hypervisors. */
@@ -253,6 +300,41 @@ export const contract = {
     /** Forgets a bank's saved settings. Refused while it has cards that aren't closed. */
     remove: procedure(z.object({ id: BankProviderId }), BankStatus),
   },
+  appLinks: {
+    /** The app link plugins this server has, for linking. */
+    plugins: procedure(z.object({}), z.array(AppLinkKind)),
+    /** The server's links, and any waiting for the person to approve them. */
+    list: procedure(z.object({}), AppLinks),
+    /**
+     * Starts linking: returns a code for the person to approve on the app's
+     * page. The server waits for the answer, and says how it went with an
+     * `app_link_settled` live message.
+     */
+    begin: procedure(
+      z.object({ plugin: AppLinkPluginId, settings: AppLinkSettings.default({}) }),
+      AppLinkAttempt,
+    ),
+    /** Stops waiting on an attempt. */
+    cancel: procedure(Id, Ok),
+    /** Unlinks: the app revokes the link and every nibblet's credential on it. */
+    remove: procedure(Id, Ok),
+    /**
+     * Takes on a link the app already approved some other way (it set this
+     * server up itself, say), as if it had been linked here. Only with the
+     * server's owner token, which is the installer's. Adopting the same link
+     * again keeps one, with the newest secret.
+     */
+    adopt: procedure(
+      z.object({
+        plugin: AppLinkPluginId,
+        settings: AppLinkSettings.default({}),
+        secret: z.string().min(1).max(4000),
+      }),
+      AppLink,
+    ),
+    /** What the link may grant a nibblet, as the app says now. */
+    describe: procedure(Id, AppLinkDescription),
+  },
   snapshots: {
     /** A nibblet's snapshots, newest first, and where it stands among them. */
     list: procedure(z.object({ nibbletId: z.string() }), SnapshotTimeline),
@@ -296,6 +378,18 @@ export const LiveMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("cards_changed"), nibbletId: z.string() }),
   /** A bank was set up, changed, or removed. */
   z.object({ type: z.literal("bank_changed") }),
+  /** An app link was made, removed, or changed state. */
+  z.object({ type: z.literal("app_links_changed") }),
+  /** An attempt to link an app ended; `linkId` is the new link's, when it was made. */
+  z.object({
+    type: z.literal("app_link_settled"),
+    attemptId: z.string(),
+    outcome: AppLinkOutcome,
+    linkId: z.string().nullable(),
+    detail: z.string().nullable(),
+  }),
+  /** A nibblet's app grants changed. */
+  z.object({ type: z.literal("app_grants_changed"), nibbletId: z.string() }),
   /** A local sign-in's state changed (started, open on the host, handing back, or over). */
   z.object({ type: z.literal("browser_borrow"), borrow: BrowserBorrow }),
   /** A local sign-in ended: it's no longer borrowed. `error` says why it failed, if it did. */
