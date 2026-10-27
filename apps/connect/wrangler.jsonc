@@ -1,6 +1,7 @@
 // Nibblets Connect: the central service. Secrets (CLERK_SECRET_KEY,
-// CLERK_PUBLISHABLE_KEY, JWT_PRIVATE_KEY, and optionally CF_API_TOKEN) are set
-// with `wrangler secret put`; see README.md.
+// CLERK_PUBLISHABLE_KEY, JWT_PRIVATE_KEY, and optionally CF_API_TOKEN,
+// VAPID_PRIVATE_KEY and THIRD_PARTY_KEY) are set with `wrangler secret put`;
+// see README.md.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "nibblets-connect",

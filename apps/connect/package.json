@@ -13,6 +13,8 @@
   "dependencies": {
     "@clerk/backend": "^3.23.2",
     "@nibblets/protocol": "workspace:*",
+    "@nibblets/third-party": "workspace:*",
+    "@nibblets/third-party-revnu": "workspace:*",
     "hono": "^4.13.13",
     "zod": "^4.6.7"
   },

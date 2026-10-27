@@ -7,6 +7,7 @@ import { AccountSection, RemoteAccessSection } from "./RemoteAccess.tsx";
 import { TailnetKeysSection } from "./TailnetKeysSection.tsx";
 import { BankSection } from "./bank/BankSection.tsx";
 import { AppLinksSection } from "./applinks/AppLinksSection.tsx";
+import { ThirdPartiesSection } from "./thirdparty/ThirdPartiesSection.tsx";
 import { keys, useServers } from "../lib/servers.tsx";
 import { clockTime, relativeTime } from "../lib/time.ts";
 import { Button } from "./ui/Button.tsx";
@@ -54,7 +55,12 @@ export function SettingsPage() {
         ) : (
           <p className="text-sm text-dim">None of your servers can be reached right now.</p>
         )}
-        {central ? <NotificationsSection /> : null}
+        {central ? (
+          <>
+            <NotificationsSection />
+            <ThirdPartiesSection />
+          </>
+        ) : null}
       </div>
     </div>
   );

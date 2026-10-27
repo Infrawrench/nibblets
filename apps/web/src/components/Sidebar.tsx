@@ -13,6 +13,8 @@ import { cn } from "../lib/cn.ts";
 import { UpdateBar } from "./UpdateBar.tsx";
 import { orderNibblets } from "../lib/nibblets.ts";
 import { localServerId } from "../lib/central.ts";
+import { connected, partyStatus, useThirdParties, type Connected } from "../lib/thirdParties.ts";
+import { ThirdPartyAvatar } from "./thirdparty/ThirdPartyAvatar.tsx";
 
 const statusText: Record<NibbletStatus, string> = {
   stopped: "Asleep",
@@ -51,6 +53,8 @@ export function Sidebar({ className }: { className?: string }) {
   const showSystem = servers.systems.length > 1 || servers.central !== null;
   const loaded = lists.every((l, i) => l.data !== undefined || !servers.systems[i]?.connection);
   const total = lists.reduce((n, l) => n + (l.data?.length ?? 0), 0);
+  // Other companies' agents the account has connected, beside the nibblets.
+  const parties = connected(useThirdParties().data);
 
   return (
     <aside
@@ -89,6 +93,9 @@ export function Sidebar({ className }: { className?: string }) {
             />
           ));
         })}
+        {parties.map((p) => (
+          <ThirdPartyRow key={p.party.id} connected={p} />
+        ))}
         {servers.systems.map((system, i) =>
           !system.connection || lists[i]?.isError ? (
             <div
@@ -204,6 +211,49 @@ function NibbletRow({
     </NibbletMenu>
   ) : (
     row
+  );
+}
+
+const toneText = {
+  warning: "text-warning",
+  working: "text-working",
+  danger: "text-danger",
+  faint: "text-faint",
+} as const;
+
+/** A third party, drawn like a nibblet: its logo, its name, whose it is, and how it is. */
+function ThirdPartyRow({ connected: { party, kind } }: { connected: Connected }) {
+  const params = useParams({ strict: false });
+  const navigate = useNavigate();
+  const active = params.id === party.id && params.server === undefined;
+  const status = partyStatus(party);
+  return (
+    <button
+      type="button"
+      onClick={() => void navigate({ to: "/t/$id", params: { id: party.id } })}
+      title={party.problem ?? undefined}
+      className={cn(
+        "group flex min-h-8 w-full items-center gap-2 rounded-md py-1 pr-2 pl-2 text-left text-sm hover:bg-hover",
+        active && "bg-active hover:bg-active",
+      )}
+    >
+      <ThirdPartyAvatar kind={kind} party={party} />
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span
+          className={cn(
+            "truncate",
+            active && "font-medium",
+            party.state === "revoked" && "text-dim",
+          )}
+        >
+          {kind.name}
+        </span>
+        <span className="truncate text-2xs leading-tight text-faint">{party.account}</span>
+      </span>
+      {status ? (
+        <span className={cn("shrink-0 text-2xs", toneText[status.tone])}>{status.text}</span>
+      ) : null}
+    </button>
   );
 }
 

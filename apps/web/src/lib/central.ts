@@ -3,8 +3,12 @@ import {
   CentralServer,
   PendingLink,
   ServerToken,
+  ThirdPartyList,
+  ThirdPartyMessage,
+  ThirdPartyRequest,
   routeOrder,
   type PushSubscriptionInput,
+  type ThirdPartyAnswer,
   type RouteKind,
   type ServerRoutes,
 } from "@nibblets/protocol";
@@ -55,7 +59,29 @@ export interface CentralApi {
   testPush(): Promise<{ sent: number; failed: number }>;
   /** Leaves this sign-in for the desktop app that sent `challenge`; returns the handle it collects it with. */
   desktopSignIn(challenge: string): Promise<{ handle: string }>;
+  thirdParties: ThirdPartiesApi;
 }
+
+/** Other companies' agents connected to the account, which Connect talks to for the browser. */
+export interface ThirdPartiesApi {
+  list(): Promise<ThirdPartyList>;
+  /** Where to sign in on the third party's site; it sends the person back to Connect after. */
+  signIn(plugin: string): Promise<string>;
+  /** Finishes signing in with the state Connect sent the person back with; returns the third party's id. */
+  finishSignIn(state: string): Promise<string>;
+  /** Connects with a pasted token; returns the third party's id. */
+  connectToken(plugin: string, token: string): Promise<string>;
+  remove(id: string): Promise<void>;
+  thread(id: string): Promise<ThirdPartyMessage[]>;
+  send(id: string, text: string, clientId: string): Promise<void>;
+  requests(id: string): Promise<ThirdPartyRequest[]>;
+  act(id: string, request: string, action: string, answer: ThirdPartyAnswer): Promise<void>;
+}
+
+const SignInUrl = z.object({ url: z.string() });
+const Connected = z.object({ id: z.string() });
+const Messages = z.object({ messages: z.array(ThirdPartyMessage) });
+const Requests = z.object({ requests: z.array(ThirdPartyRequest) });
 
 const DesktopHandle = z.object({ handle: z.string() });
 
@@ -120,6 +146,44 @@ export function centralApi(sessionToken: () => Promise<string | null>): CentralA
       ),
     remove: async (id) => {
       await call(`/v1/servers/${encodeURIComponent(id)}`, { method: "DELETE" });
+    },
+    thirdParties: thirdPartiesApi(call),
+  };
+}
+
+function thirdPartiesApi(
+  call: (path: string, init?: RequestInit) => Promise<unknown>,
+): ThirdPartiesApi {
+  const party = (id: string) => `/v1/third-parties/${encodeURIComponent(id)}`;
+  const kind = (plugin: string) => `/v1/third-parties/kinds/${encodeURIComponent(plugin)}`;
+  return {
+    list: async () => ThirdPartyList.parse(await call("/v1/third-parties")),
+    signIn: async (plugin) =>
+      SignInUrl.parse(await call(`${kind(plugin)}/sign-in`, { method: "POST" })).url,
+    finishSignIn: async (state) =>
+      Connected.parse(
+        await call("/v1/third-parties/finish", { method: "POST", body: JSON.stringify({ state }) }),
+      ).id,
+    connectToken: async (plugin, token) =>
+      Connected.parse(
+        await call(`${kind(plugin)}/token`, { method: "POST", body: JSON.stringify({ token }) }),
+      ).id,
+    remove: async (id) => {
+      await call(party(id), { method: "DELETE" });
+    },
+    thread: async (id) => Messages.parse(await call(`${party(id)}/thread`)).messages,
+    send: async (id, text, clientId) => {
+      await call(`${party(id)}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ text, clientId }),
+      });
+    },
+    requests: async (id) => Requests.parse(await call(`${party(id)}/requests`)).requests,
+    act: async (id, request, action, answer) => {
+      await call(
+        `${party(id)}/requests/${encodeURIComponent(request)}/actions/${encodeURIComponent(action)}`,
+        { method: "POST", body: JSON.stringify(answer) },
+      );
     },
   };
 }

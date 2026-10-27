@@ -55,6 +55,9 @@ export const keys = {
   appUpdate: (server: string) => ["appUpdate", server] as const,
   machines: (server: string) => ["machines", server] as const,
   centralServers: () => ["central", "servers"] as const,
+  thirdParties: () => ["central", "thirdParties", "list"] as const,
+  thirdPartyThread: (id: string) => ["central", "thirdParties", id, "thread"] as const,
+  thirdPartyRequests: (id: string) => ["central", "thirdParties", id, "requests"] as const,
   route: (server: string, routes: string) => ["central", "route", server, routes] as const,
 };
 

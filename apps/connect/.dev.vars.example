@@ -9,3 +9,5 @@ CF_API_TOKEN=
 # Clerk. Ignored on any other host.
 DEV_AUTH_USER=
 VAPID_PRIVATE_KEY=
+# Optional: seals third parties' credentials. `openssl rand -base64 32`.
+THIRD_PARTY_KEY=

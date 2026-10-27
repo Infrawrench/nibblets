@@ -1,0 +1,17 @@
+{
+  "name": "@nibblets/third-party-revnu",
+  "version": "0.5.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@nibblets/protocol": "workspace:*",
+    "@nibblets/third-party": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}

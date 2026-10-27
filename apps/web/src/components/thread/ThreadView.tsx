@@ -709,7 +709,7 @@ function CardVerify({ item, onDecide }: { item: ThreadItemOf<"approval">; onDeci
  * Links in a nibblet's replies open in a new tab, never in place of the app,
  * and only to web and mail addresses; anything else is shown as text.
  */
-function MarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
+export function MarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
   if (!href || !isSafeLink(href)) return <span>{children}</span>;
   return (
     <a href={href} target="_blank" rel="noopener noreferrer">

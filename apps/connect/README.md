@@ -32,13 +32,14 @@ each server directly.
 Secrets, with `wrangler secret put` (pipe them in; don't paste them into
 files in the repo):
 
-| Secret                  | What                                                                                                                                                     |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CLERK_SECRET_KEY`      | The Clerk application's secret key                                                                                                                       |
-| `CLERK_PUBLISHABLE_KEY` | Its publishable key; the UI reads it from `/v1/config`                                                                                                   |
-| `JWT_PRIVATE_KEY`       | `node scripts/gen-key.mjs \| npx wrangler secret put JWT_PRIVATE_KEY`. Replacing it signs everyone out of every server until they reload                 |
-| `CF_API_TOKEN`          | Optional: for managed tunnels                                                                                                                            |
-| `VAPID_PRIVATE_KEY`     | Optional: for push notifications. `node scripts/gen-key.mjs \| npx wrangler secret put VAPID_PRIVATE_KEY`. Replacing it ends every device's subscription |
+| Secret                  | What                                                                                                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `CLERK_SECRET_KEY`      | The Clerk application's secret key                                                                                                                           |
+| `CLERK_PUBLISHABLE_KEY` | Its publishable key; the UI reads it from `/v1/config`                                                                                                       |
+| `JWT_PRIVATE_KEY`       | `node scripts/gen-key.mjs \| npx wrangler secret put JWT_PRIVATE_KEY`. Replacing it signs everyone out of every server until they reload                     |
+| `CF_API_TOKEN`          | Optional: for managed tunnels                                                                                                                                |
+| `VAPID_PRIVATE_KEY`     | Optional: for push notifications. `node scripts/gen-key.mjs \| npx wrangler secret put VAPID_PRIVATE_KEY`. Replacing it ends every device's subscription     |
+| `THIRD_PARTY_KEY`       | Optional: seals third parties' credentials. `openssl rand -base64 32 \| npx wrangler secret put THIRD_PARTY_KEY`. Replacing it disconnects every third party |
 
 Variables in `wrangler.jsonc`: `PUBLIC_URL` (set it when adding a custom
 domain, so tokens and links use it), `CF_ACCOUNT_ID`, `CF_ZONE_ID`,
@@ -60,14 +61,27 @@ Clerk development instances work on the workers.dev address as they are.
 A production Clerk instance needs the domain it runs on (so a custom domain,
 not workers.dev) set up in the Clerk dashboard.
 
+## Third parties
+
+Other companies' agents (Revnu first) can be connected to an account and are
+listed in the sidebar beside its nibblets. Unlike servers, Connect is in the
+data path for these: the browser asks it, and it asks the third party with
+the credential it keeps sealed with `THIRD_PARTY_KEY`. People connect one by
+signing in on its site, which comes back to `/v1/third-parties/callback` and
+is finished in Settings, or by pasting a token. See "Third parties" in `ARCHITECTURE.md`.
+
 ## Developing
 
 ```sh
 cp .dev.vars.example .dev.vars          # DEV_AUTH_USER=you skips Clerk
 npx wrangler d1 migrations apply nibblets-connect --local
 pnpm --filter @nibblets/web build:central
-npx wrangler dev
+npx wrangler dev --local-upstream localhost:8787
 ```
+
+`--local-upstream` keeps requests on `localhost`: without it, Wrangler hands
+the Worker the custom domain's host, and `DEV_AUTH_USER` only works on
+localhost. Third parties also need `THIRD_PARTY_KEY` in `.dev.vars`.
 
 To link a server running in Docker to it, give the server
 `NIBBLET_CENTRAL_URL=http://host.docker.internal:8787` and run `wrangler dev
