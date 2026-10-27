@@ -1,11 +1,18 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AppGrant, AppLink, AppLinkKind, Nibblet } from "@nibblets/protocol";
+import type {
+  AppGrant,
+  AppLink,
+  AppLinkDescription,
+  AppLinkKind,
+  Nibblet,
+} from "@nibblets/protocol";
 import type { ServerConnection } from "../../lib/connection.ts";
 import {
   canNarrow,
   grantDraftChanged,
   grantDraftOf,
+  tickableScopes,
   ticked,
   withProviders,
   type GrantDraft,
@@ -164,51 +171,31 @@ function GrantRow({
           <p className="text-xs text-danger">{description.error.message}</p>
         ) : description.data ? (
           <>
-            {description.data.scopeGroups.map((group) => (
-              <div key={group.title} className="flex flex-col">
-                <span className="px-1.5 text-2xs font-medium text-faint">{group.title}</span>
-                {group.scopes.map((scope) => (
-                  <Check
-                    key={scope.value}
-                    checked={draft.scopes.includes(scope.value)}
-                    disabled={
-                      saving ||
-                      (draft.providers.length > 0 &&
-                        !canNarrow(scope.value, description.data.narrowable))
-                    }
-                    onChange={(on) =>
-                      setDraft({ ...draft, scopes: ticked(draft.scopes, scope.value, on) })
-                    }
-                  >
-                    {scope.label}
-                    <span className="font-mono text-2xs text-faint">{scope.value}</span>
-                  </Check>
-                ))}
-              </div>
-            ))}
             {description.data.providers?.length ? (
               <div className="flex flex-col">
                 <span className="px-1.5 text-2xs font-medium text-faint">
                   Only for these (none ticked: all of them)
                 </span>
-                {description.data.providers.map((provider) => (
-                  <Check
-                    key={provider.id}
-                    checked={draft.providers.includes(provider.id)}
-                    disabled={saving}
-                    onChange={(on) =>
-                      setDraft(
-                        withProviders(
-                          draft,
-                          ticked(draft.providers, provider.id, on),
-                          description.data.narrowable,
-                        ),
-                      )
-                    }
-                  >
-                    {provider.name}
-                  </Check>
-                ))}
+                <div className="grid grid-cols-2 sm:grid-cols-3">
+                  {description.data.providers.map((provider) => (
+                    <Check
+                      key={provider.id}
+                      checked={draft.providers.includes(provider.id)}
+                      disabled={saving}
+                      onChange={(on) =>
+                        setDraft(
+                          withProviders(
+                            draft,
+                            ticked(draft.providers, provider.id, on),
+                            description.data.narrowable,
+                          ),
+                        )
+                      }
+                    >
+                      {provider.name}
+                    </Check>
+                  ))}
+                </div>
                 {draft.providers.length > 0 &&
                 description.data.ceiling.some((s) => !canNarrow(s, description.data.narrowable)) ? (
                   <span className="px-1.5 text-2xs text-faint">
@@ -218,6 +205,12 @@ function GrantRow({
                 ) : null}
               </div>
             ) : null}
+            <ScopeList
+              description={description.data}
+              draft={draft}
+              disabled={saving}
+              onChange={(scopes) => setDraft({ ...draft, scopes })}
+            />
           </>
         ) : null
       ) : null}
@@ -254,6 +247,61 @@ function GrantRow({
         </div>
       ) : null}
       {error ? <p className="text-xs text-danger">{error}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * The scopes a grant may have, as the app groups them, in a list of their
+ * own that scrolls, since an app can offer dozens. Select all ticks every one
+ * the providers chosen allow.
+ */
+function ScopeList({
+  description,
+  draft,
+  disabled,
+  onChange,
+}: {
+  description: AppLinkDescription;
+  draft: GrantDraft;
+  disabled: boolean;
+  onChange: (scopes: string[]) => void;
+}) {
+  const tickable = tickableScopes(description, draft.providers);
+  const all = tickable.length > 0 && tickable.every((s) => draft.scopes.includes(s));
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between px-1.5">
+        <span className="text-2xs font-medium text-faint">
+          Scopes ({draft.scopes.length} of {tickable.length})
+        </span>
+        <button
+          type="button"
+          disabled={disabled || tickable.length === 0}
+          onClick={() => onChange(all ? [] : tickable)}
+          className="rounded px-1 py-0.5 text-xs text-faint hover:text-dim disabled:opacity-50"
+        >
+          {all ? "Clear all" : "Select all"}
+        </button>
+      </div>
+      <div className="flex max-h-80 flex-col gap-2 overflow-y-auto overscroll-contain rounded-md border border-line py-1">
+        {description.scopeGroups.map((group) => (
+          <div key={group.title} className="flex flex-col">
+            <span className="px-1.5 text-2xs font-medium text-faint">{group.title}</span>
+            {group.scopes.map((scope) => (
+              <Check
+                key={scope.value}
+                checked={draft.scopes.includes(scope.value)}
+                disabled={disabled || !tickable.includes(scope.value)}
+                onChange={(on) => onChange(ticked(draft.scopes, scope.value, on))}
+              >
+                {scope.label}
+                <span className="font-mono text-2xs text-faint">{scope.value}</span>
+              </Check>
+            ))}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
