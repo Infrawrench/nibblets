@@ -5,6 +5,7 @@ import {
   canNarrow,
   grantDraftChanged,
   grantDraftOf,
+  tickableScopes,
   ticked,
   withProviders,
 } from "./appLinks.ts";
@@ -90,6 +91,21 @@ describe("narrowing a grant to providers", () => {
     expect(withProviders(draft, [], narrowable).scopes).toEqual(draft.scopes);
     // An app that doesn't say limits none of them.
     expect(withProviders(draft, ["aws"], null).scopes).toEqual(draft.scopes);
+  });
+
+  it("selects all only of what the providers chosen can limit", () => {
+    const description = {
+      account: "Acme",
+      scopeGroups: [
+        { title: "Infrastructure", scopes: [{ value: "resources:read", label: "Resources" }] },
+        { title: "Audit", scopes: [{ value: "audit:read", label: "Audit log" }] },
+      ],
+      providers: [{ id: "aws", name: "AWS" }],
+      ceiling: ["resources:read", "audit:read"],
+      narrowable,
+    };
+    expect(tickableScopes(description, [])).toEqual(["resources:read", "audit:read"]);
+    expect(tickableScopes(description, ["aws"])).toEqual(["resources:read"]);
   });
 
   it("says which scopes can be ticked with providers chosen", () => {

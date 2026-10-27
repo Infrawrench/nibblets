@@ -1,6 +1,7 @@
 import {
   isWebUrl,
   type AppGrant,
+  type AppLinkDescription,
   type AppLinkAttempt,
   type AppLinkOutcome,
 } from "@nibblets/protocol";
@@ -63,6 +64,18 @@ export function withProviders(
   const scopes =
     providers.length > 0 ? draft.scopes.filter((s) => canNarrow(s, narrowable)) : draft.scopes;
   return { ...draft, providers, scopes };
+}
+
+/**
+ * What Select all ticks: every scope the app offers, less those the
+ * providers chosen can't limit.
+ */
+export function tickableScopes(
+  description: AppLinkDescription,
+  providers: readonly string[],
+): string[] {
+  const all = description.scopeGroups.flatMap((g) => g.scopes.map((s) => s.value));
+  return providers.length > 0 ? all.filter((s) => canNarrow(s, description.narrowable)) : all;
 }
 
 /** A list with one item ticked or unticked. */
