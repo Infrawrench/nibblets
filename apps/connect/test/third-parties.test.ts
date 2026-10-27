@@ -346,6 +346,32 @@ describe("third parties", () => {
     expect(revnu.renewals()).toBe(1);
   });
 
+  it("takes over renewing from a request that stopped partway, rather than giving up", async () => {
+    revnu.expire();
+    await signIn();
+    // A request claimed renewing it and was cancelled before it finished; the credential's run out.
+    await env.DB.prepare("UPDATE third_parties SET expires_at = ?, renewing_until = ?")
+      .bind(new Date(Date.now() - 1000).toISOString(), new Date(Date.now() + 500).toISOString())
+      .run();
+    expect((await list()).parties[0]).toMatchObject({ state: "live", problem: null });
+    expect(revnu.renewals()).toBe(1);
+  });
+
+  it("sees a renewal through after the request that started it, which may be cancelled", async () => {
+    revnu.expire();
+    await signIn();
+    const kept: Promise<unknown>[] = [];
+    const ctx = {
+      waitUntil: (work: Promise<unknown>) => void kept.push(work),
+      passThroughOnException() {},
+      props: {},
+    };
+    await app.fetch(new Request(`${LOCAL}/v1/third-parties`), env, ctx);
+    expect(kept).toHaveLength(1);
+    await Promise.all(kept);
+    expect(revnu.renewals()).toBe(1);
+  });
+
   it("calls a sign-in it can't renew revoked", async () => {
     revnu.expire();
     await signIn();

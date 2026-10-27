@@ -56,7 +56,7 @@ const ACTIVITY_TIMEOUT_MS = 8_000;
 /** How long before a credential runs out it's renewed, so one in use doesn't. */
 const RENEW_EARLY_MS = 60_000;
 
-/** How long one request may take to renew a credential before another may try. */
+/** How long one request may take to renew a credential before another may take it over. */
 const RENEWING_MS = 20_000;
 
 /** How often a request waiting on another's renewal looks for the result. */
@@ -230,81 +230,112 @@ export function thirdPartyRoutes(
    * out and there's a refresh token, a renewed one, kept in its place. A
    * refresh token may only be used once, so one request at a time claims
    * renewing it; the rest use the old credential while it still works, or
-   * wait for the new one.
+   * wait for the new one, and take the claim over if it lapses unfinished.
    */
-  async function credentialOf(env: ConnectEnv, row: PartyRow): Promise<string> {
+  async function credentialOf(
+    env: ConnectEnv,
+    row: PartyRow,
+    requestDeps: ThirdPartyDeps,
+  ): Promise<string> {
     const seal = sealer(env);
     const plugin = factory(row.plugin);
+    const signIn = plugin?.signIn;
+    const refresh = row.refresh;
+    const clientId = row.client_id;
     const expiresAt = row.expires_at ? Date.parse(row.expires_at) : null;
-    const now = Date.now();
     if (
-      !plugin?.signIn ||
-      !row.refresh ||
-      !row.client_id ||
+      !plugin ||
+      !signIn ||
+      !refresh ||
+      !clientId ||
       expiresAt === null ||
-      expiresAt - RENEW_EARLY_MS > now
+      expiresAt - RENEW_EARLY_MS > Date.now()
     ) {
       return seal.open(row.credential, row.id);
     }
-    const claimed = await env.DB.prepare(
-      "UPDATE third_parties SET renewing_until = ? WHERE id = ? AND credential = ? AND (renewing_until IS NULL OR renewing_until < ?)",
-    )
-      .bind(
-        new Date(now + RENEWING_MS).toISOString(),
-        row.id,
-        row.credential,
-        new Date(now).toISOString(),
+
+    const renew = async (): Promise<string> => {
+      let grant: Grant;
+      try {
+        grant = await renewGrant(
+          await discover(signIn.issuer, deps),
+          {
+            clientId,
+            refresh: await seal.open(refresh, `${row.id}:refresh`),
+            resource: signIn.resource,
+          },
+          deps,
+        );
+      } catch (err) {
+        await env.DB.prepare("UPDATE third_parties SET renewing_until = NULL WHERE id = ?")
+          .bind(row.id)
+          .run();
+        throw err;
+      }
+      await env.DB.prepare(
+        "UPDATE third_parties SET credential = ?, refresh = ?, expires_at = ?, renewing_until = NULL WHERE id = ?",
       )
-      .run();
-    if (claimed.meta.changes === 0) {
+        .bind(
+          await seal.seal(grant.access, row.id),
+          grant.refresh ? await seal.seal(grant.refresh, `${row.id}:refresh`) : null,
+          grant.expiresAt ? new Date(grant.expiresAt).toISOString() : null,
+          row.id,
+        )
+        .run();
+      return grant.access;
+    };
+
+    // A claim that lapses is taken over, so this waits out one claim and then renews itself.
+    const giveUpAt = Date.now() + 2 * RENEWING_MS;
+    for (;;) {
+      const now = Date.now();
+      const claimed = await env.DB.prepare(
+        "UPDATE third_parties SET renewing_until = ? WHERE id = ? AND credential = ? AND (renewing_until IS NULL OR renewing_until < ?)",
+      )
+        .bind(
+          new Date(now + RENEWING_MS).toISOString(),
+          row.id,
+          row.credential,
+          new Date(now).toISOString(),
+        )
+        .run();
+      if (claimed.meta.changes > 0) {
+        const renewal = renew();
+        // Seen through even if the person stops waiting (the app cancels requests freely): the
+        // third party has spent the old refresh token by then, so the new one must be kept.
+        requestDeps.waitUntil?.(
+          renewal.then(
+            () => undefined,
+            () => undefined,
+          ),
+        );
+        return renewal;
+      }
       if (expiresAt > now) return seal.open(row.credential, row.id);
       // Another request is renewing it, or just has.
-      for (let waited = 0; waited < RENEWING_MS; waited += RENEWAL_POLL_MS) {
-        const latest = await env.DB.prepare("SELECT credential FROM third_parties WHERE id = ?")
-          .bind(row.id)
-          .first<{ credential: string }>();
-        if (latest && latest.credential !== row.credential) {
-          return seal.open(latest.credential, row.id);
-        }
-        await new Promise((resolve) => setTimeout(resolve, RENEWAL_POLL_MS));
-      }
-      throw new ThirdPartyError(`${plugin.name} is taking a while to sign in again. Try again.`);
-    }
-    let grant: Grant;
-    try {
-      grant = await renewGrant(
-        await discover(plugin.signIn.issuer, deps),
-        {
-          clientId: row.client_id,
-          refresh: await seal.open(row.refresh, `${row.id}:refresh`),
-          resource: plugin.signIn.resource,
-        },
-        deps,
-      );
-    } catch (err) {
-      await env.DB.prepare("UPDATE third_parties SET renewing_until = NULL WHERE id = ?")
+      const latest = await env.DB.prepare("SELECT credential FROM third_parties WHERE id = ?")
         .bind(row.id)
-        .run();
-      throw err;
+        .first<{ credential: string }>();
+      if (latest && latest.credential !== row.credential) {
+        return seal.open(latest.credential, row.id);
+      }
+      if (now >= giveUpAt) {
+        throw new ThirdPartyError(`${plugin.name} is taking a while to sign in again. Try again.`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, RENEWAL_POLL_MS));
     }
-    await env.DB.prepare(
-      "UPDATE third_parties SET credential = ?, refresh = ?, expires_at = ?, renewing_until = NULL WHERE id = ?",
-    )
-      .bind(
-        await seal.seal(grant.access, row.id),
-        grant.refresh ? await seal.seal(grant.refresh, `${row.id}:refresh`) : null,
-        grant.expiresAt ? new Date(grant.expiresAt).toISOString() : null,
-        row.id,
-      )
-      .run();
-    return grant.access;
   }
 
   /** The plugin for one of the person's third parties, with its credential unsealed. */
   async function open(c: Context<App>, row: PartyRow): Promise<ThirdPartyAgent> {
     const plugin = factory(row.plugin);
     if (!plugin) throw new ThirdPartyError("Connect doesn't offer this third party any more");
-    return plugin.create(await credentialOf(c.env, row), abilitiesOf(row), depsFor(c));
+    const requestDeps = depsFor(c);
+    return plugin.create(
+      await credentialOf(c.env, row, requestDeps),
+      abilitiesOf(row),
+      requestDeps,
+    );
   }
 
   const ownParty = async (c: Context<App>): Promise<PartyRow | null> => {
