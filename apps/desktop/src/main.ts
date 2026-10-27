@@ -306,9 +306,15 @@ function showApp(): void {
   openMainWindow();
 }
 
-function openMainWindow(url = uiUrl()) {
+/**
+ * Shows the main window at `url`, or, without one, wherever it already is in
+ * the UI (a chat, say), going to the UI's front page only from somewhere else.
+ */
+function openMainWindow(url?: string) {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.webContents.getURL() !== url) void mainWindow.loadURL(url);
+    const current = mainWindow.webContents.getURL();
+    if (url ? current !== url : !sameOrigin(current, uiUrl()))
+      void mainWindow.loadURL(url ?? uiUrl());
     mainWindow.show();
     mainWindow.focus();
     return;
@@ -375,7 +381,9 @@ function openMainWindow(url = uiUrl()) {
       if (mainWindow && !mainWindow.isDestroyed()) void mainWindow.loadURL(failed);
     }, 1500);
   });
-  void mainWindow.webContents.session.clearCache().finally(() => void mainWindow?.loadURL(url));
+  void mainWindow.webContents.session
+    .clearCache()
+    .finally(() => void mainWindow?.loadURL(url ?? uiUrl()));
 }
 
 /**
