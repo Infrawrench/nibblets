@@ -252,17 +252,30 @@ export function toActivity(chat: Chat | null, now = Date.now()): ThirdPartyActiv
 
 /** Calls Notra's API with a credential, turning its refusals into errors fit to show. */
 function notraApi(credential: string, deps: ThirdPartyDeps) {
-  async function request(method: string, path: string, body?: object): Promise<Response> {
-    const res = await deps.fetch(`${NOTRA_API}${path}`, {
-      method,
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${credential}`,
-        ...(body ? { "content-type": "application/json" } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
+  async function request(
+    method: string,
+    path: string,
+    body?: object,
+    { streamed = false }: { streamed?: boolean } = {},
+  ): Promise<Response> {
+    // A streamed reply goes on for as long as Notra takes to write it, so only its start is timed.
+    const starting = new AbortController();
+    const timer = setTimeout(
+      () => starting.abort(new DOMException("Notra didn't start answering", "TimeoutError")),
+      TIMEOUT_MS,
+    );
+    const res = await deps
+      .fetch(`${NOTRA_API}${path}`, {
+        method,
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${credential}`,
+          ...(body ? { "content-type": "application/json" } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+        signal: streamed ? starting.signal : AbortSignal.timeout(TIMEOUT_MS),
+      })
+      .finally(() => clearTimeout(timer));
     if (res.ok) return res;
     const error = ErrorBody.safeParse(await res.json().catch(() => null));
     const said = error.success ? error.data.error : `HTTP ${res.status}`;
@@ -308,7 +321,7 @@ function notraApi(credential: string, deps: ThirdPartyDeps) {
      * has their answer, rather than kept waiting for.
      */
     async post(path: string, body: object): Promise<void> {
-      const res = await request("POST", path, body);
+      const res = await request("POST", path, body, { streamed: true });
       const stream = res.body;
       if (!stream) return;
       if (!deps.waitUntil) {

@@ -215,6 +215,36 @@ describe("Notra", () => {
     ]);
   });
 
+  it("reads a long reply to the end, timing only how long it takes to start", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const fake = fakeNotra();
+    const signals: AbortSignal[] = [];
+    let start = true;
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      if (init?.method === "POST" && init.signal) signals.push(init.signal);
+      // Notra taking its time to start answering, until the request gives up on it.
+      if (init?.method === "POST" && !start) {
+        return new Promise((_, reject) =>
+          init.signal?.addEventListener("abort", () => reject(init.signal?.reason)),
+        );
+      }
+      return fake.fetch(input, init);
+    };
+    const later: Promise<void>[] = [];
+    const agent = notra.create(TOKEN, ALL, { fetch, waitUntil: (w) => later.push(w) });
+
+    await agent.send("Write me a long post", "client_1");
+    vi.advanceTimersByTime(60_000);
+    expect(signals[0]?.aborted).toBe(false);
+
+    start = false;
+    const sending = agent.send("And another", "client_2");
+    const failed = expect(sending).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(20_000);
+    await failed;
+    expect(signals[1]?.aborted).toBe(true);
+  });
+
   it("doesn't send a message again when it's retried while Notra answers it", async () => {
     const fake = fakeNotra();
     const agent = notra.create(TOKEN, ALL, { fetch: fake.fetch });
