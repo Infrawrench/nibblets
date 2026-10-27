@@ -1,7 +1,7 @@
 {
   "name": "@nibblets/desktop",
   "productName": "Nibblets",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "type": "module",
   "scripts": {
