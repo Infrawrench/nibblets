@@ -3,10 +3,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ArrowUp, ClipboardCheck, Loader2, X } from "lucide-react";
-import type { ThirdPartyAnswer } from "@nibblets/protocol";
+import type { ThirdPartyAnswer, ThirdPartyMessage } from "@nibblets/protocol";
 import type { ThirdPartiesApi } from "../../lib/central.ts";
 import { keys } from "../../lib/servers.tsx";
 import {
+  awaitingReply,
   connected,
   newClientId,
   signInTo,
@@ -23,8 +24,8 @@ import { Button } from "../ui/Button.tsx";
 import { RequestCard } from "./RequestCard.tsx";
 import { ThirdPartyAvatar } from "./ThirdPartyAvatar.tsx";
 
-/** While it's working or a message is on its way: check for replies often. */
-const BUSY_EVERY_MS = 6_000;
+/** While it's working or a reply is on its way: check for replies often. */
+const BUSY_EVERY_MS = 3_000;
 /** Otherwise now and then, for replies that come later (long research, say). */
 const IDLE_EVERY_MS = 30_000;
 const REQUESTS_EVERY_MS = 20_000;
@@ -54,15 +55,19 @@ function ThirdPartyView({
   const working = party.activity?.working ?? false;
   const waiting = party.activity?.waiting ?? 0;
   const [panel, setPanel] = useState(waiting > 0);
-  // Asks what it's up to more often while there's something to watch for.
-  useThirdParties({ every: working || outbox.length > 0 ? BUSY_EVERY_MS : IDLE_EVERY_MS });
+  // Asks more often while there's something to watch for: work, or an unanswered message.
+  const every = (messages: readonly ThirdPartyMessage[]) =>
+    working || outbox.length > 0 || awaitingReply(messages, Date.now())
+      ? BUSY_EVERY_MS
+      : IDLE_EVERY_MS;
 
   const thread = useQuery({
     queryKey: keys.thirdPartyThread(party.id),
     queryFn: () => api.thread(party.id),
     enabled: live && party.abilities.chat,
-    refetchInterval: working || outbox.length > 0 ? BUSY_EVERY_MS : IDLE_EVERY_MS,
+    refetchInterval: (query) => every(query.state.data ?? []),
   });
+  useThirdParties({ every: every(thread.data ?? []) });
   const requests = useQuery({
     queryKey: keys.thirdPartyRequests(party.id),
     queryFn: () => api.requests(party.id),

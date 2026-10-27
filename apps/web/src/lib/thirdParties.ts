@@ -96,6 +96,18 @@ export function stillOutgoing(
   );
 }
 
+/** How long after the person's last message a reply is still looked for often. */
+const REPLY_WITHIN_MS = 10 * 60_000;
+
+/**
+ * Whether the person spoke last, lately enough that a reply is likely on its
+ * way: it can be a while before the third party says it's working on it.
+ */
+export function awaitingReply(thread: readonly ThirdPartyMessage[], now: number): boolean {
+  const last = thread.at(-1);
+  return last?.role === "person" && now - Date.parse(last.at) < REPLY_WITHIN_MS;
+}
+
 /**
  * Goes to the third party's site to sign in; it sends the person back to
  * Connect, on the new third party's page. In the desktop app the page opens

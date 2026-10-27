@@ -6,6 +6,7 @@ import {
   type ThirdPartyMessage,
 } from "@nibblets/protocol";
 import {
+  awaitingReply,
   connected,
   newClientId,
   partyStatus,
@@ -97,4 +98,33 @@ describe("stillOutgoing", () => {
 
 it("makes client ids Connect takes", () => {
   expect(ThirdPartySend.safeParse({ text: "hi", clientId: newClientId() }).success).toBe(true);
+});
+
+describe("awaitingReply", () => {
+  const at = (role: "person" | "agent", iso: string): ThirdPartyMessage => ({
+    id: `${role}:${iso}`,
+    role,
+    text: "hi",
+    at: iso,
+  });
+  const now = Date.parse("2026-10-27T12:00:00.000Z");
+
+  it("waits while the person spoke last, lately", () => {
+    const thread = [
+      at("agent", "2026-10-27T11:00:00.000Z"),
+      at("person", "2026-10-27T11:59:50.000Z"),
+    ];
+    expect(awaitingReply(thread, now)).toBe(true);
+  });
+
+  it("stops once it's answered, or the question is old", () => {
+    expect(
+      awaitingReply(
+        [at("person", "2026-10-27T11:59:50.000Z"), at("agent", "2026-10-27T11:59:58.000Z")],
+        now,
+      ),
+    ).toBe(false);
+    expect(awaitingReply([at("person", "2026-10-27T11:00:00.000Z")], now)).toBe(false);
+    expect(awaitingReply([], now)).toBe(false);
+  });
 });
