@@ -92,7 +92,13 @@ jobs:
       - name: Make room
         # A VM's Linux image is made from the runner image, and needs about 12 GB.
         if: matrix.machine == 'kvm'
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache \
+            /usr/local/share/boost /usr/share/swift /usr/lib/jvm /usr/local/share/powershell /usr/local/share/chromium \
+            /usr/local/julia* /opt/microsoft /opt/google /usr/lib/google-cloud-sdk /opt/az /usr/share/miniconda
+          docker image prune -af
+          df -h /
       - name: Build the runner and the server
         run: |
           docker build -f docker/runner.Dockerfile -t nibblet/runner:dev .
