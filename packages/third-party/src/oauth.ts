@@ -1,12 +1,14 @@
 import { WebUrl } from "@nibblets/protocol";
 import { z } from "zod";
-import { ThirdPartyError } from "./errors.ts";
+import { ThirdPartyError, ThirdPartyRevokedError } from "./errors.ts";
 
 /*
  * Signing in on a third party's site: OAuth 2.1 as MCP servers do it, so a
  * third party with an MCP server usually has it already. Connect registers
  * itself as a public client (RFC 7591), sends the person to the authorize
- * page with PKCE, and swaps the code it gets back for their token. Shared
+ * page with PKCE, and swaps the code it gets back for their token. Asking
+ * for `offline_access` gets a refresh token too, for third parties whose
+ * tokens expire, and Connect renews the token with it before then. Shared
  * here so a plugin only says where its server is and what to ask for.
  */
 
@@ -16,12 +18,21 @@ export interface ThirdPartySignIn {
   issuer: string;
   /** The resource the token is for (RFC 8707), when it wants one named. */
   resource: string | null;
-  /** What to ask for. The person may allow less; `identify` says what they did. */
+  /**
+   * What to ask for. The person may allow less; `identify` says what they
+   * did. `offline_access` asks for a refresh token as well.
+   */
   scopes: readonly string[];
 }
 
 export interface ThirdPartyDeps {
   fetch: typeof globalThis.fetch;
+  /**
+   * Keeps work going after the answer to the person has gone, such as
+   * reading a reply streamed back that the third party stops writing if
+   * nobody reads it. Without it, that work is dropped.
+   */
+  waitUntil?: (work: Promise<void>) => void;
 }
 
 const TIMEOUT_MS = 15_000;
@@ -44,7 +55,33 @@ export interface AuthServer {
 
 const Registered = z.object({ client_id: z.string().min(1) }).loose();
 
-const Token = z.object({ access_token: z.string().min(1), token_type: z.string() }).loose();
+const Token = z
+  .object({
+    access_token: z.string().min(1),
+    token_type: z.string(),
+    refresh_token: z.string().min(1).optional(),
+    expires_in: z.number().positive().optional(),
+  })
+  .loose();
+
+/** What signing in or renewing gave. */
+export interface Grant {
+  access: string;
+  /** Null when it gave none, so the access token is all there is. */
+  refresh: string | null;
+  /** When the access token stops working, in epoch milliseconds; null when it didn't say. */
+  expiresAt: number | null;
+}
+
+function grant(body: unknown, refresh: string | null): Grant {
+  const token = Token.parse(body);
+  return {
+    access: token.access_token,
+    // Some servers renew without a new refresh token, and the old one carries on.
+    refresh: token.refresh_token ?? refresh,
+    expiresAt: token.expires_in ? Date.now() + token.expires_in * 1000 : null,
+  };
+}
 
 const OAuthError = z
   .object({ error: z.string(), error_description: z.string().optional() })
@@ -114,7 +151,9 @@ export async function registerClient(
       client_name: client.name,
       client_uri: client.uri,
       redirect_uris: [client.redirectUri],
-      grant_types: ["authorization_code"],
+      grant_types: scopes.includes("offline_access")
+        ? ["authorization_code", "refresh_token"]
+        : ["authorization_code"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
       scope: scopes.join(" "),
@@ -174,7 +213,7 @@ export async function exchangeCode(
   server: AuthServer,
   exchange: CodeExchange,
   deps: ThirdPartyDeps,
-): Promise<string> {
+): Promise<Grant> {
   const form = new URLSearchParams({
     grant_type: "authorization_code",
     code: exchange.code,
@@ -196,7 +235,47 @@ export async function exchangeCode(
     throw refusal(body, "Signing in didn't finish");
   }
   if (!res.ok) throw new Error(`${server.token} answered ${res.status}`);
-  return Token.parse(body).access_token;
+  return grant(body, null);
+}
+
+export interface Renewal {
+  clientId: string;
+  refresh: string;
+  resource: string | null;
+}
+
+/**
+ * Swaps a refresh token for a new access token (and usually a new refresh
+ * token). One it won't take any more is a `ThirdPartyRevokedError`: the
+ * person has to sign in again.
+ */
+export async function renewGrant(
+  server: AuthServer,
+  renewal: Renewal,
+  deps: ThirdPartyDeps,
+): Promise<Grant> {
+  const form = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: renewal.refresh,
+    client_id: renewal.clientId,
+  });
+  if (renewal.resource) form.set("resource", renewal.resource);
+  const res = await deps.fetch(server.token, {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+    body: form,
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  const body = await json(res, server.token);
+  if (res.status >= 400 && res.status < 500) {
+    const parsed = OAuthError.safeParse(body);
+    if (parsed.success && ["invalid_grant", "invalid_client"].includes(parsed.data.error)) {
+      throw new ThirdPartyRevokedError("Signing in has run out. Connect it again in Settings.");
+    }
+    throw refusal(body, "Renewing its sign-in didn't work");
+  }
+  if (!res.ok) throw new Error(`${server.token} answered ${res.status}`);
+  return grant(body, renewal.refresh);
 }
 
 /** The third party forgot the client Connect registered. */

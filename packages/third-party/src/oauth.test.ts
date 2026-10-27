@@ -5,8 +5,10 @@ import {
   exchangeCode,
   pkce,
   registerClient,
+  renewGrant,
   StaleClientError,
   ThirdPartyError,
+  ThirdPartyRevokedError,
   type AuthServer,
 } from "./index.ts";
 
@@ -87,6 +89,19 @@ describe("signing in on a third party's site", () => {
     });
   });
 
+  it("registers to renew tokens too when it asks for offline access", async () => {
+    const http = answering(() => Response.json({ client_id: "c_1" }, { status: 201 }));
+    await registerClient(
+      server,
+      { name: "N", uri: "https://x.test", redirectUri: "https://x.test/cb" },
+      ["openid", "offline_access"],
+      http,
+    );
+    expect(JSON.parse(http.requests[0]?.body ?? "")).toMatchObject({
+      grant_types: ["authorization_code", "refresh_token"],
+    });
+  });
+
   it("says why registering was refused, in the server's words", async () => {
     const http = answering(() =>
       Response.json(
@@ -133,7 +148,7 @@ describe("signing in on a third party's site", () => {
 
   it("swaps the code for a token with the verifier", async () => {
     const http = answering(() => Response.json({ access_token: "tok", token_type: "Bearer" }));
-    const token = await exchangeCode(
+    const got = await exchangeCode(
       server,
       {
         clientId: "c_1",
@@ -144,7 +159,7 @@ describe("signing in on a third party's site", () => {
       },
       http,
     );
-    expect(token).toBe("tok");
+    expect(got).toEqual({ access: "tok", refresh: null, expiresAt: null });
     expect(http.requests[0]?.type).toBe("application/x-www-form-urlencoded");
     expect(Object.fromEntries(new URLSearchParams(http.requests[0]?.body))).toEqual({
       grant_type: "authorization_code",
@@ -174,5 +189,41 @@ describe("signing in on a third party's site", () => {
     await expect(exchangeCode(server, exchange, used)).rejects.toThrow(
       "Signing in didn't finish: Code already used",
     );
+  });
+});
+
+describe("renewing a sign-in that runs out", () => {
+  const renewal = { clientId: "c_1", refresh: "r_1", resource: "https://api.x.test" };
+
+  it("swaps the refresh token for a new pair, and says when the new one runs out", async () => {
+    const http = answering(() =>
+      Response.json({
+        access_token: "tok_2",
+        token_type: "Bearer",
+        refresh_token: "r_2",
+        expires_in: 300,
+      }),
+    );
+    const before = Date.now();
+    const got = await renewGrant(server, renewal, http);
+    expect(got.access).toBe("tok_2");
+    expect(got.refresh).toBe("r_2");
+    expect(got.expiresAt).toBeGreaterThanOrEqual(before + 300_000);
+    expect(Object.fromEntries(new URLSearchParams(http.requests[0]?.body))).toEqual({
+      grant_type: "refresh_token",
+      refresh_token: "r_1",
+      client_id: "c_1",
+      resource: "https://api.x.test",
+    });
+  });
+
+  it("keeps the old refresh token when the server doesn't send a new one", async () => {
+    const http = answering(() => Response.json({ access_token: "tok_2", token_type: "Bearer" }));
+    expect((await renewGrant(server, renewal, http)).refresh).toBe("r_1");
+  });
+
+  it("calls a refresh token it won't take any more revoked", async () => {
+    const http = answering(() => Response.json({ error: "invalid_grant" }, { status: 400 }));
+    await expect(renewGrant(server, renewal, http)).rejects.toThrow(ThirdPartyRevokedError);
   });
 });

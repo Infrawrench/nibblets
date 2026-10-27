@@ -193,6 +193,9 @@ importers:
       '@nibblets/third-party':
         specifier: workspace:*
         version: link:../../packages/third-party
+      '@nibblets/third-party-notra':
+        specifier: workspace:*
+        version: link:../../packages/third-party-notra
       '@nibblets/third-party-revnu':
         specifier: workspace:*
         version: link:../../packages/third-party-revnu
@@ -765,6 +768,18 @@ importers:
       '@nibblets/protocol':
         specifier: workspace:*
         version: link:../protocol
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  packages/third-party-notra:
+    dependencies:
+      '@nibblets/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@nibblets/third-party':
+        specifier: workspace:*
+        version: link:../third-party
       zod:
         specifier: ^4.6.7
         version: 4.6.7

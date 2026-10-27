@@ -63,7 +63,7 @@ not workers.dev) set up in the Clerk dashboard.
 
 ## Third parties
 
-Other companies' agents (Revnu first) can be connected to an account and are
+Other companies' agents (Revnu and Notra) can be connected to an account and are
 listed in the sidebar beside its nibblets. Unlike servers, Connect is in the
 data path for these: the browser asks it, and it asks the third party with
 the credential it keeps sealed with `THIRD_PARTY_KEY`. People connect one by

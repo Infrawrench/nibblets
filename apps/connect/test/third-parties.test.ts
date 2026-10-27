@@ -20,6 +20,10 @@ function fakeRevnu() {
   const clients = new Map<string, string[]>();
   const codes = new Map<string, { challenge: string; client: string; redirect: string }>();
   const tokens = new Map<string, { account: string; scopes: string[] }>();
+  /** Refresh tokens, each good once, when it's set to give tokens that run out. */
+  const refreshes = new Set<string>();
+  let expiring = false;
+  let renewals = 0;
   const sent: { token: string; text: string; clientRequestId: string }[] = [];
   const answered: string[] = [];
   let pending = 2;
@@ -50,6 +54,30 @@ function fakeRevnu() {
       }
       case "POST /api/mcp/oauth/token": {
         const form = new URLSearchParams(await request.text());
+        const issue = () => {
+          const token = `rvp_${tokens.size + 1}`;
+          tokens.set(token, {
+            account: "acc_1",
+            scopes: ["agent:message", "results:read", "review:read", "review:write"],
+          });
+          if (!expiring) return json({ access_token: token, token_type: "Bearer" });
+          const refresh = `rf_${tokens.size}_${Math.random()}`;
+          refreshes.add(refresh);
+          // Inside the minute Connect renews ahead, so the next use renews it.
+          return json({
+            access_token: token,
+            token_type: "Bearer",
+            refresh_token: refresh,
+            expires_in: 30,
+          });
+        };
+        if (form.get("grant_type") === "refresh_token") {
+          if (!refreshes.delete(form.get("refresh_token") ?? "")) {
+            return json({ error: "invalid_grant" }, 400);
+          }
+          renewals += 1;
+          return issue();
+        }
         const code = codes.get(form.get("code") ?? "");
         codes.delete(form.get("code") ?? "");
         if (!clients.has(form.get("client_id") ?? ""))
@@ -66,12 +94,7 @@ function fakeRevnu() {
         ) {
           return json({ error: "invalid_grant", error_description: "That code won't do" }, 400);
         }
-        const token = `rvp_${tokens.size + 1}`;
-        tokens.set(token, {
-          account: "acc_1",
-          scopes: ["agent:message", "results:read", "review:read", "review:write"],
-        });
-        return json({ access_token: token, token_type: "Bearer" });
+        return issue();
       }
     }
     const token = (request.headers.get("authorization") ?? "").replace(/^Bearer /, "");
@@ -159,6 +182,12 @@ function fakeRevnu() {
     },
     lastAuthorize: () => lastAuthorize,
     forgetClients: () => clients.clear(),
+    /** Gives tokens that run out, with refresh tokens, from now on. */
+    expire: () => {
+      expiring = true;
+    },
+    renewals: () => renewals,
+    forgetRefreshes: () => refreshes.clear(),
     revokeAll: () => tokens.clear(),
   };
 }
@@ -244,6 +273,7 @@ describe("third parties", () => {
     expect(listed.enabled).toBe(true);
     expect(listed.kinds.map((k) => [k.id, k.signIn, k.token?.placeholder])).toEqual([
       ["revnu", true, "rvp_…"],
+      ["notra", true, "ntra_…"],
     ]);
     expect(listed.kinds[0]?.icon).toMatch(/^data:image\/png;base64,/);
     expect(listed.parties).toEqual([]);
@@ -282,6 +312,45 @@ describe("third parties", () => {
     }>();
     expect(row?.credential).toMatch(/^v1\./);
     expect(row?.credential).not.toContain("rvp_");
+  });
+
+  it("renews a sign-in that runs out before using it, keeping the refresh token sealed", async () => {
+    revnu.expire();
+    expect(await signIn()).toMatch(/^\/t\//);
+    const before = await env.DB.prepare(
+      "SELECT credential, refresh, client_id, expires_at FROM third_parties",
+    ).first<{ credential: string; refresh: string; client_id: string; expires_at: string }>();
+    expect(before?.refresh).toMatch(/^v1\./);
+    expect(before?.refresh).not.toContain("rf_");
+    expect(before?.client_id).toBe("client_1");
+
+    // Due within the minute, so asking it anything renews it first.
+    const [party] = (await list()).parties;
+    expect(party).toMatchObject({ state: "live", problem: null });
+    expect(revnu.renewals()).toBe(1);
+    const after = await env.DB.prepare("SELECT credential, expires_at FROM third_parties").first<{
+      credential: string;
+      expires_at: string;
+    }>();
+    expect(after?.credential).not.toBe(before?.credential);
+    expect(Date.parse(after?.expires_at ?? "")).toBeGreaterThanOrEqual(
+      Date.parse(before?.expires_at ?? ""),
+    );
+  });
+
+  it("lets two requests renewing at once both carry on with the one that won", async () => {
+    revnu.expire();
+    await signIn();
+    const both = await Promise.all([list(), list()]);
+    for (const listed of both) expect(listed.parties[0]).toMatchObject({ state: "live" });
+    expect(revnu.renewals()).toBe(1);
+  });
+
+  it("calls a sign-in it can't renew revoked", async () => {
+    revnu.expire();
+    await signIn();
+    revnu.forgetRefreshes();
+    expect((await list()).parties[0]).toMatchObject({ state: "revoked" });
   });
 
   it("registers once per address, and again when Revnu forgets", async () => {
