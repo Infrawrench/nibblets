@@ -10,6 +10,8 @@
     "../src/auth.ts",
     "../src/jwt.ts",
     "../src/secrets.ts",
-    "../src/tunnels.ts"
+    "../src/tunnels.ts",
+    "../src/third-parties.ts",
+    "../src/vault.ts"
   ]
 }

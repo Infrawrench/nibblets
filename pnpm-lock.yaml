@@ -190,6 +190,12 @@ importers:
       '@nibblets/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@nibblets/third-party':
+        specifier: workspace:*
+        version: link:../../packages/third-party
+      '@nibblets/third-party-revnu':
+        specifier: workspace:*
+        version: link:../../packages/third-party-revnu
       hono:
         specifier: ^4.13.13
         version: 4.13.13
@@ -754,6 +760,27 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
 
+  packages/third-party:
+    dependencies:
+      '@nibblets/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  packages/third-party-revnu:
+    dependencies:
+      '@nibblets/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@nibblets/third-party':
+        specifier: workspace:*
+        version: link:../third-party
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
   test/integration:
     dependencies:
       '@nibblets/host-mcp':
@@ -1133,8 +1160,8 @@ packages:
     resolution: {integrity: sha512-Wn9sPYIVFRFl5HmwMJkARCCf7rqK/EurkfQ/rJZ14mHP3iYTjZSIOSVonEAnhWeAXwtw7zOekGRlc6yTtZ0t+g==}
     engines: {node: '>=16.4'}
 
-  '@electron/windows-sign@1.2.2':
-    resolution: {integrity: sha512-dfZeox66AvdPtb2lD8OsIIQh12Tp0GNCRUDfBHIKGpbmopZto2/A8nSpYYLoedPIHpqkeblZ/k8OV0Gy7PYuyQ==}
+  '@electron/windows-sign@1.2.1':
+    resolution: {integrity: sha512-YfASnrhJ+ve6Q43ZiDwmpBgYgi2u0bYjeAVi2tDfN7YWAKO8X9EEOuPGtqbJpPLM6TfAHimghICjWe2eaJ8BAg==}
     engines: {node: '>=14.14'}
     hasBin: true
 
@@ -5784,7 +5811,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@electron/windows-sign@1.2.2(supports-color@7.2.0)':
+  '@electron/windows-sign@1.2.1(supports-color@7.2.0)':
     dependencies:
       cross-dirname: 0.1.0
       debug: 4.4.3(supports-color@7.2.0)
@@ -7603,7 +7630,7 @@ snapshots:
       lodash: 4.18.1
       temp: 0.9.4
     optionalDependencies:
-      '@electron/windows-sign': 1.2.2(supports-color@7.2.0)
+      '@electron/windows-sign': 1.2.1(supports-color@7.2.0)
     transitivePeerDependencies:
       - supports-color
 

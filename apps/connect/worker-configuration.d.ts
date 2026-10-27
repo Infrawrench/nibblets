@@ -15,6 +15,7 @@ interface __BaseEnv_Env {
   CF_API_TOKEN: string;
   DEV_AUTH_USER: string;
   VAPID_PRIVATE_KEY: string;
+  THIRD_PARTY_KEY: string;
 }
 declare namespace Cloudflare {
   interface GlobalProps {
@@ -41,6 +42,7 @@ declare namespace NodeJS {
       | "CF_API_TOKEN"
       | "DEV_AUTH_USER"
       | "VAPID_PRIVATE_KEY"
+      | "THIRD_PARTY_KEY"
     >
   > {}
 }

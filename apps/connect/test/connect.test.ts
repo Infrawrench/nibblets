@@ -1,6 +1,3 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { Miniflare } from "miniflare";
 import {
   CentralServer,
   LinkPollResponse,
@@ -11,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Connect } from "../../server/src/connect.ts";
 import { createApp, sweepLinks, type ConnectEnv } from "../src/app.ts";
+import { migratedDb, privateKey } from "./d1.ts";
 
 /*
  * The whole Nibblets Connect flow against a real D1 database (Miniflare),
@@ -19,43 +17,16 @@ import { createApp, sweepLinks, type ConnectEnv } from "../src/app.ts";
  */
 
 const LOCAL = "http://localhost:8787";
-let mf: Miniflare;
 let env: ConnectEnv;
 const app = createApp();
 
-async function privateKey(): Promise<string> {
-  const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
-    "sign",
-    "verify",
-  ]);
-  return JSON.stringify({
-    ...(await crypto.subtle.exportKey("jwk", pair.privateKey)),
-    kid: "test-key",
-  });
-}
+let dispose: () => Promise<void>;
 
 beforeAll(async () => {
-  mf = new Miniflare({
-    modules: true,
-    script: "export default { fetch() { return new Response(null) } }",
-    d1Databases: { DB: "nibblets-connect-test" },
-  });
-  const db = await mf.getD1Database("DB");
-  // Every migration, in order, as wrangler applies them.
-  const dir = fileURLToPath(new URL("../migrations", import.meta.url));
-  const schema = readdirSync(dir)
-    .filter((f) => f.endsWith(".sql"))
-    .sort()
-    .map((f) => readFileSync(`${dir}/${f}`, "utf8"))
-    .join(";\n");
-  const statements = schema
-    .replace(/--.*$/gm, "")
-    .split(";")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  for (const statement of statements) await db.prepare(statement).run();
+  const d1 = await migratedDb("nibblets-connect-test");
+  dispose = d1.dispose;
   env = {
-    DB: db,
+    DB: d1.db,
     PUBLIC_URL: "",
     CLERK_SECRET_KEY: "",
     CLERK_PUBLISHABLE_KEY: "pk_test_x",
@@ -67,10 +38,11 @@ beforeAll(async () => {
     CF_ZONE_NAME: "",
     VAPID_PRIVATE_KEY: "",
     VAPID_SUBJECT: "",
+    THIRD_PARTY_KEY: "",
   };
 });
 
-afterAll(() => mf.dispose());
+afterAll(() => dispose());
 
 /** The Worker app as a fetch function, the way a server or browser reaches it. */
 const centralFetch: typeof fetch = async (input, init) => {
