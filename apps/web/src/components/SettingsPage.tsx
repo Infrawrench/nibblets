@@ -30,45 +30,53 @@ export function SettingsPage() {
           <MobileBack />
           Settings
         </h1>
-        {central ? (
-          <>
-            <AccountSection />
-            <NotificationsSection />
-          </>
-        ) : null}
-        {all.length > 1 && connection ? (
-          <FieldRow label="Server" hint="Settings below are for this one.">
-            <Segmented
-              className="self-start"
-              value={connection.id}
-              onChange={setSelected}
-              options={all.map((c) => ({
-                value: c.id,
-                label: systems.find((s) => s.id === c.id)?.name ?? c.id,
-              }))}
-            />
-          </FieldRow>
-        ) : null}
+        {central ? <AccountSection /> : null}
         {connection ? (
-          <>
-            <ServerSection connection={connection} />
-            <SystemPromptSection connection={connection} />
-            <UpdatesSection connection={connection} />
-            <CredentialsSection connection={connection} />
-            <HostToolsSection connection={connection} />
-            <MachinesSection connection={connection} />
-            <OnePasswordSettings connection={connection} />
-            <AppLinksSection connection={connection} />
-            <BankSection connection={connection} />
-            <RemoteAccessSection connection={connection} />
-            <TailnetKeysSection connection={connection} />
-            <PairingSection connection={connection} />
-          </>
+          central || all.length > 1 ? (
+            // A box per server, its picker on the border, so it's clear what
+            // changes with the server and what's the account's.
+            <fieldset className="mt-3 flex min-w-0 flex-col gap-2 rounded-lg border border-line px-4 pb-4 max-sm:px-3">
+              <legend className="-ml-1.5 px-1.5">
+                <Segmented
+                  value={connection.id}
+                  onChange={setSelected}
+                  options={all.map((c) => ({
+                    value: c.id,
+                    label: systems.find((s) => s.id === c.id)?.name ?? c.id,
+                  }))}
+                />
+              </legend>
+              <ServerSettings connection={connection} />
+            </fieldset>
+          ) : (
+            <ServerSettings connection={connection} />
+          )
         ) : (
           <p className="text-sm text-dim">None of your servers can be reached right now.</p>
         )}
+        {central ? <NotificationsSection /> : null}
       </div>
     </div>
+  );
+}
+
+/** Everything in Settings that's one server's, for the one picked. */
+function ServerSettings({ connection }: { connection: ServerConnection }) {
+  return (
+    <>
+      <ServerSection connection={connection} />
+      <SystemPromptSection connection={connection} />
+      <UpdatesSection connection={connection} />
+      <CredentialsSection connection={connection} />
+      <HostToolsSection connection={connection} />
+      <MachinesSection connection={connection} />
+      <OnePasswordSettings connection={connection} />
+      <AppLinksSection connection={connection} />
+      <BankSection connection={connection} />
+      <RemoteAccessSection connection={connection} />
+      <TailnetKeysSection connection={connection} />
+      <PairingSection connection={connection} />
+    </>
   );
 }
 
