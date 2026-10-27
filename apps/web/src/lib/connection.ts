@@ -129,6 +129,8 @@ const UploadError = z.object({ error: z.string() });
 
 /** The server says something at least this often, if only a keepalive. */
 const SILENT_FOR_MS = 75_000;
+/** Quieter than this when the window comes back, a socket has missed a keepalive (every 25s). */
+const STALE_AFTER_MS = 35_000;
 /** A drop is only reported as "closed" once reconnecting has failed this many times. */
 const QUIET_RETRIES = 3;
 
@@ -136,7 +138,10 @@ const QUIET_RETRIES = 3;
  * A self-reconnecting feed of `LiveMessage`s over a WebSocket. Drops are
  * normal (proxies close idle sockets, laptops sleep), so it reconnects
  * straight away and only reports "closed" when that keeps failing. A socket
- * that goes silent past the server's keepalive is treated as dead.
+ * that goes silent past the server's keepalive is treated as dead, and so is
+ * one that's missed a keepalive when the window comes back: after a sleep the
+ * watchdog's timer hasn't counted the time asleep, and a message sent in the
+ * meantime would never show.
  */
 export function socketFeed(url: () => Promise<string>): LiveFeed {
   const listeners = new Set<(m: LiveMessage) => void>();
@@ -149,6 +154,8 @@ export function socketFeed(url: () => Promise<string>): LiveFeed {
   let watchdog: ReturnType<typeof setTimeout> | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let state: LiveState = "connecting";
+  let lastHeard = 0;
+  const listening = new AbortController();
 
   const setState = (s: LiveState) => {
     state = s;
@@ -156,9 +163,39 @@ export function socketFeed(url: () => Promise<string>): LiveFeed {
   };
 
   const heardFrom = (ws: WebSocket) => {
+    lastHeard = Date.now();
     if (watchdog) clearTimeout(watchdog);
-    watchdog = setTimeout(() => ws.close(), SILENT_FOR_MS);
+    watchdog = setTimeout(() => lost(ws), SILENT_FOR_MS);
   };
+
+  // Moves on without waiting for its close: a dead socket can take a minute to report one.
+  const lost = (ws: WebSocket) => {
+    ws.onopen = ws.onmessage = ws.onclose = null;
+    ws.close();
+    if (watchdog) clearTimeout(watchdog);
+    if (socket !== ws) return;
+    socket = null;
+    // Stay "open" through the first few quick retries; the UI needn't flicker.
+    if (state !== "open" || attempt >= QUIET_RETRIES) setState("closed");
+    retry();
+  };
+
+  const wake = () => {
+    if (closed || document.visibilityState === "hidden") return;
+    if (socket?.readyState === WebSocket.OPEN && Date.now() - lastHeard > STALE_AFTER_MS) {
+      lost(socket);
+    } else if (retryTimer) {
+      // Backing off while it was away: try now rather than at the end of the wait.
+      clearTimeout(retryTimer);
+      retryTimer = null;
+      void connect();
+    }
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("focus", wake, { signal: listening.signal });
+    window.addEventListener("online", wake, { signal: listening.signal });
+    document.addEventListener("visibilitychange", wake, { signal: listening.signal });
+  }
 
   const connect = async () => {
     if (closed) return;
@@ -187,14 +224,7 @@ export function socketFeed(url: () => Promise<string>): LiveFeed {
       const parsed = LiveMessage.safeParse(safeJson(event.data));
       if (parsed.success) listeners.forEach((l) => l(parsed.data));
     };
-    ws.onclose = () => {
-      if (watchdog) clearTimeout(watchdog);
-      if (socket !== ws) return;
-      socket = null;
-      // Stay "open" through the first few quick retries; the UI needn't flicker.
-      if (state !== "open" || attempt >= QUIET_RETRIES) setState("closed");
-      retry();
-    };
+    ws.onclose = () => lost(ws);
   };
 
   const retry = () => {
@@ -202,7 +232,10 @@ export function socketFeed(url: () => Promise<string>): LiveFeed {
     attempt++;
     // The first retry is immediate: most drops are an idle socket being tidied away.
     retryTimer = setTimeout(
-      () => void connect(),
+      () => {
+        retryTimer = null;
+        void connect();
+      },
       attempt === 1 ? 0 : Math.min(15_000, 500 * 2 ** attempt),
     );
   };
@@ -227,6 +260,7 @@ export function socketFeed(url: () => Promise<string>): LiveFeed {
     },
     close() {
       closed = true;
+      listening.abort();
       if (watchdog) clearTimeout(watchdog);
       if (retryTimer) clearTimeout(retryTimer);
       socket?.close();
