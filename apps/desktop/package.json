@@ -1,5 +1,6 @@
 {
   "name": "@nibblets/desktop",
+  "productName": "Nibblets",
   "version": "0.6.0",
   "private": true,
   "type": "module",

@@ -1,5 +1,5 @@
 appId: com.infrawrench.nibblets
-productName: Nibblets
+# The name is package.json's productName, which the app reads at runtime too.
 icon: assets/icon.png
 directories:
   output: dist
