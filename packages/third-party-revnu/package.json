@@ -1,6 +1,6 @@
 {
   "name": "@nibblets/third-party-revnu",
-  "version": "0.5.1",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "exports": {
