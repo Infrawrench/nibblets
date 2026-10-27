@@ -19,7 +19,7 @@ env:
 jobs:
   windows-kvm:
     name: Integration (Windows on KVM)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 300
     env:
       # Where to download a Windows installer ISO (x64) from, as a secret.

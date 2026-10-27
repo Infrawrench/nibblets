@@ -27,7 +27,7 @@ jobs:
     name: Is this a new version?
     # Off until the repository variable RELEASES_ENABLED is "true".
     if: vars.RELEASES_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -89,7 +89,7 @@ jobs:
   manifests:
     name: Image manifests
     needs: [check, images]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -189,7 +189,7 @@ jobs:
     name: OpenAPI description
     needs: check
     if: needs.check.outputs.version != ''
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -213,7 +213,7 @@ jobs:
   publish:
     name: Publish v${{ needs.check.outputs.version }}
     needs: [check, manifests, desktop, openapi]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:

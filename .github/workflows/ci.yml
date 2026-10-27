@@ -16,7 +16,7 @@ env:
 jobs:
   check:
     name: Typecheck, lint and test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       # For the tests that need a real database (snapshots).
       postgres:
@@ -58,7 +58,7 @@ jobs:
 
   images:
     name: Docker images
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - name: Build the runner, server and credential proxy
@@ -79,7 +79,7 @@ jobs:
 
   integration:
     name: Integration (${{ matrix.machine }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     strategy:
       fail-fast: false
