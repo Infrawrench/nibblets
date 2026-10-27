@@ -54,7 +54,7 @@ encrypted for each browser and signed with the VAPID key (`src/push.ts`, no
 dependencies). Tapping one opens that nibblet.
 
 ```sh
-pnpm --filter @nibblets/connect deploy   # builds the central UI, migrates D1, deploys
+pnpm --filter @nibblets/connect run deploy   # builds the central UI, migrates D1, deploys
 ```
 
 Clerk development instances work on the workers.dev address as they are.

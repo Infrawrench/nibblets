@@ -1,7 +1,10 @@
 import type { ThirdParty, ThirdPartyKind } from "@nibblets/protocol";
 import { cn } from "../../lib/cn.ts";
 
-/** A third party's logo where a nibblet has its hamster, with the same dot for how it is. */
+/**
+ * A third party's logo where a nibblet has its hamster, with a dot for how it
+ * is. It never sleeps, so answering is online, not a nibblet's grey for idle.
+ */
 export function ThirdPartyAvatar({
   kind,
   party,
@@ -17,7 +20,9 @@ export function ThirdPartyAvatar({
       ? "bg-danger"
       : party.activity?.working
         ? "bg-working"
-        : "bg-dim/50";
+        : party.activity
+          ? "bg-ok"
+          : "bg-dim/50";
   return (
     <span className="relative shrink-0">
       <img
