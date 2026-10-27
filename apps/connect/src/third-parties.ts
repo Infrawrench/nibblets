@@ -15,13 +15,16 @@ import {
   exchangeCode,
   pkce,
   registerClient,
+  renewGrant,
   StaleClientError,
   ThirdPartyError,
   ThirdPartyRevokedError,
   type ThirdPartyAgent,
   type ThirdPartyDeps,
+  type Grant,
   type ThirdPartyFactory,
 } from "@nibblets/third-party";
+import { notra } from "@nibblets/third-party-notra";
 import { revnu } from "@nibblets/third-party-revnu";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { z } from "zod";
@@ -36,17 +39,28 @@ import { vault, type Vault } from "./vault.ts";
  * browsers (Revnu's sends no CORS headers, so its token can't leak into a
  * page), so the browser asks Connect, which asks the third party with the
  * credential it keeps sealed. Every third party is a plugin
- * (`@nibblets/third-party`); nothing here knows one from another.
+ * (`@nibblets/third-party`); nothing here knows one from another. A
+ * credential that runs out (Notra's) is renewed with the refresh token
+ * signing in gave, shortly before it does.
  */
 
 /** Every third party Connect offers. Adding one is adding its plugin here. */
-export const thirdPartyPlugins: readonly ThirdPartyFactory[] = [revnu];
+export const thirdPartyPlugins: readonly ThirdPartyFactory[] = [revnu, notra];
 
 /** How long a person has to finish signing in on a third party's site. */
 const SIGN_IN_TTL_MS = 10 * 60_000;
 
 /** How long the sidebar waits on one third party before saying it isn't answering. */
 const ACTIVITY_TIMEOUT_MS = 8_000;
+
+/** How long before a credential runs out it's renewed, so one in use doesn't. */
+const RENEW_EARLY_MS = 60_000;
+
+/** How long one request may take to renew a credential before another may try. */
+const RENEWING_MS = 20_000;
+
+/** How often a request waiting on another's renewal looks for the result. */
+const RENEWAL_POLL_MS = 250;
 
 const PartyRow = z.object({
   id: z.string(),
@@ -58,6 +72,10 @@ const PartyRow = z.object({
   abilities: z.string(),
   state: ThirdPartyState,
   connected_at: z.string(),
+  refresh: z.string().nullable(),
+  client_id: z.string().nullable(),
+  expires_at: z.string().nullable(),
+  renewing_until: z.string().nullable(),
 });
 type PartyRow = z.infer<typeof PartyRow>;
 
@@ -118,6 +136,16 @@ export function thirdPartyRoutes(
 ) {
   const plugins = options.plugins ?? thirdPartyPlugins;
   const deps: ThirdPartyDeps = { fetch: options.fetch ?? ((input, init) => fetch(input, init)) };
+  /** Plugins' deps for one request, which can keep work going after it's answered. */
+  const depsFor = (c: Context<App>): ThirdPartyDeps => {
+    try {
+      const ctx = c.executionCtx;
+      return { ...deps, waitUntil: (work) => ctx.waitUntil(work) };
+    } catch {
+      // Hono throws when there's no execution context, as in tests.
+      return deps;
+    }
+  };
   const factory = (id: string) => plugins.find((p) => p.id === id) ?? null;
   const routes = new Hono<App>();
 
@@ -147,32 +175,37 @@ export function thirdPartyRoutes(
   /**
    * Connects a credential to a person's account: the plugin says who it
    * is, and connecting the same account again replaces the old credential.
+   * `clientId` is the client signing in registered, to renew it with.
    */
   async function connect(
     env: ConnectEnv,
     userId: string,
     plugin: ThirdPartyFactory,
-    credential: string,
+    grant: Grant,
+    clientId: string | null,
   ): Promise<string> {
     const seal = sealer(env);
-    const who = await plugin.identify(credential, deps);
+    const who = await plugin.identify(grant.access, deps);
     const existing = await env.DB.prepare(
       "SELECT id FROM third_parties WHERE user_id = ? AND plugin = ? AND ref = ?",
     )
       .bind(userId, plugin.id, who.ref)
       .first<{ id: string }>();
     const id = existing?.id ?? randomId("tp");
-    const sealed = await seal.seal(credential, id);
+    const sealed = await seal.seal(grant.access, id);
+    const refresh =
+      grant.refresh && clientId ? await seal.seal(grant.refresh, `${id}:refresh`) : null;
+    const expiresAt = grant.expiresAt ? new Date(grant.expiresAt).toISOString() : null;
     const abilities = JSON.stringify(who.abilities);
     if (existing) {
       await env.DB.prepare(
-        "UPDATE third_parties SET account = ?, credential = ?, abilities = ?, state = 'live' WHERE id = ?",
+        "UPDATE third_parties SET account = ?, credential = ?, abilities = ?, state = 'live', refresh = ?, client_id = ?, expires_at = ?, renewing_until = NULL WHERE id = ?",
       )
-        .bind(who.account, sealed, abilities, id)
+        .bind(who.account, sealed, abilities, refresh, refresh ? clientId : null, expiresAt, id)
         .run();
     } else {
       await env.DB.prepare(
-        "INSERT INTO third_parties (id, user_id, plugin, ref, account, credential, abilities, connected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO third_parties (id, user_id, plugin, ref, account, credential, abilities, connected_at, refresh, client_id, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
         .bind(
           id,
@@ -183,18 +216,95 @@ export function thirdPartyRoutes(
           sealed,
           abilities,
           new Date().toISOString(),
+          refresh,
+          refresh ? clientId : null,
+          expiresAt,
         )
         .run();
     }
     return id;
   }
 
+  /**
+   * The credential to use now: the one kept, or, when that's about to run
+   * out and there's a refresh token, a renewed one, kept in its place. A
+   * refresh token may only be used once, so one request at a time claims
+   * renewing it; the rest use the old credential while it still works, or
+   * wait for the new one.
+   */
+  async function credentialOf(env: ConnectEnv, row: PartyRow): Promise<string> {
+    const seal = sealer(env);
+    const plugin = factory(row.plugin);
+    const expiresAt = row.expires_at ? Date.parse(row.expires_at) : null;
+    const now = Date.now();
+    if (
+      !plugin?.signIn ||
+      !row.refresh ||
+      !row.client_id ||
+      expiresAt === null ||
+      expiresAt - RENEW_EARLY_MS > now
+    ) {
+      return seal.open(row.credential, row.id);
+    }
+    const claimed = await env.DB.prepare(
+      "UPDATE third_parties SET renewing_until = ? WHERE id = ? AND credential = ? AND (renewing_until IS NULL OR renewing_until < ?)",
+    )
+      .bind(
+        new Date(now + RENEWING_MS).toISOString(),
+        row.id,
+        row.credential,
+        new Date(now).toISOString(),
+      )
+      .run();
+    if (claimed.meta.changes === 0) {
+      if (expiresAt > now) return seal.open(row.credential, row.id);
+      // Another request is renewing it, or just has.
+      for (let waited = 0; waited < RENEWING_MS; waited += RENEWAL_POLL_MS) {
+        const latest = await env.DB.prepare("SELECT credential FROM third_parties WHERE id = ?")
+          .bind(row.id)
+          .first<{ credential: string }>();
+        if (latest && latest.credential !== row.credential) {
+          return seal.open(latest.credential, row.id);
+        }
+        await new Promise((resolve) => setTimeout(resolve, RENEWAL_POLL_MS));
+      }
+      throw new ThirdPartyError(`${plugin.name} is taking a while to sign in again. Try again.`);
+    }
+    let grant: Grant;
+    try {
+      grant = await renewGrant(
+        await discover(plugin.signIn.issuer, deps),
+        {
+          clientId: row.client_id,
+          refresh: await seal.open(row.refresh, `${row.id}:refresh`),
+          resource: plugin.signIn.resource,
+        },
+        deps,
+      );
+    } catch (err) {
+      await env.DB.prepare("UPDATE third_parties SET renewing_until = NULL WHERE id = ?")
+        .bind(row.id)
+        .run();
+      throw err;
+    }
+    await env.DB.prepare(
+      "UPDATE third_parties SET credential = ?, refresh = ?, expires_at = ?, renewing_until = NULL WHERE id = ?",
+    )
+      .bind(
+        await seal.seal(grant.access, row.id),
+        grant.refresh ? await seal.seal(grant.refresh, `${row.id}:refresh`) : null,
+        grant.expiresAt ? new Date(grant.expiresAt).toISOString() : null,
+        row.id,
+      )
+      .run();
+    return grant.access;
+  }
+
   /** The plugin for one of the person's third parties, with its credential unsealed. */
-  async function open(env: ConnectEnv, row: PartyRow): Promise<ThirdPartyAgent> {
+  async function open(c: Context<App>, row: PartyRow): Promise<ThirdPartyAgent> {
     const plugin = factory(row.plugin);
     if (!plugin) throw new ThirdPartyError("Connect doesn't offer this third party any more");
-    const credential = await sealer(env).open(row.credential, row.id);
-    return plugin.create(credential, abilitiesOf(row), deps);
+    return plugin.create(await credentialOf(c.env, row), abilitiesOf(row), depsFor(c));
   }
 
   const ownParty = async (c: Context<App>): Promise<PartyRow | null> => {
@@ -220,7 +330,7 @@ export function thirdPartyRoutes(
       return c.json({ error: `${name} no longer takes this connection. Connect it again.` }, 409);
     }
     try {
-      return await work(await open(c.env, row), row);
+      return await work(await open(c, row), row);
     } catch (err) {
       if (err instanceof ThirdPartyRevokedError) {
         await c.env.DB.prepare("UPDATE third_parties SET state = 'revoked' WHERE id = ?")
@@ -259,7 +369,7 @@ export function thirdPartyRoutes(
         if (row.state === "revoked") return toParty(row, null, null);
         const name = factory(row.plugin)?.name ?? row.plugin;
         try {
-          const agent = await open(c.env, row);
+          const agent = await open(c, row);
           return toParty(row, await within(ACTIVITY_TIMEOUT_MS, agent.activity()), null);
         } catch (err) {
           if (err instanceof ThirdPartyRevokedError) {
@@ -427,7 +537,7 @@ export function thirdPartyRoutes(
       return c.json({ error: "Connect doesn't offer that third party now." }, 404);
     try {
       const server = await discover(plugin.signIn.issuer, deps);
-      const token = await exchangeCode(
+      const grant = await exchangeCode(
         server,
         {
           clientId: signIn.client_id,
@@ -438,7 +548,9 @@ export function thirdPartyRoutes(
         },
         deps,
       );
-      return c.json({ id: await connect(c.env, c.get("user").id, plugin, token) });
+      return c.json({
+        id: await connect(c.env, c.get("user").id, plugin, grant, signIn.client_id),
+      });
     } catch (err) {
       if (err instanceof StaleClientError) {
         await c.env.DB.prepare(
@@ -469,7 +581,8 @@ export function thirdPartyRoutes(
     const body = ThirdPartyTokenInput.safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json({ error: "Send { token }" }, 400);
     try {
-      const id = await connect(c.env, c.get("user").id, plugin, body.data.token);
+      const grant = { access: body.data.token, refresh: null, expiresAt: null };
+      const id = await connect(c.env, c.get("user").id, plugin, grant, null);
       return c.json({ id });
     } catch (err) {
       if (!(err instanceof ThirdPartyError)) {
