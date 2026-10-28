@@ -15,6 +15,7 @@
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@nibblets/app-link": "workspace:*",
     "@nibblets/app-link-infrawrench": "workspace:*",
+    "@nibblets/app-link-t3code": "workspace:*",
     "@nibblets/bank": "workspace:*",
     "@nibblets/bank-bitcoin": "workspace:*",
     "@nibblets/bank-ethereum": "workspace:*",

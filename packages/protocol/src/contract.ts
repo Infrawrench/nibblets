@@ -26,6 +26,7 @@ import { MachineBackend, PrepareMachineImage } from "./machines.ts";
 import { OnePasswordGrants, OnePasswordStatus, VaultGrant } from "./onepassword.ts";
 import { BrowserBorrow } from "./borrow.ts";
 import { procedure } from "./rpc.ts";
+import { WebUrl } from "./urls.ts";
 import { Snapshot, SnapshotActivity, SnapshotTimeline } from "./snapshots.ts";
 import { TailnetKeys } from "./tailscale.ts";
 import { AppUpdate, HarnessUpdates } from "./updates.ts";
@@ -306,12 +307,21 @@ export const contract = {
     /** The server's links, and any waiting for the person to approve them. */
     list: procedure(z.object({}), AppLinks),
     /**
-     * Starts linking: returns a code for the person to approve on the app's
-     * page. The server waits for the answer, and says how it went with an
+     * Starts linking: returns the app's page for the person to approve it
+     * on, with a code to approve or a sign-in that sends them back to this
+     * server. The server waits for the answer, and says how it went with an
      * `app_link_settled` live message.
      */
     begin: procedure(
-      z.object({ plugin: AppLinkPluginId, settings: AppLinkSettings.default({}) }),
+      z.object({
+        plugin: AppLinkPluginId,
+        settings: AppLinkSettings.default({}),
+        /**
+         * The address this browser reaches the server at, for an app the
+         * person signs in to to send them back to.
+         */
+        serverUrl: WebUrl.optional(),
+      }),
       AppLinkAttempt,
     ),
     /** Stops waiting on an attempt. */

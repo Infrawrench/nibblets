@@ -1,6 +1,6 @@
 import { GuardConfig } from "@nibblets/protocol";
 import { describe, expect, it } from "vitest";
-import { gatedSpecs } from "./guard.ts";
+import { gatedLimits, gatedSpecs } from "./guard.ts";
 
 describe("app links behind the gate", () => {
   it("are served under the link's name with their credentials, over a server of the same name", () => {
@@ -27,6 +27,20 @@ describe("app links behind the gate", () => {
         url: "https://app.infrawrench.com/api/mcp",
         headers: { authorization: "Bearer iwa_1" },
       },
+    });
+  });
+
+  it("are limited to reading when that's all their grant gives", () => {
+    const config = GuardConfig.parse({
+      browser: false,
+      appLinks: [
+        { name: "t3code", url: "https://t3.example/mcp", headers: {}, readOnly: true },
+        { name: "infrawrench", url: "https://app.infrawrench.com/api/mcp", headers: {} },
+      ],
+    });
+    expect(gatedLimits(config)).toEqual({
+      t3code: { readOnly: true },
+      infrawrench: { readOnly: false },
     });
   });
 

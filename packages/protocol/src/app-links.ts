@@ -75,8 +75,11 @@ export type AppLink = z.infer<typeof AppLink>;
 export const AppLinkAttempt = z.object({
   id: z.string(),
   plugin: AppLinkPluginId,
-  /** What to type, or check, on the app's page. */
-  userCode: z.string(),
+  /**
+   * What to type, or check, on the app's page. Null when they sign in
+   * there instead, and the app sends them back to the server.
+   */
+  userCode: z.string().nullable(),
   /** Only ever http or https, since the UI opens it. */
   verificationUrl: WebUrl,
   /** The same page with the code filled in, when the app has one. */
@@ -152,5 +155,7 @@ export const AppLinkServer = z.object({
   name: z.string(),
   url: z.string(),
   headers: z.record(z.string(), z.string()).default({}),
+  /** Only the tools it marks read-only (`readOnlyHint`) are listed and allowed. */
+  readOnly: z.boolean().default(false),
 });
 export type AppLinkServer = z.infer<typeof AppLinkServer>;

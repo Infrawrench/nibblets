@@ -23,7 +23,7 @@ import {
 } from "@nibblets/protocol";
 import { z } from "zod";
 import { clearProfileLock, startComputer, type Computer } from "./computer.ts";
-import { McpGate, type Decision } from "./gate.ts";
+import { McpGate, type Decision, type GateLimits } from "./gate.ts";
 
 const log = (message: string) => console.warn(`guard: ${message}`);
 
@@ -127,6 +127,11 @@ export function gatedSpecs(
   return specs;
 }
 
+/** What the gate lets through from each server: an app link granted only to read, say. */
+export function gatedLimits(config: GuardConfig): Record<string, GateLimits> {
+  return Object.fromEntries(config.appLinks.map((app) => [app.name, { readOnly: app.readOnly }]));
+}
+
 const onePasswordScript = fileURLToPath(new URL("./onepassword-mcp.ts", import.meta.url));
 
 async function main(): Promise<void> {
@@ -138,7 +143,7 @@ async function main(): Promise<void> {
   const apply = async () => {
     const config = await server.config();
     rules = config.toolApprovals;
-    gate.sync(gatedSpecs(config, computer?.mcp ?? null, onePasswordScript));
+    gate.sync(gatedSpecs(config, computer?.mcp ?? null, onePasswordScript), gatedLimits(config));
   };
   const gate = new McpGate({
     ask: (name, tool, input) => server.ask(name, tool, input),

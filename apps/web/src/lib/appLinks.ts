@@ -95,7 +95,7 @@ export function outcomeText(
     case "denied":
       return `It was turned down in ${name}.`;
     case "expired":
-      return "The code ran out before it was approved. Link again for a new one.";
+      return "It ran out before it was approved. Link again to start over.";
     case "cancelled":
       return null;
     case "failed":

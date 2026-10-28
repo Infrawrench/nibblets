@@ -340,6 +340,9 @@ importers:
       '@nibblets/app-link-infrawrench':
         specifier: workspace:*
         version: link:../../packages/app-link-infrawrench
+      '@nibblets/app-link-t3code':
+        specifier: workspace:*
+        version: link:../../packages/app-link-t3code
       '@nibblets/bank':
         specifier: workspace:*
         version: link:../../packages/bank
@@ -504,6 +507,24 @@ importers:
       '@nibblets/app-link':
         specifier: workspace:*
         version: link:../app-link
+      '@nibblets/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  packages/app-link-t3code:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.32.1
+        version: 1.32.1(supports-color@10.2.2)(zod@4.6.7)
+      '@nibblets/app-link':
+        specifier: workspace:*
+        version: link:../app-link
+      '@nibblets/oauth':
+        specifier: workspace:*
+        version: link:../oauth
       '@nibblets/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -757,6 +778,15 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
 
+  packages/oauth:
+    dependencies:
+      '@nibblets/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
   packages/protocol:
     dependencies:
       zod:
@@ -765,6 +795,9 @@ importers:
 
   packages/third-party:
     dependencies:
+      '@nibblets/oauth':
+        specifier: workspace:*
+        version: link:../oauth
       '@nibblets/protocol':
         specifier: workspace:*
         version: link:../protocol

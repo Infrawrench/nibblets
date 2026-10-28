@@ -1,4 +1,9 @@
-import { AppLinkError, AppLinkRevokedError, type LinkRef } from "@nibblets/app-link";
+import {
+  AppLinkError,
+  AppLinkRevokedError,
+  type CodeStart,
+  type LinkRef,
+} from "@nibblets/app-link";
 import { describe, expect, it } from "vitest";
 import { infrawrench, infrawrenchPlugin, INFRAWRENCH_URL } from "./index.ts";
 
@@ -211,7 +216,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function linked() {
   const app = fakeInfrawrench();
   const plugin = infrawrenchPlugin({ url: INFRAWRENCH_URL }, app);
-  const start = await plugin.begin({ label: "Nibblets on PogAir-4" });
+  const start = await plugin.begin({ label: "Nibblets on PogAir-4", callbackUrl: null });
   app.answer(start.userCode, "approved");
   const poll = await plugin.poll(start);
   if (poll.status !== "linked") throw new Error(`not linked: ${poll.status}`);
@@ -225,6 +230,7 @@ describe("linking Infrawrench", () => {
     const start = await plugin.begin({
       label: "Nibblets on PogAir-4",
       requestedScopes: ["resources:read"],
+      callbackUrl: null,
     });
     expect(app.calls[0]).toMatchObject({
       method: "POST",
@@ -280,7 +286,9 @@ describe("linking Infrawrench", () => {
             ),
         },
       );
-      await expect(plugin.begin({ label: "Nibblets" })).rejects.toThrow("isn't its own");
+      await expect(plugin.begin({ label: "Nibblets", callbackUrl: null })).rejects.toThrow(
+        "isn't its own",
+      );
     }
   });
 
@@ -300,7 +308,8 @@ describe("linking Infrawrench", () => {
         },
       },
     );
-    const start = {
+    const start: CodeStart = {
+      via: "code",
       secret: "dc",
       userCode: "X",
       verificationUrl: INFRAWRENCH_URL,
@@ -315,7 +324,7 @@ describe("linking Infrawrench", () => {
   it("says when the person denied it", async () => {
     const app = fakeInfrawrench();
     const plugin = infrawrenchPlugin({ url: INFRAWRENCH_URL }, app);
-    const start = await plugin.begin({ label: "Nibblets" });
+    const start = await plugin.begin({ label: "Nibblets", callbackUrl: null });
     app.answer(start.userCode, "denied");
     expect(await plugin.poll(start)).toEqual({ status: "denied" });
   });
@@ -518,7 +527,10 @@ describe("a nibblet's agent", () => {
 
   it("connects through Infrawrench's MCP server with the agent's own credential", () => {
     const plugin = infrawrenchPlugin({ url: "https://iw.example.com/" }, { fetch });
-    const connection = plugin.connection({ ref: "agent-1", secret: "iwa_1" });
+    const connection = plugin.connection(
+      { ref: "agent-1", secret: "iwa_1", scopes: ["resources:read"] },
+      { ref: "link-1", secret: "iwl_1" },
+    );
     expect(connection.mcp).toEqual({
       url: "https://iw.example.com/api/mcp",
       headers: { authorization: "Bearer iwa_1" },
@@ -584,7 +596,8 @@ describe("the factory", () => {
         },
       },
     );
-    await plugin.poll({
+    await plugin.poll?.({
+      via: "code",
       secret: "dc",
       userCode: "X",
       verificationUrl: "",

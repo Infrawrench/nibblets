@@ -4,7 +4,7 @@ import {
   defineAppLinkFactory,
   defineField,
   type AppLinkDeps,
-  type AppLinkPlugin,
+  type CodeLinking,
   type LinkRef,
 } from "@nibblets/app-link";
 import type { AppLinkDescription } from "@nibblets/protocol";
@@ -105,7 +105,7 @@ class Refused extends AppLinkError {
 export function infrawrenchPlugin(
   options: InfrawrenchOptions,
   deps: Pick<AppLinkDeps, "fetch">,
-): AppLinkPlugin {
+): CodeLinking {
   const base = options.url.replace(/\/+$/, "");
 
   async function call(
@@ -235,6 +235,7 @@ export function infrawrenchPlugin(
         throw new AppLinkError("Infrawrench sent a page to approve the link that isn't its own");
       }
       return {
+        via: "code",
         secret: started.deviceCode,
         userCode: started.userCode,
         verificationUrl: started.verificationUrl,
@@ -401,6 +402,7 @@ export const infrawrench = defineAppLinkFactory({
     "Give nibblets their own agents in an Infrawrench organisation, each with only the scopes you tick.",
   icon: INFRAWRENCH_ICON,
   fields: [URL_FIELD],
+  grants: "app",
   create(settings, deps) {
     const url = settings[URL_FIELD.key]?.trim() || INFRAWRENCH_URL;
     let parsed: URL;

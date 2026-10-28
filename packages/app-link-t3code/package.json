@@ -1,0 +1,19 @@
+{
+  "name": "@nibblets/app-link-t3code",
+  "version": "0.7.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@nibblets/app-link": "workspace:*",
+    "@nibblets/oauth": "workspace:*",
+    "@nibblets/protocol": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}
