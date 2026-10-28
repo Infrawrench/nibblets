@@ -18,6 +18,7 @@ const server: AuthServer = {
   authorize: `${ISSUER}/oauth/authorize`,
   token: `${ISSUER}/oauth/token`,
   register: `${ISSUER}/oauth/register`,
+  issuer: null,
 };
 
 /** One canned reply per request, keeping what was asked. */
@@ -159,7 +160,7 @@ describe("signing in on a third party's site", () => {
       },
       http,
     );
-    expect(got).toEqual({ access: "tok", refresh: null, expiresAt: null });
+    expect(got).toEqual({ access: "tok", refresh: null, expiresAt: null, scopes: null });
     expect(http.requests[0]?.type).toBe("application/x-www-form-urlencoded");
     expect(Object.fromEntries(new URLSearchParams(http.requests[0]?.body))).toEqual({
       grant_type: "authorization_code",

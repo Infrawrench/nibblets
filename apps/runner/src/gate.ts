@@ -58,20 +58,43 @@ type ToolResult = Awaited<ReturnType<Client["callTool"]>> | CallToolResult;
 /** How long a forwarded call may run upstream (a browser action can be slow). */
 const CALL_TIMEOUT_MS = 30 * 60_000;
 
+/** What the gate lets through from one server, beyond its "ask me first" rules. */
+export interface GateLimits {
+  /** Only these of its tools, such as an app link's grant gives; null or left out for all. */
+  tools?: readonly string[] | null;
+  /**
+   * Only calls acting on these of an app's providers (T3 Code's machines,
+   * say): the one a call's `argument` names, else `home`. Null or left out
+   * for all.
+   */
+  providers?: ProviderLimit | null;
+}
+
+/** As `AppLinkServer` has it. */
+interface ProviderLimit {
+  argument: string;
+  allowed: readonly string[];
+  home: string;
+  /** Tools whose `argument` names something else, and that always act on `home`. */
+  actHome: readonly string[];
+}
+
 /** One upstream MCP server, connected on first use and kept open. */
 class Upstream {
   private client: Promise<Client> | null = null;
   readonly name: string;
   private readonly spec: McpServerSpec;
+  readonly limits: GateLimits;
   /** Identifies the definition, so a changed server is reconnected. */
   readonly key: string;
   /** What each tool's `_meta` says about its view, as last listed. */
   private readonly views = new Map<string, ToolView>();
 
-  constructor(name: string, spec: McpServerSpec) {
+  constructor(name: string, spec: McpServerSpec, limits: GateLimits = {}) {
     this.name = name;
     this.spec = spec;
-    this.key = JSON.stringify(spec);
+    this.limits = limits;
+    this.key = upstreamKey(spec, limits);
   }
 
   get(): Promise<Client> {
@@ -119,11 +142,34 @@ class Upstream {
     return this.views.get(tool) ?? toolView(undefined);
   }
 
+  /** Whether the limits let a tool through. */
+  allows(tool: string): boolean {
+    return !this.limits.tools || this.limits.tools.includes(tool);
+  }
+
+  /**
+   * Where a call acts that the limits don't let it: the provider it names
+   * (or its home), or null when it may go ahead.
+   */
+  outOfReach(tool: string, args: Record<string, unknown> | undefined): string | null {
+    const limit = this.limits.providers;
+    if (!limit) return null;
+    const named = limit.actHome.includes(tool) ? undefined : args?.[limit.argument];
+    // Named some other way than as text, it can't be checked, so it doesn't go.
+    if (named !== undefined && typeof named !== "string") return String(named);
+    const where = named ?? limit.home;
+    return limit.allowed.includes(where) ? null : where;
+  }
+
   async close(): Promise<void> {
     const client = await this.client?.catch(() => null);
     this.client = null;
     await client?.close().catch(() => {});
   }
+}
+
+function upstreamKey(spec: McpServerSpec, limits: GateLimits): string {
+  return JSON.stringify({ spec, tools: limits.tools ?? null, providers: limits.providers ?? null });
 }
 
 function stringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
@@ -137,7 +183,9 @@ function stringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
  * the browser), so "ask me first" doesn't depend on the harness cooperating:
  * the harness only ever sees the gate. Everything is forwarded unchanged,
  * except that a `tools/call` matching a rule waits for the user, and a
- * declined one comes back as an error result the agent can read.
+ * declined one comes back as an error result the agent can read. A server
+ * with limits (an app link granted only some tools, say) has only the tools they
+ * allow listed, and a call of any other is refused the same way.
  *
  * It's also the host for MCP Apps: it reports each call of a tool with a
  * view (`opts.view`), and serves the same servers at `/app/<name>` for the
@@ -208,24 +256,30 @@ export class McpGate {
   }
 
   /** Puts a server behind the gate and returns what the harness should connect to instead. */
-  wrap(name: string, spec: McpServerSpec): McpServerSpec {
+  wrap(name: string, spec: McpServerSpec, limits: GateLimits = {}): McpServerSpec {
     const existing = this.upstreams.get(name);
-    if (!existing || existing.key !== JSON.stringify(spec)) {
+    if (!existing || existing.key !== upstreamKey(spec, limits)) {
       void existing?.close();
-      this.upstreams.set(name, new Upstream(name, spec));
+      this.upstreams.set(name, new Upstream(name, spec, limits));
     }
     return { type: "http", url: this.urlFor(name), headers: {} };
   }
 
-  /** Puts exactly these servers behind the gate, closing any that went or changed. */
-  sync(specs: Record<string, McpServerSpec>): void {
+  /**
+   * Puts exactly these servers behind the gate, with their limits, closing
+   * any that went or changed.
+   */
+  sync(
+    specs: Record<string, McpServerSpec>,
+    limits: Readonly<Record<string, GateLimits>> = {},
+  ): void {
     for (const [name, upstream] of this.upstreams) {
       if (!(name in specs)) {
         void upstream.close();
         this.upstreams.delete(name);
       }
     }
-    for (const [name, spec] of Object.entries(specs)) this.wrap(name, spec);
+    for (const [name, spec] of Object.entries(specs)) this.wrap(name, spec, limits[name]);
   }
 
   /** The address a server behind the gate is reached at. */
@@ -249,6 +303,30 @@ export class McpGate {
     params: { name: string; arguments?: Record<string, unknown> },
     caller: Caller = "model",
   ): Promise<ToolResult> {
+    if (!up.allows(params.name)) {
+      // Refused before anyone's asked: the grant doesn't stretch to it.
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${params.name} isn't one of ${up.name}'s tools you were given: ask your person to tick it in your settings`,
+          },
+        ],
+        isError: true,
+      };
+    }
+    const where = up.outOfReach(params.name, params.arguments);
+    if (where !== null) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${params.name} would act on ${where} in ${up.name}, which you weren't given: ask your person to tick it in your settings`,
+          },
+        ],
+        isError: true,
+      };
+    }
     const view = await up.viewOf(client, params.name).catch(() => toolView(undefined));
     if (!view.visibility.includes(caller)) {
       const only = caller === "app" ? "the agent" : "its view in the chat";
@@ -316,8 +394,11 @@ export class McpGate {
       server.setRequestHandler(ListToolsRequestSchema, async (req) => {
         const listed = await client.listTools(req.params);
         up.noteTools(listed.tools);
-        // A tool only its view may call isn't the agent's to see, and the other way round.
-        const tools = listed.tools.filter((t) => toolView(t._meta).visibility.includes(caller));
+        // A tool only its view may call isn't the agent's to see, and the other
+        // way round; nor is one the server's limits don't let through.
+        const tools = listed.tools.filter(
+          (t) => toolView(t._meta).visibility.includes(caller) && up.allows(t.name),
+        );
         return { ...listed, tools };
       });
       server.setRequestHandler(CallToolRequestSchema, (req) =>

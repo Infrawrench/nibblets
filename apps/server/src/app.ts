@@ -16,6 +16,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { html } from "hono/html";
 import { compress } from "hono/compress";
 import { cors } from "hono/cors";
 import WebSocket from "ws";
@@ -27,6 +28,7 @@ import { createHandlers, type Services } from "./handlers.ts";
 import { Routes, type Auth } from "./http.ts";
 import { hostMcpHandler } from "./hostmcp.ts";
 import { mountBudgets } from "./budget.ts";
+import { APP_LINK_CALLBACK_PATH } from "./app-links.ts";
 import { purchasePath } from "./banks.ts";
 import { mountGuard } from "./guard.ts";
 import { mcpHandler } from "./mcp.ts";
@@ -150,6 +152,48 @@ export function createApp(services: Services, bus: Bus) {
       });
       if (!answer) return c.text("Not from a bank set up here", 400);
       return new Response(answer.body, { status: answer.status, headers: answer.headers });
+    },
+  );
+
+  // An app the person signed in to, to link it, sending them back. Not
+  // signed in: the sign-in's state says which attempt it finishes, and only
+  // one the server started and is waiting on.
+  routes.get(
+    APP_LINK_CALLBACK_PATH,
+    {
+      summary: "Where an app sends the person back to after they sign in there to link it.",
+      description:
+        "`appLinks.begin` gives the app this address. The query is the app's (OAuth's `code` and `state`, or an `error`); the page says how linking went.",
+      tags: ["app links"],
+      auth: auth.anyone,
+      responses: {
+        200: { description: "Linked: a page saying so." },
+        400: { description: "Not linked: a page saying why." },
+      },
+    },
+    async (c) => {
+      const { ok, message } = await services.appLinks.callback(new URL(c.req.url).searchParams);
+      // The address held a code: it's not kept, nor passed on.
+      c.header("cache-control", "no-store");
+      c.header("referrer-policy", "no-referrer");
+      return c.html(
+        html`<!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <meta name="color-scheme" content="light dark" />
+              <title>${ok ? "Linked" : "Not linked"} · Nibblets</title>
+            </head>
+            <body
+              style="font: 15px/1.5 system-ui, sans-serif; max-width: 32rem; margin: 4rem auto; padding: 0 1rem"
+            >
+              <h1 style="font-size: 1.25rem">${ok ? "Linked" : "Not linked"}</h1>
+              <p>${message}</p>
+            </body>
+          </html>`,
+        ok ? 200 : 400,
+      );
     },
   );
 

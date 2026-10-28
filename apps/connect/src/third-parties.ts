@@ -612,7 +612,7 @@ export function thirdPartyRoutes(
     const body = ThirdPartyTokenInput.safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json({ error: "Send { token }" }, 400);
     try {
-      const grant = { access: body.data.token, refresh: null, expiresAt: null };
+      const grant = { access: body.data.token, refresh: null, expiresAt: null, scopes: null };
       const id = await connect(c.env, c.get("user").id, plugin, grant, null);
       return c.json({ id });
     } catch (err) {

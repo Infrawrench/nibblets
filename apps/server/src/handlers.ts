@@ -352,7 +352,7 @@ export function createHandlers(s: Services): Handlers<Contract, RpcContext> {
     appLinks: {
       plugins: async () => s.appLinks.plugins(),
       list: () => s.appLinks.list(),
-      begin: ({ plugin, settings }) => s.appLinks.begin(plugin, settings),
+      begin: ({ plugin, settings, serverUrl }) => s.appLinks.begin(plugin, settings, serverUrl),
       cancel: async ({ id }) => {
         s.appLinks.cancel(id);
         return ok;

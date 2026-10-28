@@ -38,6 +38,7 @@ function fakeApp() {
     begin: async () => {
       reachable("start");
       return {
+        via: "code",
         secret: "device-code",
         userCode: "ABCD-EFGH",
         verificationUrl: "https://fake.example/link",
@@ -125,6 +126,7 @@ function fakeApp() {
     description: "An app for tests.",
     icon: "data:image/svg+xml,<svg/>",
     fields: [defineField("url", "Fake URL", { default: "https://fake.example" })],
+    grants: "app",
     create: (settings) => {
       if (settings.url === "nope") throw new AppLinkError("Fake URL isn't a URL");
       return plugin;
@@ -198,6 +200,7 @@ function setUp() {
     factories: [factory],
     publish: (m) => messages.push(m),
     label: async () => "Nibblets on PogAir-4",
+    publicUrl: async () => null,
     reconfigure: async (id) => {
       reconfigured.push(id);
     },
@@ -315,6 +318,8 @@ describe("a nibblet's grant", () => {
           name: "fake",
           url: "https://fake.example/mcp",
           headers: { authorization: "Bearer iwa_1" },
+          tools: null,
+          providers: null,
         },
       ],
       prompts: [
@@ -513,6 +518,7 @@ describe("adopting a link the app made itself", () => {
       factories: [codeOnly],
       publish: () => undefined,
       label: async () => "",
+      publicUrl: async () => null,
       reconfigure: async () => undefined,
     });
     await expect(links.adopt("codeonly", {}, "iwl_x")).rejects.toMatchObject({
@@ -606,5 +612,230 @@ describe("what review turned up", () => {
     t.app.agents.clear();
     await t.links.sync();
     expect(t.store.grants).toMatchObject([{ state: "revoked" }]);
+  });
+});
+
+/** An app linked by signing in there, whose grants the gate keeps (T3 Code, say). */
+function signInApp() {
+  const app = {
+    signedOut: false,
+    callbackUrl: null as string | null,
+  };
+  const plugin: AppLinkPlugin = {
+    begin: async (request) => {
+      if (!request.callbackUrl) throw new AppLinkError("Nowhere to send you back to");
+      app.callbackUrl = request.callbackUrl;
+      return {
+        via: "sign_in",
+        secret: "verifier",
+        state: "state-1",
+        verificationUrl: "https://signin.example/authorize?state=state-1",
+        expiresAt: new Date(Date.now() + 900_000),
+      };
+    },
+    finish: async (_start, query) => {
+      if (query.get("error") === "access_denied") return { status: "denied" };
+      return {
+        status: "linked",
+        link: { ref: "env-1", secret: `token-${query.get("code")}` },
+        account: "Mac on SignIn",
+      };
+    },
+    describe: async () => ({
+      account: "Mac on SignIn",
+      scopeGroups: [],
+      providers: null,
+      ceiling: ["read", "act"],
+      narrowable: null,
+    }),
+    grant: async (_link, request) => ({
+      ref: request.externalId,
+      secret: "",
+      scopes: request.scopes,
+      providers: request.providers,
+    }),
+    update: async (_link, _grant, request) => ({
+      scopes: request.scopes ?? [],
+      providers: request.providers ?? [],
+    }),
+    revoke: async () => undefined,
+    unlink: async () => undefined,
+    inspect: async () => {
+      if (app.signedOut) throw new AppLinkRevokedError("link", "SignIn's sign-in ran out");
+      return { account: "Mac on SignIn", live: [] };
+    },
+    connection: (grant, link) => ({
+      mcp: {
+        url: "https://signin.example/mcp",
+        headers: { authorization: `Bearer ${link.secret}` },
+        tools: grant.scopes,
+        ...(grant.providers.length > 0
+          ? {
+              providers: {
+                argument: "environmentId",
+                allowed: grant.providers,
+                home: link.ref,
+                actHome: [],
+              },
+            }
+          : {}),
+      },
+    }),
+  };
+  const factory = defineAppLinkFactory({
+    id: "signin",
+    name: "SignIn",
+    description: "An app you sign in to, for tests.",
+    icon: "data:image/svg+xml,<svg/>",
+    fields: [],
+    grants: "gate",
+    create: () => plugin,
+  });
+  return { app, factory };
+}
+
+function setUpSignIn(publicUrl: string | null = null) {
+  const { app, factory } = signInApp();
+  const store = memoryStore();
+  const messages: LiveMessage[] = [];
+  const reconfigured: string[] = [];
+  const links = new AppLinks({
+    store,
+    factories: [factory],
+    publish: (m) => messages.push(m),
+    label: async () => "Nibblets on PogAir-4",
+    publicUrl: async () => publicUrl,
+    reconfigure: async (id) => {
+      reconfigured.push(id);
+    },
+    log: () => undefined,
+  });
+  return { app, store, links, messages, reconfigured };
+}
+
+describe("linking by signing in to the app", () => {
+  it("sends the person to sign in, and keeps the link when they come back", async () => {
+    const t = setUpSignIn();
+    const attempt = await t.links.begin("signin", {}, "http://localhost:8420/");
+    expect(attempt).toMatchObject({
+      userCode: null,
+      verificationUrl: "https://signin.example/authorize?state=state-1",
+      verificationUrlComplete: null,
+    });
+    expect(t.app.callbackUrl).toBe("http://localhost:8420/api/app-links/callback");
+
+    const back = await t.links.callback(new URLSearchParams({ state: "state-1", code: "abc" }));
+    expect(back).toEqual({ ok: true, message: "SignIn is linked. You can close this tab." });
+    expect(t.store.links).toMatchObject([
+      { plugin: "signin", ref: "env-1", secret: "token-abc", account: "Mac on SignIn" },
+    ]);
+    expect(t.messages).toContainEqual(
+      expect.objectContaining({
+        type: "app_link_settled",
+        attemptId: attempt.id,
+        outcome: "linked",
+      }),
+    );
+    expect((await t.links.list()).attempts).toEqual([]);
+
+    // Coming back again finishes nothing.
+    expect(
+      await t.links.callback(new URLSearchParams({ state: "state-1", code: "abc" })),
+    ).toMatchObject({ ok: false });
+    expect(t.store.links).toHaveLength(1);
+  });
+
+  it("sends them back to the server's public address when their browser's won't do", async () => {
+    const t = setUpSignIn("https://pip.example");
+    await t.links.begin("signin", {}, "http://192.168.1.5:8420");
+    expect(t.app.callbackUrl).toBe("https://pip.example/api/app-links/callback");
+
+    // With neither, the plugin says it has nowhere to send them back to.
+    const nowhere = setUpSignIn();
+    await expect(
+      nowhere.links.begin("signin", {}, "http://192.168.1.5:8420"),
+    ).rejects.toMatchObject({ code: "bad_request", message: "Nowhere to send you back to" });
+  });
+
+  it("only finishes a sign-in it's waiting on, and says when it was turned down", async () => {
+    const t = setUpSignIn();
+    await t.links.begin("signin", {}, "http://localhost:8420");
+    expect(
+      await t.links.callback(new URLSearchParams({ state: "someone-else", code: "abc" })),
+    ).toMatchObject({ ok: false });
+    expect(await t.links.callback(new URLSearchParams({ code: "abc" }))).toMatchObject({
+      ok: false,
+    });
+    expect(t.store.links).toEqual([]);
+
+    const denied = await t.links.callback(
+      new URLSearchParams({ state: "state-1", error: "access_denied" }),
+    );
+    expect(denied).toEqual({ ok: false, message: "It was turned down in SignIn." });
+    expect(t.messages).toContainEqual(expect.objectContaining({ outcome: "denied" }));
+  });
+
+  it("runs out when the person never comes back", async () => {
+    vi.useFakeTimers();
+    const t = setUpSignIn();
+    await t.links.begin("signin", {}, "http://localhost:8420");
+    await vi.advanceTimersByTimeAsync(900_000);
+    expect(t.messages).toContainEqual(expect.objectContaining({ outcome: "expired" }));
+    expect((await t.links.list()).attempts).toEqual([]);
+  });
+});
+
+describe("grants the gate keeps", () => {
+  async function signedIn(t: ReturnType<typeof setUpSignIn>, code: string): Promise<string> {
+    await t.links.begin("signin", {}, "http://localhost:8420");
+    await t.links.callback(new URLSearchParams({ state: "state-1", code }));
+    const id = t.store.links[0]?.id;
+    if (!id) throw new Error("not linked");
+    return id;
+  }
+
+  it("hands the link's sign-in to the gate, narrowed to the tools ticked", async () => {
+    const t = setUpSignIn();
+    const linkId = await signedIn(t, "abc");
+    await t.links.setGrant("nib_1", linkId, ["list"], []);
+    expect((await t.links.connections("nib_1")).servers).toEqual([
+      {
+        name: "signin",
+        url: "https://signin.example/mcp",
+        headers: { authorization: "Bearer token-abc" },
+        tools: ["list"],
+        providers: null,
+      },
+    ]);
+    await t.links.setGrant("nib_1", linkId, ["list", "launch"], ["env-2"]);
+    expect((await t.links.connections("nib_1")).servers).toMatchObject([
+      {
+        tools: ["list", "launch"],
+        providers: { argument: "environmentId", allowed: ["env-2"], home: "env-1" },
+      },
+    ]);
+  });
+
+  it("keeps them while the link's sign-in has run out, and uses the new one once it's back", async () => {
+    const t = setUpSignIn();
+    const linkId = await signedIn(t, "abc");
+    await t.links.setGrant("nib_1", linkId, ["read"], []);
+    t.reconfigured.length = 0;
+
+    t.app.signedOut = true;
+    await t.links.sync();
+    expect(t.store.links).toMatchObject([{ state: "revoked" }]);
+    expect(t.store.grants).toMatchObject([{ state: "active" }]);
+    expect(t.reconfigured).toEqual(["nib_1"]);
+    expect(await t.links.connections("nib_1")).toEqual({ servers: [], prompts: [] });
+
+    t.app.signedOut = false;
+    t.reconfigured.length = 0;
+    expect(await signedIn(t, "def")).toBe(linkId);
+    expect(t.store.links).toMatchObject([{ state: "linked", secret: "token-def" }]);
+    expect(t.reconfigured).toEqual(["nib_1"]);
+    expect((await t.links.connections("nib_1")).servers).toMatchObject([
+      { headers: { authorization: "Bearer token-def" } },
+    ]);
   });
 });

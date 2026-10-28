@@ -9,30 +9,43 @@ import type {
  * The contract every app link plugin fulfils. A plugin is an app nibblets
  * can act in under identities of their own (Infrawrench, say). The server
  * is linked to the app once, with a code the person approves in the app
- * (like `gh auth login`); then each nibblet the person picks is granted a
- * credential of its own from that link, with the scopes they tick. The
- * server keeps the links, the grants and their secrets; a plugin only
- * talks to its app, and knows everything about it, so neither the server
- * nor the UI knows one app from another.
+ * (like `gh auth login`) or by signing in there; then each nibblet the
+ * person picks is granted its own access from that link, with the scopes
+ * they tick. The server keeps the links, the grants and their secrets; a
+ * plugin only talks to its app, and knows everything about it, so neither
+ * the server nor the UI knows one app from another.
  */
 export interface AppLinkPlugin {
   /**
-   * Starts linking. The person goes to `verificationUrl` and approves
-   * `userCode` there; the server then calls `poll` until it settles.
+   * Starts linking. The person goes to `verificationUrl`: with a code,
+   * they approve `userCode` there and the server calls `poll` until it
+   * settles; signing in, the app sends them back to the request's
+   * `callbackUrl` and the server calls `finish` with what they came back
+   * with.
    */
   begin(request: LinkRequest): Promise<LinkStart>;
   /**
-   * Asks the app whether the person has answered. Called every `interval`
-   * seconds (or longer, after `slow_down`) until it isn't pending.
+   * Asks the app whether the person has answered a code. Called every
+   * `interval` seconds (or longer, after `slow_down`) until it isn't
+   * pending. Only a plugin that links with codes has it.
    */
-  poll(start: LinkStart): Promise<LinkPoll>;
+  poll?(start: CodeStart): Promise<LinkPoll>;
+  /**
+   * Finishes signing in, with the query the person came back to
+   * `callbackUrl` with, once its `state` matched. Never `pending`. Only a
+   * plugin that links by signing in has it.
+   */
+  finish?(start: SignInStart, query: URLSearchParams): Promise<LinkPoll>;
   /** What the link may grant now, for a nibblet's form. */
   describe(link: LinkRef): Promise<AppLinkDescription>;
   /** Makes a nibblet a credential of its own on the link. */
   grant(link: LinkRef, request: GrantRequest): Promise<Grant>;
   /** Changes what a grant may do. */
   update(link: LinkRef, grant: GrantRef, request: GrantUpdate): Promise<GrantUpdated>;
-  /** Revokes a grant's credential. Revoking one that's already gone is not an error. */
+  /**
+   * Revokes a grant's credential. Revoking one that's already gone is not
+   * an error. Nothing to do for grants the gate keeps.
+   */
   revoke(link: LinkRef, grant: GrantRef): Promise<void>;
   /**
    * Revokes the link, and with it every grant it made. Unlinking a link
@@ -50,10 +63,23 @@ export interface AppLinkPlugin {
    */
   adopt?(secret: string): Promise<LinkAdopted>;
   /**
-   * How a nibblet reaches the app with a grant. Only ever sent to its
-   * guard, since it carries the grant's secret.
+   * How a nibblet reaches the app with a grant on a link. Only ever sent
+   * to its guard, since it carries a secret: the grant's own, or for
+   * grants the gate keeps, the link's.
    */
-  connection(grant: GrantSecret): AppLinkConnection;
+  connection(grant: GrantSecret, link: LinkRef): AppLinkConnection;
+}
+
+/** A plugin that links with a code the person approves in the app. */
+export interface CodeLinking extends AppLinkPlugin {
+  begin(request: LinkRequest): Promise<CodeStart>;
+  poll(start: CodeStart): Promise<LinkPoll>;
+}
+
+/** A plugin that links by the person signing in to the app. */
+export interface SignInLinking extends AppLinkPlugin {
+  begin(request: LinkRequest): Promise<SignInStart>;
+  finish(start: SignInStart, query: URLSearchParams): Promise<LinkPoll>;
 }
 
 /** What the server tells the app about itself when it links. */
@@ -62,20 +88,42 @@ export interface LinkRequest {
   label: string;
   /** Scopes to suggest the person allows, if the server has an idea. */
   requestedScopes?: string[];
+  /**
+   * Where an app the person signs in to sends them back: the server's own
+   * page, at an address their browser reaches it at. Null when it has none
+   * an app would send them to (it's only on plain http away from this
+   * computer, say).
+   */
+  callbackUrl: string | null;
 }
 
-export interface LinkStart {
-  /** What the plugin polls with. A secret: kept on the server, never shown. */
+interface StartBase {
+  /** What the plugin finishes with. A secret: kept on the server, never shown. */
   secret: string;
-  userCode: string;
+  /** The page the person goes to. */
   verificationUrl: string;
+  /** When it stops working. */
+  expiresAt: Date;
+}
+
+/** Linking with a code the person approves in the app. */
+export interface CodeStart extends StartBase {
+  via: "code";
+  userCode: string;
   /** The same page with the code filled in, if the app has one. */
   verificationUrlComplete: string | null;
-  /** When the code stops working. */
-  expiresAt: Date;
   /** Seconds to wait between polls. */
   interval: number;
 }
+
+/** Linking by signing in to the app, which sends the person back to the server. */
+export interface SignInStart extends StartBase {
+  via: "sign_in";
+  /** What the app sends back with them, to tell this sign-in from any other. */
+  state: string;
+}
+
+export type LinkStart = CodeStart | SignInStart;
 
 export type LinkPoll =
   | { status: "pending" }
@@ -134,6 +182,10 @@ export interface GrantUpdated {
 
 export interface GrantSecret extends GrantRef {
   secret: string;
+  /** What it was given, for a plugin whose grants the gate keeps to narrow the link to. */
+  scopes: string[];
+  /** What it was narrowed to, out of the description's `providers`; empty for all. */
+  providers: string[];
 }
 
 export interface LinkInspection {
@@ -146,10 +198,35 @@ export interface LinkInspection {
 }
 
 export interface AppLinkConnection {
-  /** An MCP server the guard serves behind its gate, under the link's name. */
-  mcp?: { url: string; headers: Record<string, string> };
+  /**
+   * An MCP server the guard serves behind its gate, under the link's name.
+   * For a grant the gate keeps, `tools` has the gate list and allow only
+   * those of its tools (all of them when it's left out), and `providers`
+   * only calls that act on the providers it was narrowed to.
+   */
+  mcp?: {
+    url: string;
+    headers: Record<string, string>;
+    tools?: string[];
+    providers?: ProviderLimit;
+  };
   /** What the nibblet is told about the app, beyond its scopes. */
   prompt?: string;
+}
+
+/**
+ * Which of an app's providers a call may act on, for the gate to check:
+ * the one its `argument` names, or `home` when it names none.
+ */
+export interface ProviderLimit {
+  /** The argument that names where a call acts: `environmentId`, say. */
+  argument: string;
+  /** The providers it may act on; a call on any other is refused. */
+  allowed: string[];
+  /** Where a call that names none acts. */
+  home: string;
+  /** Tools whose `argument` names something else, and that always act on `home`. */
+  actHome: string[];
 }
 
 /**
@@ -193,6 +270,14 @@ export interface AppLinkFactory {
   /** Its app's logo, as a `data:` URL. */
   readonly icon: string;
   readonly fields: readonly AppLinkField[];
+  /**
+   * Who keeps the grants. `app`: each is a credential of its own the app
+   * makes, and revokes with the link. `gate`: the app knows only the link,
+   * and a grant is what the gate lets a nibblet do with the link's
+   * credential, so it lives here: it isn't revoked when the link is, and
+   * works again once the link is made again.
+   */
+  readonly grants: "app" | "gate";
   /** Throws an `AppLinkError` saying what's wrong with settings that won't do. */
   create(settings: AppLinkSettings, deps: AppLinkDeps): AppLinkPlugin;
 }

@@ -94,7 +94,12 @@ function PluginRow({
     // Opened now, while the click still counts, and pointed at the app once there's a code.
     const tab = window.open("about:blank", "_blank");
     try {
-      const attempt = await connection.client.appLinks.begin({ plugin: kind.id, settings });
+      const attempt = await connection.client.appLinks.begin({
+        plugin: kind.id,
+        settings,
+        // Where an app the person signs in to sends them back: this server, as this browser has it.
+        serverUrl: connection.base() || window.location.origin,
+      });
       setLastAttempt(attempt.id);
       const page = approvalPage(attempt);
       if (tab && page) {
@@ -157,7 +162,7 @@ function PluginRow({
   );
 }
 
-/** A code waiting to be approved in the app. */
+/** A code waiting to be approved in the app, or a sign-in there. */
 function AttemptRow({
   connection,
   kind,
@@ -170,10 +175,21 @@ function AttemptRow({
   const url = approvalPage(attempt);
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-line bg-deep px-2.5 py-2">
-      <span className="text-xs text-dim">
-        Approve this code in {kind.name}. Only approve it there if you started it here.
-      </span>
-      <span className="font-mono text-lg font-semibold tracking-widest">{attempt.userCode}</span>
+      {attempt.userCode !== null ? (
+        <>
+          <span className="text-xs text-dim">
+            Approve this code in {kind.name}. Only approve it there if you started it here.
+          </span>
+          <span className="font-mono text-lg font-semibold tracking-widest">
+            {attempt.userCode}
+          </span>
+        </>
+      ) : (
+        <span className="text-xs text-dim">
+          Sign in to {kind.name} in the tab that opened, and approve Nibblets there. Only approve it
+          if you started it here.
+        </span>
+      )}
       <div className="flex flex-wrap items-center gap-1.5">
         {url ? (
           <a
@@ -187,7 +203,8 @@ function AttemptRow({
           </a>
         ) : null}
         <span className="text-2xs text-faint">
-          · waiting · the code runs out {relativeTime(attempt.expiresAt)}
+          · waiting · {attempt.userCode !== null ? "the code runs out" : "it runs out"}{" "}
+          {relativeTime(attempt.expiresAt)}
         </span>
         <Button
           size="sm"

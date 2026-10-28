@@ -4,9 +4,11 @@ import {
   resolveSettings,
   type AppLinkFactory,
   type AppLinkPlugin,
+  type LinkPoll,
   type LinkRef,
   type LinkStart,
 } from "@nibblets/app-link";
+import { t3code } from "@nibblets/app-link-t3code";
 import { infrawrench } from "@nibblets/app-link-infrawrench";
 import type { appLinks, nibbletAppGrants } from "@nibblets/db";
 import {
@@ -30,7 +32,10 @@ import { newId } from "./store.ts";
  * Every app link plugin the server knows. Links are made with them in
  * Settings, and kept in the database with their secrets.
  */
-export const APP_LINK_PLUGINS: readonly AppLinkFactory[] = [infrawrench];
+export const APP_LINK_PLUGINS: readonly AppLinkFactory[] = [infrawrench, t3code];
+
+/** Where an app the person signs in to sends them back to, on any address the server has. */
+export const APP_LINK_CALLBACK_PATH = "/api/app-links/callback";
 
 /** How often links are checked with their apps, and unfinished revokes tried again. */
 const SYNC_EVERY_MS = 5 * 60_000;
@@ -69,6 +74,8 @@ export interface AppLinksDeps {
   publish(message: LiveMessage): void;
   /** What the app is told this server is: "Nibblets on PogAir-4". */
   label(): Promise<string>;
+  /** How the server is reached from the internet, if it is: its https address. */
+  publicUrl(): Promise<string | null>;
   /** Hands a nibblet (and its sub-agents) its app links again, when they've changed. */
   reconfigure(nibbletId: string): Promise<void>;
   factories?: readonly AppLinkFactory[];
@@ -103,7 +110,10 @@ interface Attempt {
   start: LinkStart;
   /** Between polls, in seconds; longer after the app says to slow down. */
   interval: number;
+  /** The next poll, or for a sign-in, when it runs out. */
   timer: ReturnType<typeof setTimeout> | null;
+  /** A sign-in the person has come back from, so coming back again does nothing. */
+  returned: boolean;
 }
 
 const iso = (d: Date) => d.toISOString();
@@ -162,6 +172,8 @@ export class AppLinks {
   private readonly fetch: typeof globalThis.fetch;
   private readonly log: (message: string) => void;
   private readonly attempts = new Map<string, Attempt>();
+  /** How a sign-in the person came back from ended, for the page they're shown. */
+  private readonly outcomes = new Map<string, { outcome: AppLinkOutcome; detail: string | null }>();
   /** One change at a time, so two can't each act on what the other is changing. */
   private queue: Promise<unknown> = Promise.resolve();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -192,22 +204,34 @@ export class AppLinks {
 
   // Linking
 
-  /** Asks the app for a code, and waits for the person to approve it there. */
-  async begin(pluginId: string, input: AppLinkSettings): Promise<AppLinkAttempt> {
+  /**
+   * Asks the app for a code, or where to sign in, and waits for the person
+   * to approve it there. `serverUrl` is where their browser reaches this
+   * server, for an app they sign in to to send them back to.
+   */
+  async begin(
+    pluginId: string,
+    input: AppLinkSettings,
+    serverUrl?: string,
+  ): Promise<AppLinkAttempt> {
     const factory = this.factory(pluginId);
     const settings = this.refusals(() => resolveSettings(factory.fields, input));
     const plugin = this.refusals(() => factory.create(settings, { fetch: this.fetch }));
     const label = await this.deps.label();
-    const start = await plugin.begin({ label }).catch((err: unknown) => {
+    const callbackUrl = await this.callbackUrl(serverUrl);
+    const start = await plugin.begin({ label, callbackUrl }).catch((err: unknown) => {
       throw this.failure(factory.id, err);
     });
     // The UI opens it, so whatever a plugin was told, it's a web page.
-    const complete = start.verificationUrlComplete;
+    const complete = start.via === "code" ? start.verificationUrlComplete : null;
     if (!isWebUrl(start.verificationUrl) || (complete !== null && !isWebUrl(complete))) {
       throw new RpcError(
         "bad_request",
         `${factory.name} sent a page to approve the link that isn't a web address`,
       );
+    }
+    if ((start.via === "code" && !plugin.poll) || (start.via === "sign_in" && !plugin.finish)) {
+      throw new Error(`${factory.id} began linking in a way it can't finish`);
     }
     const attempt: Attempt = {
       id: newId("lna"),
@@ -215,13 +239,95 @@ export class AppLinks {
       plugin,
       settings,
       start,
-      interval: Math.max(MIN_INTERVAL_S, start.interval),
+      interval: start.via === "code" ? Math.max(MIN_INTERVAL_S, start.interval) : 0,
       timer: null,
+      returned: false,
     };
     this.attempts.set(attempt.id, attempt);
-    this.schedulePoll(attempt);
+    if (start.via === "code") this.schedulePoll(attempt);
+    else {
+      const left = Math.max(0, start.expiresAt.getTime() - Date.now());
+      attempt.timer = setTimeout(() => this.settle(attempt, "expired", null, null), left);
+      attempt.timer.unref?.();
+    }
     this.deps.publish({ type: "app_links_changed" });
     return toAttempt(attempt);
+  }
+
+  /**
+   * Where an app sends the person back to: the address their browser
+   * reached this server at, when an app would send them there (https, or
+   * this computer), else the server's own on the internet. Null when
+   * there's neither.
+   */
+  private async callbackUrl(serverUrl: string | undefined): Promise<string | null> {
+    const usable = (url: string) => {
+      try {
+        const parsed = new URL(url);
+        return (
+          parsed.protocol === "https:" ||
+          (parsed.protocol === "http:" &&
+            ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname))
+        );
+      } catch {
+        return false;
+      }
+    };
+    const base = serverUrl && usable(serverUrl) ? serverUrl : await this.deps.publicUrl();
+    return base && usable(base) ? `${base.replace(/\/+$/, "")}${APP_LINK_CALLBACK_PATH}` : null;
+  }
+
+  /**
+   * The person came back from signing in to an app, with `query`: finishes
+   * the attempt it belongs to, if there is one, and says how it went in
+   * words for the page they're shown.
+   */
+  async callback(query: URLSearchParams): Promise<{ ok: boolean; message: string }> {
+    const state = query.get("state") ?? "";
+    const attempt = [...this.attempts.values()].find(
+      (a) => a.start.via === "sign_in" && state !== "" && a.start.state === state,
+    );
+    if (!attempt || attempt.start.via !== "sign_in" || !attempt.plugin.finish) {
+      return {
+        ok: false,
+        message: "This server isn't waiting on that sign-in. It may have run out: link again.",
+      };
+    }
+    if (attempt.returned) {
+      return { ok: false, message: "That sign-in is already being finished." };
+    }
+    attempt.returned = true;
+    const name = attempt.factory.name;
+    try {
+      const answer = await attempt.plugin.finish(attempt.start, query);
+      await this.answered(attempt, answer);
+    } catch (err) {
+      if (this.attempts.get(attempt.id) !== attempt) {
+        return { ok: false, message: "Linking was cancelled here." };
+      }
+      if (!(err instanceof AppLinkError))
+        this.log(`finishing ${attempt.factory.id}: ${message(err)}`);
+      const detail =
+        err instanceof AppLinkError
+          ? err.message
+          : `${name} didn't answer; the server's log has why`;
+      this.settle(attempt, "failed", null, detail);
+      return { ok: false, message: detail };
+    }
+    const outcome = this.outcomes.get(attempt.id);
+    this.outcomes.delete(attempt.id);
+    switch (outcome?.outcome) {
+      case "linked":
+        return { ok: true, message: `${name} is linked. You can close this tab.` };
+      case "denied":
+        return { ok: false, message: `It was turned down in ${name}.` };
+      case "expired":
+        return { ok: false, message: "It ran out before it was approved. Link again." };
+      case "cancelled":
+        return { ok: false, message: "Linking was cancelled in Nibblets." };
+      default:
+        return { ok: false, message: outcome?.detail ?? `${name} couldn't link.` };
+    }
   }
 
   /** Stops waiting on an attempt. One that's already over is fine. */
@@ -242,57 +348,10 @@ export class AppLinks {
       this.settle(attempt, "expired", null, null);
       return;
     }
+    const start = attempt.start;
+    if (start.via !== "code" || !attempt.plugin.poll) return;
     try {
-      const answer = await attempt.plugin.poll(attempt.start);
-      if (this.attempts.get(attempt.id) !== attempt) {
-        // Cancelled while it was asked; a link it made anyway isn't wanted.
-        if (answer.status === "linked") {
-          void attempt.plugin.unlink(answer.link).catch(() => undefined);
-        }
-        return;
-      }
-      switch (answer.status) {
-        case "slow_down":
-          attempt.interval += 5;
-          this.schedulePoll(attempt);
-          return;
-        case "pending":
-          this.schedulePoll(attempt);
-          return;
-        case "denied":
-        case "expired":
-          this.settle(attempt, answer.status, null, null);
-          return;
-        case "linked": {
-          const unwanted = () => void attempt.plugin.unlink(answer.link).catch(() => undefined);
-          let id: string | null;
-          try {
-            id = await this.serially(async () =>
-              // Cancelled while it waited its turn: not wanted after all.
-              this.attempts.get(attempt.id) === attempt
-                ? this.keep(attempt.factory, attempt.settings, answer.link, answer.account)
-                : null,
-            );
-          } catch (err) {
-            // Approved, but not kept: undone in the app, rather than left
-            // there with nothing here to revoke it.
-            this.log(`keeping ${attempt.factory.id}'s link: ${message(err)}`);
-            unwanted();
-            this.settle(
-              attempt,
-              "failed",
-              null,
-              err instanceof RpcError || err instanceof AppLinkError
-                ? err.message
-                : "Couldn't keep the link, so it was undone; the server's log has why",
-            );
-            return;
-          }
-          if (id === null) unwanted();
-          else this.settle(attempt, "linked", id, null);
-          return;
-        }
-      }
+      await this.answered(attempt, await attempt.plugin.poll(start));
     } catch (err) {
       if (this.attempts.get(attempt.id) !== attempt) return;
       if (err instanceof AppLinkError) {
@@ -303,6 +362,59 @@ export class AppLinks {
       this.log(`polling ${attempt.factory.id}: ${message(err)}`);
       attempt.interval = Math.min(attempt.interval * 2, 60);
       this.schedulePoll(attempt);
+    }
+  }
+
+  /** Acts on what the app answered an attempt: waits on, keeps the link, or ends it. */
+  private async answered(attempt: Attempt, answer: LinkPoll): Promise<void> {
+    if (this.attempts.get(attempt.id) !== attempt) {
+      // Cancelled while it was asked; a link it made anyway isn't wanted.
+      if (answer.status === "linked") {
+        void attempt.plugin.unlink(answer.link).catch(() => undefined);
+      }
+      return;
+    }
+    switch (answer.status) {
+      case "slow_down":
+        attempt.interval += 5;
+        this.schedulePoll(attempt);
+        return;
+      case "pending":
+        this.schedulePoll(attempt);
+        return;
+      case "denied":
+      case "expired":
+        this.settle(attempt, answer.status, null, null);
+        return;
+      case "linked": {
+        const unwanted = () => void attempt.plugin.unlink(answer.link).catch(() => undefined);
+        let id: string | null;
+        try {
+          id = await this.serially(async () =>
+            // Cancelled while it waited its turn: not wanted after all.
+            this.attempts.get(attempt.id) === attempt
+              ? this.keep(attempt.factory, attempt.settings, answer.link, answer.account)
+              : null,
+          );
+        } catch (err) {
+          // Approved, but not kept: undone in the app, rather than left
+          // there with nothing here to revoke it.
+          this.log(`keeping ${attempt.factory.id}'s link: ${message(err)}`);
+          unwanted();
+          this.settle(
+            attempt,
+            "failed",
+            null,
+            err instanceof RpcError || err instanceof AppLinkError
+              ? err.message
+              : "Couldn't keep the link, so it was undone; the server's log has why",
+          );
+          return;
+        }
+        if (id === null) unwanted();
+        else this.settle(attempt, "linked", id, null);
+        return;
+      }
     }
   }
 
@@ -354,6 +466,9 @@ export class AppLinks {
         state: "linked",
         detail: null,
       });
+      // Grants the gate keeps outlive their link being revoked, and work again now.
+      const grants = await this.deps.store.appGrants({ linkId: known.id });
+      await this.refresh(grants.filter((g) => g.state === "active").map((g) => g.nibbletId));
       return known.id;
     }
     const row = await this.deps.store.createAppLink({
@@ -381,6 +496,7 @@ export class AppLinks {
     if (this.attempts.get(attempt.id) !== attempt) return;
     if (attempt.timer) clearTimeout(attempt.timer);
     this.attempts.delete(attempt.id);
+    if (attempt.returned) this.outcomes.set(attempt.id, { outcome, detail });
     this.deps.publish({ type: "app_link_settled", attemptId: attempt.id, outcome, linkId, detail });
     this.deps.publish({ type: "app_links_changed" });
   }
@@ -566,12 +682,28 @@ export class AppLinks {
       if (!link || link.state !== "linked") continue;
       let connection;
       try {
-        connection = this.plugin(link).connection({ ref: grant.ref, secret: grant.secret });
+        connection = this.plugin(link).connection(
+          {
+            ref: grant.ref,
+            secret: grant.secret,
+            scopes: grant.scopes,
+            providers: grant.providers,
+          },
+          linkRef(link),
+        );
       } catch (err) {
         this.log(`connecting ${host} to ${link.id}: ${message(err)}`);
         continue;
       }
-      if (connection.mcp) servers.push({ name: link.name, ...connection.mcp });
+      if (connection.mcp) {
+        const { tools, providers, ...mcp } = connection.mcp;
+        servers.push({
+          name: link.name,
+          ...mcp,
+          tools: tools ?? null,
+          providers: providers ?? null,
+        });
+      }
       prompts.push({
         name: link.name,
         title: this.title(link),
@@ -653,6 +785,8 @@ export class AppLinks {
       await this.deps.store.updateAppLink(link.id, { account: seen.account });
       this.deps.publish({ type: "app_links_changed" });
     }
+    // Grants the gate keeps aren't the app's to revoke.
+    if (this.factory(link.plugin).grants === "gate") return;
     // A grant the app no longer has live was revoked there, or never made.
     const live = new Set(seen.live);
     for (const grant of await this.deps.store.appGrants({ linkId: link.id })) {
@@ -675,6 +809,11 @@ export class AppLinks {
       this.deps.publish({ type: "app_links_changed" });
     }
     const grants = await this.deps.store.appGrants({ linkId: link.id });
+    if (this.factories.find((f) => f.id === link.plugin)?.grants === "gate") {
+      // Kept for when it's linked again; until then nothing on it is handed out.
+      await this.refresh(grants.filter((g) => g.state === "active").map((g) => g.nibbletId));
+      return;
+    }
     for (const grant of grants) {
       if (grant.state !== "active") continue;
       await this.deps.store.updateAppGrant(grant.nibbletId, grant.linkId, {
@@ -782,13 +921,14 @@ export class AppLinks {
 }
 
 function toAttempt(attempt: Attempt): AppLinkAttempt {
+  const start = attempt.start;
   return {
     id: attempt.id,
     plugin: attempt.factory.id,
-    userCode: attempt.start.userCode,
-    verificationUrl: attempt.start.verificationUrl,
-    verificationUrlComplete: attempt.start.verificationUrlComplete,
-    expiresAt: iso(attempt.start.expiresAt),
+    userCode: start.via === "code" ? start.userCode : null,
+    verificationUrl: start.verificationUrl,
+    verificationUrlComplete: start.via === "code" ? start.verificationUrlComplete : null,
+    expiresAt: iso(start.expiresAt),
   };
 }
 

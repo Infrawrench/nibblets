@@ -75,8 +75,11 @@ export type AppLink = z.infer<typeof AppLink>;
 export const AppLinkAttempt = z.object({
   id: z.string(),
   plugin: AppLinkPluginId,
-  /** What to type, or check, on the app's page. */
-  userCode: z.string(),
+  /**
+   * What to type, or check, on the app's page. Null when they sign in
+   * there instead, and the app sends them back to the server.
+   */
+  userCode: z.string().nullable(),
   /** Only ever http or https, since the UI opens it. */
   verificationUrl: WebUrl,
   /** The same page with the code filled in, when the app has one. */
@@ -152,5 +155,21 @@ export const AppLinkServer = z.object({
   name: z.string(),
   url: z.string(),
   headers: z.record(z.string(), z.string()).default({}),
+  /** Only these of its tools are listed and allowed; null for all of them. */
+  tools: z.array(z.string()).nullable().default(null),
+  /**
+   * Only calls acting on these of the app's providers are allowed: the one
+   * a call's `argument` names, or `home` when it names none (and always, for
+   * tools in `actHome`). Null for all of them.
+   */
+  providers: z
+    .object({
+      argument: z.string(),
+      allowed: z.array(z.string()),
+      home: z.string(),
+      actHome: z.array(z.string()),
+    })
+    .nullable()
+    .default(null),
 });
 export type AppLinkServer = z.infer<typeof AppLinkServer>;

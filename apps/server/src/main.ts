@@ -114,6 +114,7 @@ async function main(): Promise<void> {
     store,
     publish: (message) => bus.publish(message),
     label: async () => `Nibblets on ${await serverName(store, config.NIBBLET_HOST_NAME)}`,
+    publicUrl: async () => (await publicAddress.current()).url,
     // Sub-agents serve their host's app links, so they're handed them again too.
     reconfigure: async (nibbletId) => {
       const tree = [nibbletId];
