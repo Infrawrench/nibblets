@@ -7,11 +7,7 @@ export function toolsServer(): McpServer {
   const server = new McpServer({ name: "nibblet-test-tools", version: "0.1.0" });
   server.registerTool(
     "echo",
-    {
-      description: "Echoes text back.",
-      inputSchema: { text: z.string() },
-      annotations: { readOnlyHint: true },
-    },
+    { description: "Echoes text back.", inputSchema: { text: z.string() } },
     async ({ text }) => ({ content: [{ type: "text", text: `echo: ${text}` }] }),
   );
   server.registerTool(

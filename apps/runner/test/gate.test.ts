@@ -108,23 +108,23 @@ for (const kind of ["stdio", "http"] as const) {
   });
 }
 
-describe("a server the gate limits to reading", () => {
-  it("lists and allows only the tools it marks read-only, refusing the rest before asking", async () => {
-    rules = [{ server: "reader", tool: "send_*" }];
+describe("a server the gate limits to some of its tools", () => {
+  it("lists and allows only those, refusing the rest before asking", async () => {
+    rules = [{ server: "limited", tool: "send_*" }];
     asked.length = 0;
     const wrapped = gate.wrap(
-      "reader",
+      "limited",
       { type: "http", url: httpUrl, headers: {} },
-      { readOnly: true },
+      { tools: ["echo"] },
     );
-    const client = await connect("reader", wrapped.type === "http" ? wrapped.url : "");
+    const client = await connect("limited", wrapped.type === "http" ? wrapped.url : "");
     expect((await client.listTools()).tools.map((t) => t.name)).toEqual(["echo"]);
     expect(text(await client.callTool({ name: "echo", arguments: { text: "hi" } }))).toContain(
       "echo: hi",
     );
     const refused = await client.callTool({ name: "send_money", arguments: { amount: 5 } });
     expect("isError" in refused && refused.isError).toBe(true);
-    expect(text(refused)).toContain("isn't one you were given");
+    expect(text(refused)).toContain("isn't one of limited's tools you were given");
     expect(text(refused)).not.toContain("sent 5");
     expect(asked).toEqual([]);
     await client.close();
@@ -132,8 +132,8 @@ describe("a server the gate limits to reading", () => {
 
   it("lets everything through again once the limit is lifted", async () => {
     rules = [];
-    const wrapped = gate.wrap("reader", { type: "http", url: httpUrl, headers: {} });
-    const client = await connect("reader", wrapped.type === "http" ? wrapped.url : "");
+    const wrapped = gate.wrap("limited", { type: "http", url: httpUrl, headers: {} });
+    const client = await connect("limited", wrapped.type === "http" ? wrapped.url : "");
     expect((await client.listTools()).tools.map((t) => t.name).sort()).toEqual([
       "echo",
       "send_money",

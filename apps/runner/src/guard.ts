@@ -127,9 +127,9 @@ export function gatedSpecs(
   return specs;
 }
 
-/** What the gate lets through from each server: an app link granted only to read, say. */
+/** What the gate lets through from each server: only the tools an app link's grant gives, say. */
 export function gatedLimits(config: GuardConfig): Record<string, GateLimits> {
-  return Object.fromEntries(config.appLinks.map((app) => [app.name, { readOnly: app.readOnly }]));
+  return Object.fromEntries(config.appLinks.map((app) => [app.name, { tools: app.tools }]));
 }
 
 const onePasswordScript = fileURLToPath(new URL("./onepassword-mcp.ts", import.meta.url));

@@ -318,7 +318,7 @@ describe("a nibblet's grant", () => {
           name: "fake",
           url: "https://fake.example/mcp",
           headers: { authorization: "Bearer iwa_1" },
-          readOnly: false,
+          tools: null,
         },
       ],
       prompts: [
@@ -664,7 +664,7 @@ function signInApp() {
       mcp: {
         url: "https://signin.example/mcp",
         headers: { authorization: `Bearer ${link.secret}` },
-        readOnly: !grant.scopes.includes("act"),
+        tools: grant.scopes,
       },
     }),
   };
@@ -780,20 +780,22 @@ describe("grants the gate keeps", () => {
     return id;
   }
 
-  it("hands the link's sign-in to the gate, narrowed to reading unless it may act", async () => {
+  it("hands the link's sign-in to the gate, narrowed to the tools ticked", async () => {
     const t = setUpSignIn();
     const linkId = await signedIn(t, "abc");
-    await t.links.setGrant("nib_1", linkId, ["read"], []);
+    await t.links.setGrant("nib_1", linkId, ["list"], []);
     expect((await t.links.connections("nib_1")).servers).toEqual([
       {
         name: "signin",
         url: "https://signin.example/mcp",
         headers: { authorization: "Bearer token-abc" },
-        readOnly: true,
+        tools: ["list"],
       },
     ]);
-    await t.links.setGrant("nib_1", linkId, ["read", "act"], []);
-    expect((await t.links.connections("nib_1")).servers).toMatchObject([{ readOnly: false }]);
+    await t.links.setGrant("nib_1", linkId, ["list", "launch"], []);
+    expect((await t.links.connections("nib_1")).servers).toMatchObject([
+      { tools: ["list", "launch"] },
+    ]);
   });
 
   it("keeps them while the link's sign-in has run out, and uses the new one once it's back", async () => {

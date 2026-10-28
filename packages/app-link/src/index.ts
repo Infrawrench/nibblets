@@ -198,10 +198,10 @@ export interface LinkInspection {
 export interface AppLinkConnection {
   /**
    * An MCP server the guard serves behind its gate, under the link's name.
-   * `readOnly` has the gate list and allow only the tools the server marks
-   * read-only (`readOnlyHint`), for a grant that may only look.
+   * `tools` has the gate list and allow only those of its tools, for a
+   * grant the gate keeps; all of them when it's left out.
    */
-  mcp?: { url: string; headers: Record<string, string>; readOnly?: boolean };
+  mcp?: { url: string; headers: Record<string, string>; tools?: string[] };
   /** What the nibblet is told about the app, beyond its scopes. */
   prompt?: string;
 }

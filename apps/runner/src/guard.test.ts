@@ -30,17 +30,22 @@ describe("app links behind the gate", () => {
     });
   });
 
-  it("are limited to reading when that's all their grant gives", () => {
+  it("are limited to the tools their grant gives", () => {
     const config = GuardConfig.parse({
       browser: false,
       appLinks: [
-        { name: "t3code", url: "https://t3.example/mcp", headers: {}, readOnly: true },
+        {
+          name: "t3code",
+          url: "https://t3.example/mcp",
+          headers: {},
+          tools: ["t3_thread_list", "t3_thread_read"],
+        },
         { name: "infrawrench", url: "https://app.infrawrench.com/api/mcp", headers: {} },
       ],
     });
     expect(gatedLimits(config)).toEqual({
-      t3code: { readOnly: true },
-      infrawrench: { readOnly: false },
+      t3code: { tools: ["t3_thread_list", "t3_thread_read"] },
+      infrawrench: { tools: null },
     });
   });
 

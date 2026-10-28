@@ -60,17 +60,8 @@ const CALL_TIMEOUT_MS = 30 * 60_000;
 
 /** What the gate lets through from one server, beyond its "ask me first" rules. */
 export interface GateLimits {
-  /**
-   * Only the tools the server marks read-only (`readOnlyHint`): an app
-   * link granted to look but not act.
-   */
-  readOnly?: boolean;
-}
-
-/** What the gate knows of a tool from the server's list. */
-interface ToolInfo {
-  view: ToolView;
-  readOnly: boolean;
+  /** Only these of its tools, such as an app link's grant gives; null or left out for all. */
+  tools?: readonly string[] | null;
 }
 
 /** One upstream MCP server, connected on first use and kept open. */
@@ -81,8 +72,8 @@ class Upstream {
   readonly limits: GateLimits;
   /** Identifies the definition, so a changed server is reconnected. */
   readonly key: string;
-  /** What each tool's listing says about it (its view, whether it only reads), as last listed. */
-  private readonly tools = new Map<string, ToolInfo>();
+  /** What each tool's `_meta` says about its view, as last listed. */
+  private readonly views = new Map<string, ToolView>();
 
   constructor(name: string, spec: McpServerSpec, limits: GateLimits = {}) {
     this.name = name;
@@ -118,22 +109,14 @@ class Upstream {
     return client;
   }
 
-  /** Notes what the server listed of its tools. */
-  noteTools(tools: readonly ListedTool[]): void {
-    for (const tool of tools) {
-      this.tools.set(tool.name, {
-        view: toolView(tool._meta),
-        readOnly: tool.annotations?.readOnlyHint === true,
-      });
-    }
+  /** Notes the views of tools the server listed. */
+  noteTools(tools: readonly { name: string; _meta?: object }[]): void {
+    for (const tool of tools) this.views.set(tool.name, toolView(tool._meta));
   }
 
-  /**
-   * What's known of a tool, listing the server's tools first if it hasn't
-   * been seen. Null for one the server doesn't list.
-   */
-  async infoOf(client: Client, tool: string): Promise<ToolInfo | null> {
-    if (!this.tools.has(tool)) {
+  /** A tool's view, listing the server's tools first if it hasn't been seen. */
+  async viewOf(client: Client, tool: string): Promise<ToolView> {
+    if (!this.views.has(tool)) {
       let cursor: string | undefined;
       do {
         const page = await client.listTools(cursor ? { cursor } : undefined);
@@ -141,13 +124,12 @@ class Upstream {
         cursor = page.nextCursor;
       } while (cursor);
     }
-    return this.tools.get(tool) ?? null;
+    return this.views.get(tool) ?? toolView(undefined);
   }
 
   /** Whether the limits let a tool through. */
-  allows(tool: ListedTool | ToolInfo): boolean {
-    const readOnly = "readOnly" in tool ? tool.readOnly : tool.annotations?.readOnlyHint === true;
-    return !this.limits.readOnly || readOnly;
+  allows(tool: string): boolean {
+    return !this.limits.tools || this.limits.tools.includes(tool);
   }
 
   async close(): Promise<void> {
@@ -157,15 +139,8 @@ class Upstream {
   }
 }
 
-/** A tool as a server lists it, the parts the gate reads. */
-interface ListedTool {
-  name: string;
-  _meta?: object;
-  annotations?: { readOnlyHint?: boolean };
-}
-
 function upstreamKey(spec: McpServerSpec, limits: GateLimits): string {
-  return JSON.stringify({ spec, readOnly: limits.readOnly === true });
+  return JSON.stringify({ spec, tools: limits.tools ?? null });
 }
 
 function stringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
@@ -180,7 +155,7 @@ function stringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
  * the harness only ever sees the gate. Everything is forwarded unchanged,
  * except that a `tools/call` matching a rule waits for the user, and a
  * declined one comes back as an error result the agent can read. A server
- * with limits (an app link granted to read, say) has only the tools they
+ * with limits (an app link granted only some tools, say) has only the tools they
  * allow listed, and a call of any other is refused the same way.
  *
  * It's also the host for MCP Apps: it reports each call of a tool with a
@@ -299,20 +274,19 @@ export class McpGate {
     params: { name: string; arguments?: Record<string, unknown> },
     caller: Caller = "model",
   ): Promise<ToolResult> {
-    const info = await up.infoOf(client, params.name).catch(() => null);
-    if (up.limits.readOnly && !(info && up.allows(info))) {
+    if (!up.allows(params.name)) {
       // Refused before anyone's asked: the grant doesn't stretch to it.
       return {
         content: [
           {
             type: "text",
-            text: `${params.name} isn't one you were given: you may only use ${up.name}'s tools that read`,
+            text: `${params.name} isn't one of ${up.name}'s tools you were given: ask your person to tick it in your settings`,
           },
         ],
         isError: true,
       };
     }
-    const view = info?.view ?? toolView(undefined);
+    const view = await up.viewOf(client, params.name).catch(() => toolView(undefined));
     if (!view.visibility.includes(caller)) {
       const only = caller === "app" ? "the agent" : "its view in the chat";
       return {
@@ -382,7 +356,7 @@ export class McpGate {
         // A tool only its view may call isn't the agent's to see, and the other
         // way round; nor is one the server's limits don't let through.
         const tools = listed.tools.filter(
-          (t) => toolView(t._meta).visibility.includes(caller) && up.allows(t),
+          (t) => toolView(t._meta).visibility.includes(caller) && up.allows(t.name),
         );
         return { ...listed, tools };
       });

@@ -23,9 +23,12 @@ import {
   SignInError,
   type AuthServer,
 } from "@nibblets/oauth";
-import type { AppLinkDescription, AppScopeGroup } from "@nibblets/protocol";
+import type { AppLinkDescription } from "@nibblets/protocol";
 import { z } from "zod";
 import { T3CODE_ICON } from "./logo.ts";
+import { T3_SYSTEMS, T3_TOOLS } from "./tools.ts";
+
+export { T3_SYSTEMS, T3_TOOLS, type T3System, type T3Tool, type ToolUse } from "./tools.ts";
 
 /**
  * T3 Code (t3.codes, pingdotgg/t3code) as an app link. T3 Code runs coding
@@ -39,8 +42,8 @@ import { T3CODE_ICON } from "./logo.ts";
  * pairing code from T3 Code's Settings → Sharing & access, choosing read
  * only or how much a thread it starts may do. T3 Code has no way to make a
  * credential per nibblet, so its grants are the gate's: every nibblet uses
- * the link's sign-in, and one granted only to read has the gate list and
- * allow only the tools T3 Code marks read-only.
+ * the link's sign-in, and the gate lists and allows only the tools it was
+ * granted. Each tool is a scope, grouped by T3 Code's systems (`tools.ts`).
  *
  * A sign-in lasts 30 days and isn't renewed, after which the link shows as
  * revoked until it's linked again; its grants carry on once it is. T3 Code
@@ -50,10 +53,6 @@ import { T3CODE_ICON } from "./logo.ts";
 /** What to ask T3 Code for: reading, and acting through threads. */
 const SCOPES = ["orchestration:read", "orchestration:operate"] as const;
 const OPERATE = "orchestration:operate";
-
-/** A grant's scopes, the gate's: reading, and acting too. */
-const READ = "read";
-const ACT = "act";
 
 /** How long the person has to approve signing in, pairing code and all. */
 const SIGN_IN_MS = 15 * 60_000;
@@ -96,7 +95,7 @@ const Environment = z.object({ environmentId: z.string().min(1), label: z.string
 
 /** What a nibblet is told about its T3 Code tools, beside its scopes. */
 const PROMPT =
-  "T3 Code's tools drive coding agents in T3 Code, on your person's own machine. Start a thread with `t3_thread_launch`, message one with `t3_thread_send` (give it a `clientRequestId`, so a retry sends once), wait on it with `t3_thread_wait`, and read it with `t3_thread_read`. Answer a thread's questions with `t3_pending_request`. Commands and file changes a thread asks to make are approved by your person in T3 Code's own app, not here, so if a thread is waiting on one, tell them. T3 Code also caps how much a thread may do, as your person chose when they linked it. If you were only given reading, the tools that change anything aren't listed.";
+  "T3 Code's tools drive coding agents in T3 Code, on your person's own machine. Start a thread with `t3_thread_launch`, message one with `t3_thread_send` (give it a `clientRequestId`, so a retry sends once), wait on it with `t3_thread_wait`, and read it with `t3_thread_read`. Answer a thread's questions with `t3_pending_request`. Commands and file changes a thread asks to make are approved by your person in T3 Code's own app, not here, so if a thread is waiting on one, tell them. T3 Code also caps how much a thread may do, as your person chose when they linked it. Only the tools you were given are listed: if you need another, ask your person to tick it in your settings.";
 
 const REVOKED =
   "T3 Code no longer takes this link's sign-in (they last 30 days): link it again from Settings";
@@ -106,32 +105,39 @@ export interface T3CodeOptions {
   url: string;
 }
 
-/** The ceiling a sign-in gives: reading, and acting if T3 Code allowed more than reading. */
-function ceiling(session: Session): string[] {
-  return session.scopes === null || session.scopes.includes(OPERATE) ? [READ, ACT] : [READ];
+/** Whether T3 Code let the sign-in act, rather than only read. */
+function mayAct(session: Session): boolean {
+  return session.scopes === null || session.scopes.includes(OPERATE);
 }
 
-const SCOPE_GROUPS: AppScopeGroup[] = [
-  {
-    title: "Threads",
-    scopes: [
-      { value: READ, label: "Read projects, threads and what they're doing" },
-      { value: ACT, label: "Start, message, answer and stop threads, and change projects" },
-    ],
-  },
-];
+/**
+ * The tools a sign-in can be granted: every one when it may act, else the
+ * ones that read, since T3 Code refuses the rest.
+ */
+function ceiling(session: Session): string[] {
+  const act = mayAct(session);
+  return [...T3_TOOLS.values()].filter((t) => act || t.does !== "changes").map((t) => t.name);
+}
 
-/** The scopes a grant gets: within the ceiling, and acting takes reading along. */
+/** The tools a grant gets, in the catalogue's order: refused if any is outside the ceiling. */
 function clamp(scopes: readonly string[], session: Session): string[] {
-  const top = ceiling(session);
-  if (scopes.includes(ACT) && !top.includes(ACT)) {
+  const unknown = scopes.filter((s) => !T3_TOOLS.has(s));
+  if (unknown.length > 0) {
     throw new AppLinkError(
-      "This link can only read: T3 Code approved it read-only. Link it again, choosing more, for a nibblet to act.",
+      `T3 Code has no tool a nibblet can be given called ${unknown.join(", ")}`,
     );
   }
-  if (scopes.includes(ACT)) return [READ, ACT];
-  if (scopes.includes(READ)) return [READ];
-  throw new AppLinkError("Tick what it may do in T3 Code");
+  const top = new Set(ceiling(session));
+  const over = scopes.filter((s) => !top.has(s));
+  if (over.length > 0) {
+    throw new AppLinkError(
+      `This link can only read: T3 Code approved it read-only, so it can't grant ${over.join(", ")}. Link it again, choosing more, for a nibblet to change things.`,
+    );
+  }
+  const wanted = new Set(scopes);
+  const granted = [...T3_TOOLS.keys()].filter((name) => wanted.has(name));
+  if (granted.length === 0) throw new AppLinkError("Tick what it may do in T3 Code");
+  return granted;
 }
 
 function session(link: LinkRef): Session {
@@ -305,15 +311,17 @@ export function t3codePlugin(
     async describe(link): Promise<AppLinkDescription> {
       const current = live(link);
       const env = await environment(current.token);
-      const top = ceiling(current);
+      const top = new Set(ceiling(current));
       return {
         account: account(env),
-        scopeGroups: SCOPE_GROUPS.map((group) => ({
-          ...group,
-          scopes: group.scopes.filter((s) => top.includes(s.value)),
-        })),
+        scopeGroups: T3_SYSTEMS.map((system) => ({
+          title: system.title,
+          scopes: system.tools
+            .filter((t) => top.has(t.name))
+            .map((t) => ({ value: t.name, label: t.label })),
+        })).filter((group) => group.scopes.length > 0),
         providers: null,
-        ceiling: top,
+        ceiling: [...top],
         narrowable: null,
       };
     },
@@ -329,7 +337,7 @@ export function t3codePlugin(
     },
 
     async update(link, _grant, request) {
-      return { scopes: clamp(request.scopes ?? [READ], live(link)), providers: [] };
+      return { scopes: clamp(request.scopes ?? [], live(link)), providers: [] };
     },
 
     async revoke() {
@@ -350,7 +358,8 @@ export function t3codePlugin(
         mcp: {
           url: mcpUrl,
           headers: { authorization: `Bearer ${session(link).token}` },
-          readOnly: !grant.scopes.includes(ACT),
+          // Only what was ticked, and that T3 Code still has a tool by.
+          tools: grant.scopes.filter((s) => T3_TOOLS.has(s)),
         },
         prompt: PROMPT,
       };
@@ -368,7 +377,7 @@ export const t3code = defineAppLinkFactory({
   id: "t3code",
   name: "T3 Code",
   description:
-    "Let nibblets start and steer T3 Code's coding agents, each only reading or also acting, as you tick. Unlinking doesn't sign out of T3 Code: revoke it there under Settings → Sharing & access.",
+    "Let nibblets start and steer T3 Code's coding agents, each with only the tools you tick. Unlinking doesn't sign out of T3 Code: revoke it there under Settings → Sharing & access.",
   icon: T3CODE_ICON,
   fields: [URL_FIELD],
   grants: "gate",

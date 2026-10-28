@@ -691,8 +691,8 @@ export class AppLinks {
         continue;
       }
       if (connection.mcp) {
-        const { readOnly, ...mcp } = connection.mcp;
-        servers.push({ name: link.name, ...mcp, readOnly: readOnly ?? false });
+        const { tools, ...mcp } = connection.mcp;
+        servers.push({ name: link.name, ...mcp, tools: tools ?? null });
       }
       prompts.push({
         name: link.name,

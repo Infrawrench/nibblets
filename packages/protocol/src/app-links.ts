@@ -155,7 +155,7 @@ export const AppLinkServer = z.object({
   name: z.string(),
   url: z.string(),
   headers: z.record(z.string(), z.string()).default({}),
-  /** Only the tools it marks read-only (`readOnlyHint`) are listed and allowed. */
-  readOnly: z.boolean().default(false),
+  /** Only these of its tools are listed and allowed; null for all of them. */
+  tools: z.array(z.string()).nullable().default(null),
 });
 export type AppLinkServer = z.infer<typeof AppLinkServer>;

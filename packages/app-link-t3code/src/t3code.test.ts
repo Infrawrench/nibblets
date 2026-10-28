@@ -8,7 +8,7 @@ import {
 } from "@nibblets/app-link";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { t3code, t3codePlugin } from "./index.ts";
+import { t3code, t3codePlugin, T3_SYSTEMS, T3_TOOLS } from "./index.ts";
 
 const BASE = "https://mac.t3.example";
 const CALLBACK = "https://pip.example/api/app-links/callback";
@@ -181,43 +181,79 @@ describe("linking T3 Code", () => {
 });
 
 describe("granting T3 Code", () => {
-  it("offers acting only when T3 Code approved more than reading", async () => {
+  it("offers every tool by system when T3 Code let it act, and only what reads when not", async () => {
     const full = await linked();
-    expect((await full.plugin.describe(full.link)).ceiling).toEqual(["read", "act"]);
+    const all = await full.plugin.describe(full.link);
+    expect(all.scopeGroups.map((g) => g.title)).toEqual(T3_SYSTEMS.map((s) => s.title));
+    expect(all.ceiling).toContain("t3_thread_launch");
+    expect(all.scopeGroups[0]?.scopes[0]).toEqual({
+      value: "t3_thread_list",
+      label: "List threads",
+    });
 
     const reader = await linked({ readOnly: true });
-    const description = await reader.plugin.describe(reader.link);
-    expect(description.ceiling).toEqual(["read"]);
-    expect(description.scopeGroups.flatMap((g) => g.scopes.map((s) => s.value))).toEqual(["read"]);
+    const reading = await reader.plugin.describe(reader.link);
+    expect(reading.ceiling).toContain("t3_thread_read");
+    // Its reads work on a read-only sign-in, and T3 Code refuses its answers.
+    expect(reading.ceiling).toContain("t3_pending_request");
+    expect(reading.ceiling).not.toContain("t3_thread_launch");
+    // A system with nothing that reads isn't offered at all.
+    expect(reading.scopeGroups.map((g) => g.title)).not.toContain("Attachments");
     await expect(
       reader.plugin.grant(reader.link, {
         externalId: "nib_1",
         label: "Pip",
-        scopes: ["read", "act"],
+        scopes: ["t3_thread_read", "t3_thread_launch"],
         providers: [],
       }),
-    ).rejects.toThrow("can only read");
+    ).rejects.toThrow("can't grant t3_thread_launch");
   });
 
-  it("makes grants the gate keeps: the link's sign-in, read-only unless it may act", async () => {
+  it("makes grants the gate keeps: the link's sign-in, and only the tools ticked", async () => {
     const { plugin, link } = await linked();
     const grant = await plugin.grant(link, {
       externalId: "nib_1",
       label: "Pip",
-      scopes: ["act"],
+      scopes: ["t3_thread_send", "t3_thread_read", "t3_thread_send"],
       providers: [],
     });
-    expect(grant).toEqual({ ref: "nib_1", secret: "", scopes: ["read", "act"], providers: [] });
+    expect(grant).toEqual({
+      ref: "nib_1",
+      secret: "",
+      scopes: ["t3_thread_read", "t3_thread_send"],
+      providers: [],
+    });
     expect(plugin.connection({ ...grant }, link)).toMatchObject({
       mcp: {
         url: `${BASE}/mcp`,
         headers: { authorization: "Bearer t3_session" },
-        readOnly: false,
+        tools: ["t3_thread_read", "t3_thread_send"],
       },
     });
-    const reading = await plugin.update(link, grant, { scopes: ["read"] });
-    expect(reading.scopes).toEqual(["read"]);
-    expect(plugin.connection({ ...grant, ...reading }, link).mcp?.readOnly).toBe(true);
+    const fewer = await plugin.update(link, grant, { scopes: ["t3_thread_read"] });
+    expect(plugin.connection({ ...grant, ...fewer }, link).mcp?.tools).toEqual(["t3_thread_read"]);
+  });
+
+  it("won't grant a tool it doesn't know, or nothing at all", async () => {
+    const { plugin, link } = await linked();
+    const ask = (scopes: string[]) =>
+      plugin.grant(link, { externalId: "nib_1", label: "Pip", scopes, providers: [] });
+    await expect(ask(["delegate_task"])).rejects.toThrow("no tool a nibblet can be given");
+    await expect(ask([])).rejects.toThrow("Tick what it may do");
+  });
+});
+
+describe("T3 Code's tools", () => {
+  it("are each in one system, once", () => {
+    const names = T3_SYSTEMS.flatMap((s) => s.tools.map((t) => t.name));
+    expect(new Set(names).size).toBe(names.length);
+    expect(T3_TOOLS.size).toBe(names.length);
+  });
+
+  it("leave out the ones only a T3 Code thread can call", () => {
+    for (const name of ["delegate_task", "preview_open", "device_open", "t3_worktree_handoff"]) {
+      expect(T3_TOOLS.has(name)).toBe(false);
+    }
   });
 });
 
