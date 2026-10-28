@@ -144,3 +144,61 @@ describe("a server the gate limits to some of its tools", () => {
     await client.close();
   });
 });
+
+describe("a server the gate limits to some of an app's providers", () => {
+  // The fixture's `echo` stands in for a tool whose `text` names where it acts.
+  const limit = { argument: "text", allowed: ["laptop", "vps"], home: "laptop", actHome: [] };
+
+  it("allows a call on one it was given, or on its home when it names none", async () => {
+    rules = [];
+    const wrapped = gate.wrap(
+      "machines",
+      { type: "http", url: httpUrl, headers: {} },
+      { providers: limit },
+    );
+    const client = await connect("machines", wrapped.type === "http" ? wrapped.url : "");
+    expect(text(await client.callTool({ name: "echo", arguments: { text: "vps" } }))).toContain(
+      "echo: vps",
+    );
+    expect(text(await client.callTool({ name: "send_money", arguments: { amount: 5 } }))).toContain(
+      "sent 5",
+    );
+    const refused = await client.callTool({ name: "echo", arguments: { text: "desktop" } });
+    expect("isError" in refused && refused.isError).toBe(true);
+    expect(text(refused)).toContain("would act on desktop in machines, which you weren't given");
+    await client.close();
+  });
+
+  it("refuses a call on its home when that wasn't given, and one naming it as anything but text", async () => {
+    asked.length = 0;
+    rules = [{ server: "machines", tool: "*" }];
+    const wrapped = gate.wrap(
+      "machines",
+      { type: "http", url: httpUrl, headers: {} },
+      { providers: { ...limit, allowed: ["vps"] } },
+    );
+    const client = await connect("machines", wrapped.type === "http" ? wrapped.url : "");
+    const home = await client.callTool({ name: "send_money", arguments: { amount: 5 } });
+    expect(text(home)).toContain("would act on laptop");
+    const odd = await client.callTool({ name: "echo", arguments: { text: 7 } });
+    expect("isError" in odd && odd.isError).toBe(true);
+    expect(text(odd)).not.toContain("echo:");
+    // Refused before anyone was asked.
+    expect(asked).toEqual([]);
+    await client.close();
+  });
+
+  it("takes a tool that always acts on its home at its word", async () => {
+    rules = [];
+    const wrapped = gate.wrap(
+      "machines",
+      { type: "http", url: httpUrl, headers: {} },
+      { providers: { ...limit, actHome: ["echo"] } },
+    );
+    const client = await connect("machines", wrapped.type === "http" ? wrapped.url : "");
+    expect(text(await client.callTool({ name: "echo", arguments: { text: "desktop" } }))).toContain(
+      "echo: desktop",
+    );
+    await client.close();
+  });
+});

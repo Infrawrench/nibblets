@@ -683,7 +683,12 @@ export class AppLinks {
       let connection;
       try {
         connection = this.plugin(link).connection(
-          { ref: grant.ref, secret: grant.secret, scopes: grant.scopes },
+          {
+            ref: grant.ref,
+            secret: grant.secret,
+            scopes: grant.scopes,
+            providers: grant.providers,
+          },
           linkRef(link),
         );
       } catch (err) {
@@ -691,8 +696,13 @@ export class AppLinks {
         continue;
       }
       if (connection.mcp) {
-        const { tools, ...mcp } = connection.mcp;
-        servers.push({ name: link.name, ...mcp, tools: tools ?? null });
+        const { tools, providers, ...mcp } = connection.mcp;
+        servers.push({
+          name: link.name,
+          ...mcp,
+          tools: tools ?? null,
+          providers: providers ?? null,
+        });
       }
       prompts.push({
         name: link.name,

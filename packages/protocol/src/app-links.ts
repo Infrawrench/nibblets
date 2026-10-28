@@ -157,5 +157,19 @@ export const AppLinkServer = z.object({
   headers: z.record(z.string(), z.string()).default({}),
   /** Only these of its tools are listed and allowed; null for all of them. */
   tools: z.array(z.string()).nullable().default(null),
+  /**
+   * Only calls acting on these of the app's providers are allowed: the one
+   * a call's `argument` names, or `home` when it names none (and always, for
+   * tools in `actHome`). Null for all of them.
+   */
+  providers: z
+    .object({
+      argument: z.string(),
+      allowed: z.array(z.string()),
+      home: z.string(),
+      actHome: z.array(z.string()),
+    })
+    .nullable()
+    .default(null),
 });
 export type AppLinkServer = z.infer<typeof AppLinkServer>;

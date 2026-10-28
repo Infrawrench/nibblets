@@ -184,6 +184,8 @@ export interface GrantSecret extends GrantRef {
   secret: string;
   /** What it was given, for a plugin whose grants the gate keeps to narrow the link to. */
   scopes: string[];
+  /** What it was narrowed to, out of the description's `providers`; empty for all. */
+  providers: string[];
 }
 
 export interface LinkInspection {
@@ -198,12 +200,33 @@ export interface LinkInspection {
 export interface AppLinkConnection {
   /**
    * An MCP server the guard serves behind its gate, under the link's name.
-   * `tools` has the gate list and allow only those of its tools, for a
-   * grant the gate keeps; all of them when it's left out.
+   * For a grant the gate keeps, `tools` has the gate list and allow only
+   * those of its tools (all of them when it's left out), and `providers`
+   * only calls that act on the providers it was narrowed to.
    */
-  mcp?: { url: string; headers: Record<string, string>; tools?: string[] };
+  mcp?: {
+    url: string;
+    headers: Record<string, string>;
+    tools?: string[];
+    providers?: ProviderLimit;
+  };
   /** What the nibblet is told about the app, beyond its scopes. */
   prompt?: string;
+}
+
+/**
+ * Which of an app's providers a call may act on, for the gate to check:
+ * the one its `argument` names, or `home` when it names none.
+ */
+export interface ProviderLimit {
+  /** The argument that names where a call acts: `environmentId`, say. */
+  argument: string;
+  /** The providers it may act on; a call on any other is refused. */
+  allowed: string[];
+  /** Where a call that names none acts. */
+  home: string;
+  /** Tools whose `argument` names something else, and that always act on `home`. */
+  actHome: string[];
 }
 
 /**

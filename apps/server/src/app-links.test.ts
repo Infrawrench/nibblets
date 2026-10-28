@@ -319,6 +319,7 @@ describe("a nibblet's grant", () => {
           url: "https://fake.example/mcp",
           headers: { authorization: "Bearer iwa_1" },
           tools: null,
+          providers: null,
         },
       ],
       prompts: [
@@ -651,9 +652,12 @@ function signInApp() {
       ref: request.externalId,
       secret: "",
       scopes: request.scopes,
-      providers: [],
+      providers: request.providers,
     }),
-    update: async (_link, _grant, request) => ({ scopes: request.scopes ?? [], providers: [] }),
+    update: async (_link, _grant, request) => ({
+      scopes: request.scopes ?? [],
+      providers: request.providers ?? [],
+    }),
     revoke: async () => undefined,
     unlink: async () => undefined,
     inspect: async () => {
@@ -665,6 +669,16 @@ function signInApp() {
         url: "https://signin.example/mcp",
         headers: { authorization: `Bearer ${link.secret}` },
         tools: grant.scopes,
+        ...(grant.providers.length > 0
+          ? {
+              providers: {
+                argument: "environmentId",
+                allowed: grant.providers,
+                home: link.ref,
+                actHome: [],
+              },
+            }
+          : {}),
       },
     }),
   };
@@ -790,11 +804,15 @@ describe("grants the gate keeps", () => {
         url: "https://signin.example/mcp",
         headers: { authorization: "Bearer token-abc" },
         tools: ["list"],
+        providers: null,
       },
     ]);
-    await t.links.setGrant("nib_1", linkId, ["list", "launch"], []);
+    await t.links.setGrant("nib_1", linkId, ["list", "launch"], ["env-2"]);
     expect((await t.links.connections("nib_1")).servers).toMatchObject([
-      { tools: ["list", "launch"] },
+      {
+        tools: ["list", "launch"],
+        providers: { argument: "environmentId", allowed: ["env-2"], home: "env-1" },
+      },
     ]);
   });
 

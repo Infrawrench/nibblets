@@ -12,6 +12,14 @@
  * `does` is what T3 Code lets it do: `reads` works on a read-only sign-in,
  * `changes` needs one that may act, and `both` (T3 Code's `either`) reads on
  * either and changes only on one that may act.
+ *
+ * Where a tool acts is the machine its `environmentId` names (one linked to
+ * this environment in T3 Code), or this environment when it names none,
+ * which is how the gate narrows a grant to some machines. Only the tools
+ * marked `namesMachine` use `environmentId` for something else (the machine
+ * to link or forget), and always act here. A tool T3 Code adds that names
+ * its machine anywhere but a top-level `environmentId` (as `delegate_task`'s
+ * `target.environmentId` does) must not be added until the gate reads it.
  */
 
 export type ToolUse = "reads" | "changes" | "both";
@@ -21,6 +29,8 @@ export interface T3Tool {
   /** What ticking it lets a nibblet do, for its settings. */
   label: string;
   does: ToolUse;
+  /** Its `environmentId` is a machine to link or forget, not where it acts: that's always here. */
+  namesMachine?: true;
 }
 
 export interface T3System {
@@ -132,8 +142,18 @@ export const T3_SYSTEMS: readonly T3System[] = [
         does: "changes",
       },
       { name: "t3_environment_links", label: "List linked machines", does: "reads" },
-      { name: "t3_environment_link", label: "Ask to link another machine", does: "changes" },
-      { name: "t3_environment_unlink", label: "Forget a linked machine", does: "changes" },
+      {
+        name: "t3_environment_link",
+        label: "Ask to link another machine",
+        does: "changes",
+        namesMachine: true,
+      },
+      {
+        name: "t3_environment_unlink",
+        label: "Forget a linked machine",
+        does: "changes",
+        namesMachine: true,
+      },
     ],
   },
 ];

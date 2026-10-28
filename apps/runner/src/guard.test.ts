@@ -39,13 +39,27 @@ describe("app links behind the gate", () => {
           url: "https://t3.example/mcp",
           headers: {},
           tools: ["t3_thread_list", "t3_thread_read"],
+          providers: {
+            argument: "environmentId",
+            allowed: ["env_vps"],
+            home: "env_mac",
+            actHome: [],
+          },
         },
         { name: "infrawrench", url: "https://app.infrawrench.com/api/mcp", headers: {} },
       ],
     });
     expect(gatedLimits(config)).toEqual({
-      t3code: { tools: ["t3_thread_list", "t3_thread_read"] },
-      infrawrench: { tools: null },
+      t3code: {
+        tools: ["t3_thread_list", "t3_thread_read"],
+        providers: {
+          argument: "environmentId",
+          allowed: ["env_vps"],
+          home: "env_mac",
+          actHome: [],
+        },
+      },
+      infrawrench: { tools: null, providers: null },
     });
   });
 

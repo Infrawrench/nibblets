@@ -528,7 +528,7 @@ describe("a nibblet's agent", () => {
   it("connects through Infrawrench's MCP server with the agent's own credential", () => {
     const plugin = infrawrenchPlugin({ url: "https://iw.example.com/" }, { fetch });
     const connection = plugin.connection(
-      { ref: "agent-1", secret: "iwa_1", scopes: ["resources:read"] },
+      { ref: "agent-1", secret: "iwa_1", scopes: ["resources:read"], providers: [] },
       { ref: "link-1", secret: "iwl_1" },
     );
     expect(connection.mcp).toEqual({

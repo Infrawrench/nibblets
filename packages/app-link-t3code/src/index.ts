@@ -92,10 +92,26 @@ const ProtectedResource = z
 
 /** What `t3_environment_read` says, the parts used here. */
 const Environment = z.object({ environmentId: z.string().min(1), label: z.string() }).loose();
+type Environment = z.infer<typeof Environment>;
+
+/** What `t3_environment_links` says: the other machines linked to this environment. */
+const Linked = z
+  .object({
+    links: z.array(
+      z.object({ environmentId: z.string().min(1), label: z.string(), status: z.string() }).loose(),
+    ),
+  })
+  .loose();
+
+/** A machine a grant can be narrowed to: this environment, or one linked to it. */
+interface Machine {
+  id: string;
+  name: string;
+}
 
 /** What a nibblet is told about its T3 Code tools, beside its scopes. */
 const PROMPT =
-  "T3 Code's tools drive coding agents in T3 Code, on your person's own machine. Start a thread with `t3_thread_launch`, message one with `t3_thread_send` (give it a `clientRequestId`, so a retry sends once), wait on it with `t3_thread_wait`, and read it with `t3_thread_read`. Answer a thread's questions with `t3_pending_request`. Commands and file changes a thread asks to make are approved by your person in T3 Code's own app, not here, so if a thread is waiting on one, tell them. T3 Code also caps how much a thread may do, as your person chose when they linked it. Only the tools you were given are listed: if you need another, ask your person to tick it in your settings.";
+  "T3 Code's tools drive coding agents in T3 Code, on your person's own machine. Start a thread with `t3_thread_launch`, message one with `t3_thread_send` (give it a `clientRequestId`, so a retry sends once), wait on it with `t3_thread_wait`, and read it with `t3_thread_read`. Answer a thread's questions with `t3_pending_request`. Commands and file changes a thread asks to make are approved by your person in T3 Code's own app, not here, so if a thread is waiting on one, tell them. T3 Code also caps how much a thread may do, as your person chose when they linked it. To act on another of their machines linked in T3 Code, pass its `environmentId` (from `t3_environment_links`); without one, a tool acts on the machine you're linked to. Only the tools you were given are listed, and you may only act on the machines you were given: if you need more, ask your person to tick it in your settings.";
 
 const REVOKED =
   "T3 Code no longer takes this link's sign-in (they last 30 days): link it again from Settings";
@@ -207,24 +223,71 @@ export function t3codePlugin(
     }
   }
 
+  /** What a tool answered: its structured content, or the JSON of its text. */
+  async function read<T extends z.ZodType>(
+    client: Client,
+    name: string,
+    schema: T,
+  ): Promise<z.output<T>> {
+    const result = await client.callTool({ name, arguments: {} });
+    const text = z
+      .array(z.object({ type: z.literal("text"), text: z.string() }).loose())
+      .safeParse(result.content);
+    const said = text.success ? text.data.map((c) => c.text).join("\n") : "";
+    if (result.isError) throw new Error(`T3 Code refused ${name}: ${said}`);
+    const structured = schema.safeParse(result.structuredContent);
+    if (structured.success) return structured.data;
+    return schema.parse(JSON.parse(said));
+  }
+
   /** Who the environment is, as T3 Code says. */
-  function environment(token: string): Promise<z.infer<typeof Environment>> {
+  function environment(token: string): Promise<Environment> {
+    return withMcp(token, (client) => read(client, "t3_environment_read", Environment));
+  }
+
+  /**
+   * Who the environment is, and the machines a grant can be narrowed to:
+   * it, then the ones linked to it, saying which can't be reached now.
+   */
+  function machines(token: string): Promise<{ env: Environment; machines: Machine[] }> {
     return withMcp(token, async (client) => {
-      const result = await client.callTool({ name: "t3_environment_read", arguments: {} });
-      const text = z
-        .array(z.object({ type: z.literal("text"), text: z.string() }).loose())
-        .safeParse(result.content);
-      const said = text.success ? text.data.map((c) => c.text).join("\n") : "";
-      if (result.isError) throw new Error(`T3 Code refused t3_environment_read: ${said}`);
-      const structured = Environment.safeParse(result.structuredContent);
-      if (structured.success) return structured.data;
-      return Environment.parse(JSON.parse(said));
+      const env = await read(client, "t3_environment_read", Environment);
+      let linked: z.infer<typeof Linked>["links"] = [];
+      try {
+        linked = (await read(client, "t3_environment_links", Linked)).links;
+      } catch {
+        // Linked environments is off there (it's a beta), or T3 Code is older: just this one.
+      }
+      return {
+        env,
+        machines: [
+          { id: env.environmentId, name: env.label.trim() || env.environmentId },
+          ...linked
+            .filter((l) => l.environmentId !== env.environmentId)
+            .map((l) => ({
+              id: l.environmentId,
+              name: `${l.label.trim() || l.environmentId}${l.status === "reachable" ? "" : ` (${l.status})`}`,
+            })),
+        ],
+      };
     });
   }
 
+  /** The machines a grant is narrowed to, in T3 Code's order; empty for all, and any linked later. */
+  async function narrow(link: LinkRef, providers: readonly string[]): Promise<string[]> {
+    if (providers.length === 0) return [];
+    const known = (await machines(live(link).token)).machines.map((m) => m.id);
+    const gone = providers.filter((p) => !known.includes(p));
+    if (gone.length > 0) {
+      throw new AppLinkError(
+        `T3 Code has no machine ${gone.join(", ")} linked any more: untick it, or link it again there`,
+      );
+    }
+    return known.filter((id) => providers.includes(id));
+  }
+
   /** "Astrid's MacBook on T3 Code". */
-  const account = (env: z.infer<typeof Environment>) =>
-    `${env.label.trim() || "An environment"} on T3 Code`;
+  const account = (env: Environment) => `${env.label.trim() || "An environment"} on T3 Code`;
 
   /** A link's sign-in, unless it has plainly run out already. */
   function live(link: LinkRef): Session {
@@ -310,7 +373,7 @@ export function t3codePlugin(
 
     async describe(link): Promise<AppLinkDescription> {
       const current = live(link);
-      const env = await environment(current.token);
+      const { env, machines: found } = await machines(current.token);
       const top = new Set(ceiling(current));
       return {
         account: account(env),
@@ -320,7 +383,7 @@ export function t3codePlugin(
             .filter((t) => top.has(t.name))
             .map((t) => ({ value: t.name, label: t.label })),
         })).filter((group) => group.scopes.length > 0),
-        providers: null,
+        providers: found,
         ceiling: [...top],
         narrowable: null,
       };
@@ -332,12 +395,15 @@ export function t3codePlugin(
         // The gate uses the link's sign-in; a grant has none of its own.
         secret: "",
         scopes: clamp(request.scopes, live(link)),
-        providers: [],
+        providers: await narrow(link, request.providers),
       };
     },
 
     async update(link, _grant, request) {
-      return { scopes: clamp(request.scopes ?? [], live(link)), providers: [] };
+      return {
+        scopes: clamp(request.scopes ?? [], live(link)),
+        providers: await narrow(link, request.providers ?? []),
+      };
     },
 
     async revoke() {
@@ -360,6 +426,17 @@ export function t3codePlugin(
           headers: { authorization: `Bearer ${session(link).token}` },
           // Only what was ticked, and that T3 Code still has a tool by.
           tools: grant.scopes.filter((s) => T3_TOOLS.has(s)),
+          // Only on the machines ticked: the one a call names, else this one.
+          ...(grant.providers.length > 0
+            ? {
+                providers: {
+                  argument: "environmentId",
+                  allowed: grant.providers,
+                  home: link.ref,
+                  actHome: [...T3_TOOLS.values()].filter((t) => t.namesMachine).map((t) => t.name),
+                },
+              }
+            : {}),
         },
         prompt: PROMPT,
       };

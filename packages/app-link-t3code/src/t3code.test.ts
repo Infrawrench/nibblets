@@ -17,7 +17,7 @@ const CALLBACK = "https://pip.example/api/app-links/callback";
  * A T3 Code environment: its OAuth sign-in for outside agents, and its MCP
  * server with a read tool and one that acts, behind the token it issued.
  */
-function fakeT3(options: { readOnly?: boolean } = {}) {
+function fakeT3(options: { readOnly?: boolean; linksOff?: boolean } = {}) {
   const t3 = {
     calls: [] as { method: string; path: string }[],
     registered: [] as { client_name: string; redirect_uris: string[] }[],
@@ -25,6 +25,11 @@ function fakeT3(options: { readOnly?: boolean } = {}) {
     token: "t3_session",
     /** Its sign-ins stop working, as after 30 days. */
     expired: false,
+    /** The other machines linked to it. */
+    links: [
+      { environmentId: "env_vps", label: "Hetzner VPS", status: "reachable" },
+      { environmentId: "env_old", label: "Old laptop", status: "expired" },
+    ],
   };
   const codes = new Map<string, string>();
 
@@ -46,6 +51,27 @@ function fakeT3(options: { readOnly?: boolean } = {}) {
         return { content: [{ type: "text", text: JSON.stringify(out) }], structuredContent: out };
       },
     );
+    // Only while Linked environments is on there, as T3 Code has it.
+    if (!options.linksOff) {
+      server.registerTool(
+        "t3_environment_links",
+        {
+          description: "List linked environments.",
+          outputSchema: {
+            environmentId: z.string(),
+            links: z.array(
+              z.object({ environmentId: z.string(), label: z.string(), status: z.string() }),
+            ),
+            notListed: z.string(),
+          },
+          annotations: { readOnlyHint: true },
+        },
+        async () => {
+          const out = { environmentId: "env_mac", links: t3.links, notListed: "Link it." };
+          return { content: [{ type: "text", text: JSON.stringify(out) }], structuredContent: out };
+        },
+      );
+    }
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
@@ -118,7 +144,7 @@ function fakeT3(options: { readOnly?: boolean } = {}) {
   return { t3, fetch, approve };
 }
 
-async function linked(options: { readOnly?: boolean } = {}) {
+async function linked(options: { readOnly?: boolean; linksOff?: boolean } = {}) {
   const fake = fakeT3(options);
   const plugin = t3codePlugin({ url: BASE }, { fetch: fake.fetch });
   const start = await plugin.begin({ label: "Nibblets on PogAir-4", callbackUrl: CALLBACK });
@@ -240,6 +266,58 @@ describe("granting T3 Code", () => {
       plugin.grant(link, { externalId: "nib_1", label: "Pip", scopes, providers: [] });
     await expect(ask(["delegate_task"])).rejects.toThrow("no tool a nibblet can be given");
     await expect(ask([])).rejects.toThrow("Tick what it may do");
+  });
+});
+
+describe("narrowing T3 Code to some machines", () => {
+  it("offers this environment and the machines linked to it, saying which can't be reached", async () => {
+    const { plugin, link } = await linked();
+    expect((await plugin.describe(link)).providers).toEqual([
+      { id: "env_mac", name: "Astrid's Mac" },
+      { id: "env_vps", name: "Hetzner VPS" },
+      { id: "env_old", name: "Old laptop (expired)" },
+    ]);
+
+    // With Linked environments off there, there's only this one.
+    const alone = await linked({ linksOff: true });
+    expect((await alone.plugin.describe(alone.link)).providers).toEqual([
+      { id: "env_mac", name: "Astrid's Mac" },
+    ]);
+  });
+
+  it("has the gate allow only calls on the machines ticked, with this one where none is named", async () => {
+    const { plugin, link } = await linked();
+    const grant = await plugin.grant(link, {
+      externalId: "nib_1",
+      label: "Pip",
+      scopes: ["t3_thread_launch"],
+      providers: ["env_vps"],
+    });
+    expect(grant.providers).toEqual(["env_vps"]);
+    expect(plugin.connection(grant, link).mcp?.providers).toEqual({
+      argument: "environmentId",
+      allowed: ["env_vps"],
+      home: "env_mac",
+      actHome: ["t3_environment_link", "t3_environment_unlink"],
+    });
+
+    // None ticked is all of them, and any linked later: no limit at all.
+    const all = await plugin.update(link, grant, { scopes: ["t3_thread_launch"], providers: [] });
+    expect(all.providers).toEqual([]);
+    expect(plugin.connection({ ...grant, ...all }, link).mcp?.providers).toBeUndefined();
+  });
+
+  it("won't narrow to a machine that isn't linked any more", async () => {
+    const { t3, plugin, link } = await linked();
+    t3.links = [];
+    await expect(
+      plugin.grant(link, {
+        externalId: "nib_1",
+        label: "Pip",
+        scopes: ["t3_thread_read"],
+        providers: ["env_vps"],
+      }),
+    ).rejects.toThrow("no machine env_vps linked any more");
   });
 });
 
